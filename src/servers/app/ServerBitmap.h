@@ -47,7 +47,7 @@ class ServerApp;
 
 
 /*!	\class ServerBitmap ServerBitmap.h
-	\brief Bitmap class used inside the server.
+	@brief Bitmap class used inside the server.
 
 	This class is not directly allocated or freed. Instead, it is
 	managed by the BitmapManager class. It is also the base class for

@@ -1,17 +1,51 @@
 /*
- * Copyright 2001-2020, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Adi Oanca, adioanca@gmail.com
- *		Stephan Aßmus, superstippi@gmx.de
- *		Axel Dörfler, axeld@pinc-software.de
- *		Brecht Machiels, brecht@mos6581.org
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Tri-Edge AI
- *		Jacob Secunda, secundja@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Adi Oanca, adioanca@gmail.com
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Brecht Machiels, brecht@mos6581.org
+ *       Clemens Zeidler, haiku@clemens-zeidler.de
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *       Tri-Edge AI
+ *       Jacob Secunda, secundja@gmail.com
+ */
+
+
+/**
+ * @file DefaultWindowBehaviour.cpp
+ * @brief Default mouse and keyboard input policy for app_server windows.
+ *
+ * Implements a state machine over MouseDown / MouseUp / MouseMoved /
+ * ModifiersChanged events. Each State subtype handles one mode of
+ * interaction: dragging a window, resizing it from a corner, sliding a tab,
+ * resizing along a border, pressing a decorator button, or hovering with
+ * the window-management modifier held. Edge snapping is delegated to
+ * MagneticBorder.
+ *
+ * @see WindowBehaviour, MagneticBorder, Decorator
  */
 
 
@@ -38,6 +72,8 @@
 #endif
 
 
+/** @brief Maximum time, in microseconds, between mouse-down and mouse-up
+           for a click to still count as a window-activation gesture. */
 // The span between mouse down
 static const bigtime_t kWindowActivationTimeout = 500000LL;
 
@@ -45,7 +81,11 @@ static const bigtime_t kWindowActivationTimeout = 500000LL;
 // #pragma mark - State
 
 
+/** @brief Base class for the input state machine; each concrete state
+           implements a single interaction mode (drag, resize, slide tab,
+           button-press, manage). */
 struct DefaultWindowBehaviour::State {
+	/** @brief Captures the behaviour, window, and desktop the state operates on. */
 	State(DefaultWindowBehaviour& behavior)
 		:
 		fBehavior(behavior),
@@ -58,27 +98,33 @@ struct DefaultWindowBehaviour::State {
 	{
 	}
 
+	/** @brief Hook called once when the state is installed. */
 	virtual void EnterState(State* previousState)
 	{
 	}
 
+	/** @brief Hook called once before the state is replaced. */
 	virtual void ExitState(State* nextState)
 	{
 	}
 
+	/** @brief Default mouse-down handler; absorbs the event by default. */
 	virtual bool MouseDown(BMessage* message, BPoint where, bool& _unhandled)
 	{
 		return true;
 	}
 
+	/** @brief Default mouse-up handler (no-op). */
 	virtual void MouseUp(BMessage* message, BPoint where)
 	{
 	}
 
+	/** @brief Default mouse-moved handler (no-op). */
 	virtual void MouseMoved(BMessage* message, BPoint where, bool isFake)
 	{
 	}
 
+	/** @brief Default modifier-change handler (no-op). */
 	virtual void ModifiersChanged(BPoint where, int32 modifiers)
 	{
 	}
@@ -93,7 +139,18 @@ protected:
 // #pragma mark - MouseTrackingState
 
 
+/** @brief Common state for any interaction that follows a held mouse button:
+           rate-limits move events, accumulates drag distance to suppress
+           accidental double-clicks, and triggers an action on mouse up. */
 struct DefaultWindowBehaviour::MouseTrackingState : State {
+	/** @brief Constructs the tracking state for one button.
+	    @param behavior      Owning behaviour.
+	    @param where         Initial mouse position.
+	    @param windowActionOnMouseUp  Run MouseUpWindowAction() if released
+	                                  without significant movement.
+	    @param minimizeCheckOnMouseUp Treat a held click on the title bar as
+	                                  a minimize gesture on release.
+	    @param mouseButton   Mouse button being tracked. */
 	MouseTrackingState(DefaultWindowBehaviour& behavior, BPoint where,
 		bool windowActionOnMouseUp, bool minimizeCheckOnMouseUp,
 		int32 mouseButton = B_PRIMARY_MOUSE_BUTTON)
@@ -108,6 +165,8 @@ struct DefaultWindowBehaviour::MouseTrackingState : State {
 	{
 	}
 
+	/** @brief Handles release of the tracked mouse button: optionally
+	           minimizes the window or invokes MouseUpWindowAction(). */
 	virtual void MouseUp(BMessage* message, BPoint where)
 	{
 		// ignore, if it's not our mouse button
@@ -137,6 +196,8 @@ struct DefaultWindowBehaviour::MouseTrackingState : State {
 		fBehavior._NextState(NULL);
 	}
 
+	/** @brief Rate-limits mouse-moved events, suppresses tiny accidental
+	           jitters, and forwards the resulting delta to MouseMovedAction(). */
 	virtual void MouseMoved(BMessage* message, BPoint where, bool isFake)
 	{
 		// Limit the rate at which "mouse moved" events are handled that move
@@ -186,10 +247,14 @@ struct DefaultWindowBehaviour::MouseTrackingState : State {
 		fLastMousePosition += delta;
 	}
 
+	/** @brief Per-frame action invoked with the rate-limited delta;
+	           subclasses override to move, resize, or slide. */
 	virtual void MouseMovedAction(BPoint& delta, bigtime_t now)
 	{
 	}
 
+	/** @brief Action triggered on mouse-up without movement; default is to
+	           activate the window. */
 	virtual void MouseUpWindowAction()
 	{
 		// default is window activation
@@ -210,7 +275,14 @@ protected:
 // #pragma mark - DragState
 
 
+/** @brief State engaged when the user drags a window by its title bar or a
+           border with the primary mouse button held. */
 struct DefaultWindowBehaviour::DragState : MouseTrackingState {
+	/** @brief Constructs a drag state.
+	    @param behavior              Owning behaviour.
+	    @param where                 Initial mouse position.
+	    @param activateOnMouseUp     true to activate on a click without movement.
+	    @param minimizeCheckOnMouseUp true to allow a quick double-click to minimize. */
 	DragState(DefaultWindowBehaviour& behavior, BPoint where,
 		bool activateOnMouseUp, bool minimizeCheckOnMouseUp)
 		:
@@ -219,6 +291,8 @@ struct DefaultWindowBehaviour::DragState : MouseTrackingState {
 	{
 	}
 
+	/** @brief Allows a right click during a drag to send the window behind
+	           or activate the back window. */
 	virtual bool MouseDown(BMessage* message, BPoint where, bool& _unhandled)
 	{
 		// right-click while dragging shall bring the window to front
@@ -234,6 +308,8 @@ struct DefaultWindowBehaviour::DragState : MouseTrackingState {
 		return MouseTrackingState::MouseDown(message, where, _unhandled);
 	}
 
+	/** @brief Moves the window by the rate-limited delta unless B_NOT_MOVABLE,
+	           applying edge-snap via the behaviour's MagneticBorder. */
 	virtual void MouseMovedAction(BPoint& delta, bigtime_t now)
 	{
 		if ((fWindow->Flags() & B_NOT_MOVABLE) == 0) {
@@ -253,9 +329,14 @@ struct DefaultWindowBehaviour::DragState : MouseTrackingState {
 // #pragma mark - ResizeState
 
 
+/** @brief State engaged when the user resizes a window from its bottom-right
+           corner using the primary mouse button. */
 struct DefaultWindowBehaviour::ResizeState : MouseTrackingState {
+	/** @brief Cumulative outline-resize delta applied on mouse-up when
+	           B_OUTLINE_RESIZE is enabled. */
 	BPoint fDelta;
 
+	/** @brief Constructs a corner-resize state. */
 	ResizeState(DefaultWindowBehaviour& behavior, BPoint where,
 		bool activateOnMouseUp, bool minimizeCheckOnMouseUp)
 		:
@@ -264,10 +345,12 @@ struct DefaultWindowBehaviour::ResizeState : MouseTrackingState {
 		fDelta = BPoint(0, 0);
 	}
 
+	/** @brief Hook called on entry; nothing to set up for corner resize. */
 	virtual void EnterState(State* prevState)
 	{
 	}
 
+	/** @brief Commits a pending outline-resize delta on exit, if any. */
 	virtual void ExitState(State* nextState)
 	{
 		if ((fWindow->Flags() & B_OUTLINE_RESIZE) != 0) {
@@ -276,6 +359,8 @@ struct DefaultWindowBehaviour::ResizeState : MouseTrackingState {
 		}
 	}
 
+	/** @brief Resizes the window by @a delta, honouring B_NOT_*_RESIZABLE
+	           flags and the live-vs-outline resize mode. */
 	virtual void MouseMovedAction(BPoint& delta, bigtime_t now)
 	{
 		if ((fWindow->Flags() & B_NOT_RESIZABLE) == 0) {
@@ -303,19 +388,26 @@ struct DefaultWindowBehaviour::ResizeState : MouseTrackingState {
 // #pragma mark - SlideTabState
 
 
+/** @brief State engaged when the user slides a tab horizontally with
+           Shift+left-drag, including reordering inside multi-tab stacks. */
 struct DefaultWindowBehaviour::SlideTabState : MouseTrackingState {
+	/** @brief Constructs the slide-tab state. */
 	SlideTabState(DefaultWindowBehaviour& behavior, BPoint where)
 		:
 		MouseTrackingState(behavior, where, false, false)
 	{
 	}
 
+	/** @brief Commits the final tab location when the slide ends. */
 	virtual
 	~SlideTabState()
 	{
 		fDesktop->SetWindowTabLocation(fWindow, fWindow->TabLocation(), false);
 	}
 
+	/** @brief Updates the tab offset by the rate-limited horizontal delta;
+	           also evaluates whether the dragged tab should swap positions
+	           with a neighbour in a stacked window. */
 	virtual void MouseMovedAction(BPoint& delta, bigtime_t now)
 	{
 		float location = fWindow->TabLocation();
@@ -328,6 +420,10 @@ struct DefaultWindowBehaviour::SlideTabState : MouseTrackingState {
 			delta = BPoint(0, 0);
 	}
 
+	/** @brief In a stacked window, reorders the dragged tab past the next or
+	           previous neighbour when the drag distance exceeds the
+	           neighbour's half-width threshold.
+	    @note Only handles continuous shifts; rapid jumps may be missed. */
 	void AdjustMultiTabLocation(float location, bool isShifting)
 	{
 		::Decorator* decorator = fWindow->Decorator();
@@ -370,9 +466,16 @@ struct DefaultWindowBehaviour::SlideTabState : MouseTrackingState {
 // #pragma mark - ResizeBorderState
 
 
+/** @brief State engaged when the user resizes a window by clicking and
+           dragging on a border or corner with the secondary mouse button,
+           or on the manage-window mode borders. */
 struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
+	/** @brief Cumulative outline-resize delta committed on exit when
+	           B_OUTLINE_RESIZE is enabled. */
 	BPoint fDelta;
 
+	/** @brief Builds a border-resize state from a hit-tested decorator
+	           region, mapping the region to a horizontal/vertical sign. */
 	ResizeBorderState(DefaultWindowBehaviour& behavior, BPoint where,
 		Decorator::Region region)
 		:
@@ -420,6 +523,8 @@ struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
 		fDelta = B_ORIGIN;
 	}
 
+	/** @brief Builds a border-resize state from explicit horizontal and
+	           vertical signs (used when entering from manage-window mode). */
 	ResizeBorderState(DefaultWindowBehaviour& behavior, BPoint where,
 		int8 horizontal, int8 vertical)
 		:
@@ -431,6 +536,8 @@ struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
 		fDelta = B_ORIGIN;
 	}
 
+	/** @brief Suppresses non-resizable axes and installs the appropriate
+	           resize cursor when the state becomes active. */
 	virtual void EnterState(State* previousState)
 	{
 		if ((fWindow->Flags() & B_NOT_RESIZABLE) != 0)
@@ -445,6 +552,7 @@ struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
 		fBehavior._SetResizeCursor(fHorizontal, fVertical);
 	}
 
+	/** @brief Restores the cursor and commits any pending outline resize. */
 	virtual void ExitState(State* nextState)
 	{
 		fBehavior._ResetResizeCursor();
@@ -455,6 +563,9 @@ struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
 		}
 	}
 
+	/** @brief Resizes the window along the active axes, then translates it
+	           when resizing from a left or top border so the opposite edge
+	           appears anchored. */
 	virtual void MouseMovedAction(BPoint& delta, bigtime_t now)
 	{
 		if (fHorizontal == NONE)
@@ -491,6 +602,8 @@ struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
 			fDesktop->MoveWindowBy(fWindow, moveX, moveY);
 	}
 
+	/** @brief Sends the window behind on a click without movement (so a
+	           right-click on a border without a drag re-orders the stack). */
 	virtual void MouseUpWindowAction()
 	{
 		fDesktop->SendWindowBehind(fWindow);
@@ -505,7 +618,11 @@ private:
 // #pragma mark - DecoratorButtonState
 
 
+/** @brief State engaged while the user is holding a decorator button
+           (close, zoom, or minimize); paints pressed/unpressed state and
+           triggers the action only if the release lands on the same button. */
 struct DefaultWindowBehaviour::DecoratorButtonState : State {
+	/** @brief Constructs the button state for a given tab and button region. */
 	DecoratorButtonState(DefaultWindowBehaviour& behavior,
 		int32 tab, Decorator::Region button)
 		:
@@ -515,11 +632,14 @@ struct DefaultWindowBehaviour::DecoratorButtonState : State {
 	{
 	}
 
+	/** @brief Paints the button as pressed when the state is installed. */
 	virtual void EnterState(State* previousState)
 	{
 		_RedrawDecorator(NULL);
 	}
 
+	/** @brief Releases the button. If the release is over the same button,
+	           the corresponding window action (close/zoom/minimize) fires. */
 	virtual void MouseUp(BMessage* message, BPoint where)
 	{
 		// ignore, if it's not the primary mouse button
@@ -569,12 +689,16 @@ struct DefaultWindowBehaviour::DecoratorButtonState : State {
 		fBehavior._NextState(NULL);
 	}
 
+	/** @brief Tracks the cursor and toggles the button's pressed appearance
+	           depending on whether the cursor is still over it. */
 	virtual void MouseMoved(BMessage* message, BPoint where, bool isFake)
 	{
 		_RedrawDecorator(message);
 	}
 
 private:
+	/** @brief Repaints the button in pressed state when the cursor (per
+	           @a message) is still over it; otherwise repaints unpressed. */
 	void _RedrawDecorator(const BMessage* message)
 	{
 		if (Decorator* decorator = fWindow->Decorator()) {
@@ -621,7 +745,11 @@ protected:
 // #pragma mark - ManageWindowState
 
 
+/** @brief State engaged while the window-management modifier keys are held;
+           highlights the border closest to the cursor so a right-click can
+           start a resize from it. */
 struct DefaultWindowBehaviour::ManageWindowState : State {
+	/** @brief Constructs the manage state with the cursor's current position. */
 	ManageWindowState(DefaultWindowBehaviour& behavior, BPoint where)
 		:
 		State(behavior),
@@ -631,16 +759,20 @@ struct DefaultWindowBehaviour::ManageWindowState : State {
 	{
 	}
 
+	/** @brief Paints the initial border highlight for the cursor position. */
 	virtual void EnterState(State* previousState)
 	{
 		_UpdateBorders(fLastMousePosition);
 	}
 
+	/** @brief Clears the border highlight when the state is replaced. */
 	virtual void ExitState(State* nextState)
 	{
 		fBehavior._SetBorderHighlights(fHorizontal, fVertical, false);
 	}
 
+	/** @brief Switches into ResizeBorderState when the secondary mouse
+	           button is pressed. */
 	virtual bool MouseDown(BMessage* message, BPoint where, bool& _unhandled)
 	{
 		// We're only interested if the secondary mouse button was pressed,
@@ -656,6 +788,8 @@ struct DefaultWindowBehaviour::ManageWindowState : State {
 		return true;
 	}
 
+	/** @brief Updates the highlighted border as the cursor moves; leaves
+	           the state when the cursor exits the window. */
 	virtual void MouseMoved(BMessage* message, BPoint where, bool isFake)
 	{
 		// If the mouse is still over our window, update the borders. Otherwise
@@ -667,6 +801,7 @@ struct DefaultWindowBehaviour::ManageWindowState : State {
 			fBehavior._NextState(NULL);
 	}
 
+	/** @brief Leaves the manage state when the user releases the modifier keys. */
 	virtual void ModifiersChanged(BPoint where, int32 modifiers)
 	{
 		if (!fBehavior._IsWindowModifier(modifiers))
@@ -674,6 +809,9 @@ struct DefaultWindowBehaviour::ManageWindowState : State {
 	}
 
 private:
+	/** @brief Computes which border the cursor is closest to (taking the
+	           window's aspect ratio into account) and refreshes the
+	           highlight accordingly. */
 	void _UpdateBorders(BPoint where)
 	{
 		if ((fWindow->Flags() & B_NOT_RESIZABLE) != 0)
@@ -720,6 +858,11 @@ private:
 // #pragma mark - DefaultWindowBehaviour
 
 
+/**
+ * @brief Constructs a DefaultWindowBehaviour bound to a single window.
+ *
+ * @param window Window the behaviour will manage.
+ */
 DefaultWindowBehaviour::DefaultWindowBehaviour(Window* window)
 	:
 	fWindow(window),
@@ -729,11 +872,32 @@ DefaultWindowBehaviour::DefaultWindowBehaviour(Window* window)
 }
 
 
+/**
+ * @brief Destroys the behaviour. The active state, if any, is released by
+ *        the ObjectDeleter holding fState.
+ */
 DefaultWindowBehaviour::~DefaultWindowBehaviour()
 {
 }
 
 
+/**
+ * @brief Routes a mouse-down event into the state machine.
+ *
+ * If a state is active and consumes the event, the call returns immediately.
+ * Otherwise the click is hit-tested against the decorator and translated
+ * into a window action (close/zoom/minimize, drag, resize, slide tab,
+ * resize-border). Single-button mice with Control held emulate a right-click.
+ *
+ * @param message      Original B_MOUSE_DOWN message.
+ * @param where        Click position in screen coordinates.
+ * @param lastHitRegion Hit region of the previous click, used for click-count
+ *                     reset.
+ * @param clickCount   In/out click counter; reset to 1 if the region changed.
+ * @param _hitRegion   Out-parameter set to the hit Decorator::Region.
+ * @return true if the event was handled by the decorator/behaviour, false
+ *         to let it pass through to the window contents.
+ */
 bool
 DefaultWindowBehaviour::MouseDown(BMessage* message, BPoint where,
 	int32 lastHitRegion, int32& clickCount, int32& _hitRegion)
@@ -953,6 +1117,12 @@ DefaultWindowBehaviour::MouseDown(BMessage* message, BPoint where,
 }
 
 
+/**
+ * @brief Forwards a mouse-up event to the active state, if any.
+ *
+ * @param message Original B_MOUSE_UP message.
+ * @param where   Release position in screen coordinates.
+ */
 void
 DefaultWindowBehaviour::MouseUp(BMessage* message, BPoint where)
 {
@@ -961,6 +1131,19 @@ DefaultWindowBehaviour::MouseUp(BMessage* message, BPoint where)
 }
 
 
+/**
+ * @brief Forwards a mouse-moved event to the active state and applies the
+ *        focus-follows-mouse policy.
+ *
+ * If no state is active and the user is holding the window-management
+ * modifier, the behaviour enters ManageWindowState. In FFM mode the focus
+ * is transferred to the window under the cursor; a fake (synthetic) move
+ * sends focus to NULL so the previously focused window can reclaim it.
+ *
+ * @param message Original B_MOUSE_MOVED message.
+ * @param where   Cursor position in screen coordinates.
+ * @param isFake  true if the event was synthesized rather than user-driven.
+ */
 void
 DefaultWindowBehaviour::MouseMoved(BMessage* message, BPoint where, bool isFake)
 {
@@ -984,6 +1167,12 @@ DefaultWindowBehaviour::MouseMoved(BMessage* message, BPoint where, bool isFake)
 }
 
 
+/**
+ * @brief Notifies the active state that the modifier set changed; otherwise
+ *        enters ManageWindowState when the window-modifier becomes active.
+ *
+ * @param modifiers New modifier bitmask.
+ */
 void
 DefaultWindowBehaviour::ModifiersChanged(int32 modifiers)
 {
@@ -1001,6 +1190,14 @@ DefaultWindowBehaviour::ModifiersChanged(int32 modifiers)
 }
 
 
+/**
+ * @brief Delegates the snap-to-edge decision to the embedded MagneticBorder.
+ *
+ * @param window The window being moved.
+ * @param delta  Proposed move delta; modified in place when snapping fires.
+ * @param now    Current time for snap hysteresis.
+ * @return true if @a delta was altered.
+ */
 bool
 DefaultWindowBehaviour::AlterDeltaForSnap(Window* window, BPoint& delta,
 	bigtime_t now)
@@ -1009,6 +1206,14 @@ DefaultWindowBehaviour::AlterDeltaForSnap(Window* window, BPoint& delta,
 }
 
 
+/**
+ * @brief Returns true when @a modifiers matches the window-management chord
+ *        (Command+Control with no Option/Shift) and the window allows
+ *        server-side modifiers.
+ *
+ * @param modifiers Modifier bitmask to test.
+ * @return true if the chord is the configured window modifier.
+ */
 bool
 DefaultWindowBehaviour::_IsWindowModifier(int32 modifiers) const
 {
@@ -1018,6 +1223,15 @@ DefaultWindowBehaviour::_IsWindowModifier(int32 modifiers) const
 }
 
 
+/**
+ * @brief Hit-tests the click position carried in @a message against the
+ *        window's decorator and returns the matching region.
+ *
+ * @param message Mouse message with a "where" point field.
+ * @param tab     Out-parameter set to the hit tab index, or -1.
+ * @return The hit Decorator::Region, or REGION_NONE if there is no decorator
+ *         or no "where" field in the message.
+ */
 Decorator::Region
 DefaultWindowBehaviour::_RegionFor(const BMessage* message, int32& tab) const
 {
@@ -1033,6 +1247,18 @@ DefaultWindowBehaviour::_RegionFor(const BMessage* message, int32& tab) const
 }
 
 
+/**
+ * @brief Toggles the resize-border highlight for the chosen edges and corner.
+ *
+ * For each axis the corresponding border region is highlighted; when both
+ * axes are active, the matching corner region is also highlighted. The
+ * dirty region produced by Decorator::SetRegionHighlight is then forwarded
+ * to the window for repainting.
+ *
+ * @param horizontal LEFT, RIGHT, or NONE.
+ * @param vertical   TOP, BOTTOM, or NONE.
+ * @param active     true to apply HIGHLIGHT_RESIZE_BORDER, false to clear.
+ */
 void
 DefaultWindowBehaviour::_SetBorderHighlights(int8 horizontal, int8 vertical,
 	bool active)
@@ -1099,6 +1325,14 @@ DefaultWindowBehaviour::_SetBorderHighlights(int8 horizontal, int8 vertical,
 }
 
 
+/**
+ * @brief Selects the system cursor that visually matches a resize direction.
+ *
+ * @param horizontal LEFT, RIGHT, or NONE.
+ * @param vertical   TOP, BOTTOM, or NONE.
+ * @return A pointer to the matching cursor (e.g. north-west diagonal,
+ *         east-west horizontal). Caller does not own the returned pointer.
+ */
 ServerCursor*
 DefaultWindowBehaviour::_ResizeCursorFor(int8 horizontal, int8 vertical)
 {
@@ -1130,6 +1364,12 @@ DefaultWindowBehaviour::_ResizeCursorFor(int8 horizontal, int8 vertical)
 }
 
 
+/**
+ * @brief Installs the desktop's management cursor to a resize cursor.
+ *
+ * @param horizontal Horizontal resize direction.
+ * @param vertical   Vertical resize direction.
+ */
 void
 DefaultWindowBehaviour::_SetResizeCursor(int8 horizontal, int8 vertical)
 {
@@ -1137,6 +1377,9 @@ DefaultWindowBehaviour::_SetResizeCursor(int8 horizontal, int8 vertical)
 }
 
 
+/**
+ * @brief Restores the desktop's management cursor (back to the system default).
+ */
 void
 DefaultWindowBehaviour::_ResetResizeCursor()
 {
@@ -1144,6 +1387,19 @@ DefaultWindowBehaviour::_ResetResizeCursor()
 }
 
 
+/**
+ * @brief Maps a window-relative cursor offset @a x,@a y to discrete
+ *        horizontal and vertical resize directions.
+ *
+ * The plane is divided into eight 45-degree sectors. The cursor's angle
+ * relative to the window centre selects exactly one sector, which is then
+ * decomposed into a horizontal and vertical sign.
+ *
+ * @param x           Cursor x relative to window centre, normalised by width.
+ * @param y           Cursor y relative to window centre, normalised by height.
+ * @param _horizontal Out-parameter receiving LEFT, RIGHT, or NONE.
+ * @param _vertical   Out-parameter receiving TOP, BOTTOM, or NONE.
+ */
 /*static*/ void
 DefaultWindowBehaviour::_ComputeResizeDirection(float x, float y,
 	int8& _horizontal, int8& _vertical)
@@ -1199,6 +1455,18 @@ DefaultWindowBehaviour::_ComputeResizeDirection(float x, float y,
 }
 
 
+/**
+ * @brief Replaces the active state with @a state, running the standard
+ *        ExitState / EnterState lifecycle.
+ *
+ * The previous state is exited (passing the new state for context) and
+ * deleted; the new state is entered. While a state is active this window
+ * also receives all mouse events even outside its frame; when the state is
+ * cleared and this window was the mouse-event target, that target is
+ * cleared too.
+ *
+ * @param state New state, taking ownership; may be NULL to deactivate.
+ */
 void
 DefaultWindowBehaviour::_NextState(State* state)
 {

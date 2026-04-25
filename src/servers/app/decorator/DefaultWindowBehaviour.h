@@ -1,16 +1,30 @@
 /*
- * Copyright 2001-2010, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Adi Oanca <adioanca@gmail.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler <axeld@pinc-software.de>
- *		Brecht Machiels <brecht@mos6581.org>
- *		Clemens Zeidler <haiku@clemens-zeidler.de>
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2010, Haiku.
+ * Original authors: DarkWyrm, Adi Oanca, Stephan Aßmus, Axel Dörfler,
+ *                   Brecht Machiels, Clemens Zeidler, Ingo Weinhold.
  */
+
+/** @file DefaultWindowBehaviour.h
+    @brief Default mouse/keyboard input policy for a window: drag, resize,
+           tab sliding, decorator-button presses, and modifier-driven manage mode. */
+
 #ifndef DEFAULT_WINDOW_BEHAVIOUR_H
 #define DEFAULT_WINDOW_BEHAVIOUR_H
 
@@ -28,6 +42,10 @@ class Desktop;
 class Window;
 
 
+/** @brief WindowBehaviour implementation used by the default decorator. It
+           drives a state-machine over mouse events to perform window dragging,
+           resizing (incl. outline-resize and resize-by-modifier), tab sliding,
+           button presses, and edge-snap via MagneticBorder. */
 class DefaultWindowBehaviour : public WindowBehaviour {
 public:
 								DefaultWindowBehaviour(Window* window);

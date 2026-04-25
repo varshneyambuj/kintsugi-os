@@ -1,10 +1,46 @@
 /*
- * Copyright 2009, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
  */
+
+
+/**
+ * @file RemoteHWInterface.cpp
+ * @brief HWInterface that streams app_server output to a remote viewer.
+ *
+ * Listens on a configurable TCP port; on connect it spawns a NetSender to
+ * push outbound RemoteMessage bytes from a ring buffer over the socket and
+ * uses a NetReceiver to feed inbound bytes into a parallel ring. A
+ * dedicated event thread decodes inbound RP_* messages: input goes to a
+ * RemoteEventStream that fronts the EventDispatcher, while replies to
+ * outstanding queries are routed via per-token callbacks registered by
+ * RemoteDrawingEngine. SetCursor / Invalidate / SetMode etc. are
+ * forwarded as RemoteMessage frames; FrontBuffer/BackBuffer return NULL
+ * because the actual pixels live on the viewer.
+ */
+
 
 #include "RemoteHWInterface.h"
 #include "RemoteDrawingEngine.h"
@@ -29,13 +65,29 @@
 #define TRACE_ERROR(x...)		debug_printf("RemoteHWInterface: " x)
 
 
+/** @brief Token-keyed reply callback registration kept in a sorted list. */
 struct callback_info {
+	/** @brief Match key chosen by the caller (typically a sequence number). */
 	uint32				token;
+	/** @brief Function invoked when a message tagged with @c token arrives. */
 	RemoteHWInterface::CallbackFunction	callback;
+	/** @brief Opaque cookie forwarded into the callback. */
 	void*				cookie;
 };
 
 
+/**
+ * @brief Builds the listener, ring buffers, receiver, and event thread.
+ *
+ * Parses @a target as a port number, binds a listening BNetEndpoint to it,
+ * allocates two 16 KiB ring buffers (one outbound, one inbound), constructs
+ * the NetReceiver in listening mode (its connection callback installs the
+ * NetSender once a viewer connects), and spawns the event-decode thread.
+ * fInitStatus records the first failure encountered; Initialize() simply
+ * returns it.
+ *
+ * @param target  Decimal listening port, parsed via sscanf.
+ */
 RemoteHWInterface::RemoteHWInterface(const char* target)
 	:
 	HWInterface(),
@@ -120,6 +172,13 @@ RemoteHWInterface::RemoteHWInterface(const char* target)
 }
 
 
+/**
+ * @brief Tears down the receiver, ring buffers, sender, listener, and
+ *        event stream.
+ *
+ * @todo  Audit the destruction order; the original Haiku code carries a
+ *        TODO for the same reason.
+ */
 RemoteHWInterface::~RemoteHWInterface()
 {
 	//TODO: check order
@@ -135,6 +194,12 @@ RemoteHWInterface::~RemoteHWInterface()
 }
 
 
+/**
+ * @brief Returns the cached construction status; nothing extra to do here.
+ *
+ * @return     B_OK when construction succeeded, otherwise the first error
+ *             encountered.
+ */
 status_t
 RemoteHWInterface::Initialize()
 {
@@ -142,6 +207,12 @@ RemoteHWInterface::Initialize()
 }
 
 
+/**
+ * @brief Closes the listener and notifies the viewer that we are
+ *        disconnecting.
+ *
+ * @return     Always B_OK.
+ */
 status_t
 RemoteHWInterface::Shutdown()
 {
@@ -150,6 +221,11 @@ RemoteHWInterface::Shutdown()
 }
 
 
+/**
+ * @brief Creates a fresh RemoteDrawingEngine bound to this interface.
+ *
+ * @return     Newly allocated drawing engine, or NULL on allocation failure.
+ */
 DrawingEngine*
 RemoteHWInterface::CreateDrawingEngine()
 {
@@ -157,6 +233,13 @@ RemoteHWInterface::CreateDrawingEngine()
 }
 
 
+/**
+ * @brief Returns the shared RemoteEventStream that injects remote input
+ *        events into the EventDispatcher.
+ *
+ * @return     EventStream owned by this interface; the caller must not free
+ *             it.
+ */
 EventStream*
 RemoteHWInterface::CreateEventStream()
 {
@@ -164,6 +247,17 @@ RemoteHWInterface::CreateEventStream()
 }
 
 
+/**
+ * @brief Registers a token-keyed reply callback.
+ *
+ * @param token     Caller-chosen identifier; must be unique within the
+ *                  callback table.
+ * @param callback  Function to invoke when a message tagged with @a token
+ *                  is decoded.
+ * @param cookie    Opaque pointer forwarded into @a callback.
+ * @return          B_OK on success, B_NAME_IN_USE if @a token is already
+ *                  registered, or B_NO_MEMORY on allocation failure.
+ */
 status_t
 RemoteHWInterface::AddCallback(uint32 token, CallbackFunction callback,
 	void* cookie)
@@ -186,6 +280,13 @@ RemoteHWInterface::AddCallback(uint32 token, CallbackFunction callback,
 }
 
 
+/**
+ * @brief Removes a previously registered reply callback.
+ *
+ * @param token  Identifier passed to AddCallback().
+ * @return       true if a callback was removed, false if @a token was not
+ *               registered.
+ */
 bool
 RemoteHWInterface::RemoveCallback(uint32 token)
 {
@@ -199,6 +300,12 @@ RemoteHWInterface::RemoveCallback(uint32 token)
 }
 
 
+/**
+ * @brief Looks up the callback descriptor for @a token under the lock.
+ *
+ * @param token  Identifier registered via AddCallback().
+ * @return       Pointer to the descriptor, or NULL if not present.
+ */
 callback_info*
 RemoteHWInterface::_FindCallback(uint32 token)
 {
@@ -207,6 +314,13 @@ RemoteHWInterface::_FindCallback(uint32 token)
 }
 
 
+/**
+ * @brief BinarySearch comparator that orders descriptors by their token.
+ *
+ * @param key   Search key.
+ * @param info  Candidate descriptor.
+ * @return      0 if equal, -1 if @a info precedes @a key, +1 otherwise.
+ */
 int
 RemoteHWInterface::_CallbackCompare(const uint32* key,
 	const callback_info* info)
@@ -221,6 +335,12 @@ RemoteHWInterface::_CallbackCompare(const uint32* key,
 }
 
 
+/**
+ * @brief Static thread trampoline for the event-decode loop.
+ *
+ * @param data  Pointer to the owning RemoteHWInterface.
+ * @return      The status_t result of _EventThread().
+ */
 int32
 RemoteHWInterface::_EventThreadEntry(void* data)
 {
@@ -228,6 +348,19 @@ RemoteHWInterface::_EventThreadEntry(void* data)
 }
 
 
+/**
+ * @brief Decodes inbound RemoteMessage frames and dispatches them.
+ *
+ * RP_INIT_CONNECTION triggers the handshake reply (initial cursor and
+ * cursor position). RP_UPDATE_DISPLAY_MODE updates fClientMode, marks the
+ * link as connected, and notifies listeners. RP_GET_SYSTEM_PALETTE serves
+ * the current SystemColorMap. Mouse / keyboard codes are forwarded to the
+ * RemoteEventStream. Unrecognised codes are tried against the registered
+ * reply callbacks via the leading token.
+ *
+ * @return     The error code that caused the loop to exit (the function
+ *             only returns on protocol-level failure).
+ */
 status_t
 RemoteHWInterface::_EventThread()
 {
@@ -330,6 +463,13 @@ RemoteHWInterface::_EventThread()
 }
 
 
+/**
+ * @brief Static trampoline used as NetReceiver's NewConnectionCallback.
+ *
+ * @param cookie    Pointer to the owning RemoteHWInterface.
+ * @param endpoint  Newly accepted client endpoint.
+ * @return          B_OK to accept the connection, otherwise an error code.
+ */
 status_t
 RemoteHWInterface::_NewConnectionCallback(void *cookie, BNetEndpoint &endpoint)
 {
@@ -337,6 +477,16 @@ RemoteHWInterface::_NewConnectionCallback(void *cookie, BNetEndpoint &endpoint)
 }
 
 
+/**
+ * @brief Resets the send pipeline for a freshly accepted viewer connection.
+ *
+ * Clears the previous sender (if any), drops stale outbound bytes from the
+ * send ring, then constructs a NetSender that owns a clone of @a endpoint
+ * and feeds from fSendBuffer.
+ *
+ * @param endpoint  Newly accepted client endpoint; cloned by the sender.
+ * @return          B_OK on success, B_NO_MEMORY if either allocation fails.
+ */
 status_t
 RemoteHWInterface::_NewConnection(BNetEndpoint &endpoint)
 {
@@ -358,6 +508,10 @@ RemoteHWInterface::_NewConnection(BNetEndpoint &endpoint)
 }
 
 
+/**
+ * @brief Sends an RP_CLOSE_CONNECTION to the viewer (when connected) and
+ *        closes the listener socket.
+ */
 void
 RemoteHWInterface::_Disconnect()
 {
@@ -373,6 +527,13 @@ RemoteHWInterface::_Disconnect()
 }
 
 
+/**
+ * @brief Records a new desired mode locally; the viewer drives the actual
+ *        screen geometry over the wire.
+ *
+ * @param mode  Mode requested by the client.
+ * @return      Always B_OK.
+ */
 status_t
 RemoteHWInterface::SetMode(const display_mode& mode)
 {
@@ -383,6 +544,12 @@ RemoteHWInterface::SetMode(const display_mode& mode)
 }
 
 
+/**
+ * @brief Copies the currently active mode into @a mode under the read lock.
+ *
+ * @param mode  Destination; if NULL or the lock cannot be taken the call
+ *              is a no-op.
+ */
 void
 RemoteHWInterface::GetMode(display_mode* mode)
 {
@@ -397,6 +564,13 @@ RemoteHWInterface::GetMode(display_mode* mode)
 }
 
 
+/**
+ * @brief Reports the viewer-preferred display mode (width/height pinned by
+ *        the connected client).
+ *
+ * @param mode  Destination; populated with the cached client mode.
+ * @return      Always B_OK.
+ */
 status_t
 RemoteHWInterface::GetPreferredMode(display_mode* mode)
 {
@@ -405,6 +579,12 @@ RemoteHWInterface::GetPreferredMode(display_mode* mode)
 }
 
 
+/**
+ * @brief Fills out a synthetic accelerant_device_info describing the link.
+ *
+ * @param info  Destination; populated only when the read lock can be taken.
+ * @return      B_OK on success, B_ERROR if the lock cannot be acquired.
+ */
 status_t
 RemoteHWInterface::GetDeviceInfo(accelerant_device_info* info)
 {
@@ -423,6 +603,15 @@ RemoteHWInterface::GetDeviceInfo(accelerant_device_info* info)
 }
 
 
+/**
+ * @brief Returns the (very small) list of supported modes: the built-in
+ *        fallback and the viewer's currently advertised mode.
+ *
+ * @param _modes  Output, newly allocated array of length 2; caller frees
+ *                with delete[].
+ * @param _count  Output count, always 2 on success.
+ * @return        B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 RemoteHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 {
@@ -441,6 +630,11 @@ RemoteHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 }
 
 
+/**
+ * @brief Pixel-clock limits are meaningless for a network-attached display.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 status_t
 RemoteHWInterface::GetPixelClockLimits(display_mode* mode, uint32* low,
 	uint32* high)
@@ -450,6 +644,11 @@ RemoteHWInterface::GetPixelClockLimits(display_mode* mode, uint32* low,
 }
 
 
+/**
+ * @brief Timing constraints are meaningless for a network-attached display.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 status_t
 RemoteHWInterface::GetTimingConstraints(display_timing_constraints* constraints)
 {
@@ -458,6 +657,14 @@ RemoteHWInterface::GetTimingConstraints(display_timing_constraints* constraints)
 }
 
 
+/**
+ * @brief Accepts any proposed mode without modification.
+ *
+ * @param candidate  Candidate mode (untouched).
+ * @param low        Lower bound (ignored).
+ * @param high       Upper bound (ignored).
+ * @return           Always B_OK.
+ */
 status_t
 RemoteHWInterface::ProposeMode(display_mode* candidate, const display_mode* low,
 	const display_mode* high)
@@ -468,6 +675,11 @@ RemoteHWInterface::ProposeMode(display_mode* candidate, const display_mode* low,
 }
 
 
+/**
+ * @brief DPMS state is set by the viewer; this side cannot influence it.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 status_t
 RemoteHWInterface::SetDPMSMode(uint32 state)
 {
@@ -475,6 +687,11 @@ RemoteHWInterface::SetDPMSMode(uint32 state)
 }
 
 
+/**
+ * @brief DPMS state is opaque on this side of the link.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 uint32
 RemoteHWInterface::DPMSMode()
 {
@@ -482,6 +699,11 @@ RemoteHWInterface::DPMSMode()
 }
 
 
+/**
+ * @brief DPMS capabilities are not modelled for the remote link.
+ *
+ * @return     Always 0.
+ */
 uint32
 RemoteHWInterface::DPMSCapabilities()
 {
@@ -489,6 +711,11 @@ RemoteHWInterface::DPMSCapabilities()
 }
 
 
+/**
+ * @brief Brightness is set by the viewer, not by the remote app_server.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 status_t
 RemoteHWInterface::SetBrightness(float)
 {
@@ -496,6 +723,11 @@ RemoteHWInterface::SetBrightness(float)
 }
 
 
+/**
+ * @brief Brightness is opaque on this side of the link.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 status_t
 RemoteHWInterface::GetBrightness(float*)
 {
@@ -503,6 +735,11 @@ RemoteHWInterface::GetBrightness(float*)
 }
 
 
+/**
+ * @brief No vertical retrace semaphore is meaningful for a remote display.
+ *
+ * @return     Always -1.
+ */
 sem_id
 RemoteHWInterface::RetraceSemaphore()
 {
@@ -510,6 +747,11 @@ RemoteHWInterface::RetraceSemaphore()
 }
 
 
+/**
+ * @brief Waiting for retrace is unsupported on the remote link.
+ *
+ * @return     Always B_UNSUPPORTED.
+ */
 status_t
 RemoteHWInterface::WaitForRetrace(bigtime_t timeout)
 {
@@ -517,6 +759,12 @@ RemoteHWInterface::WaitForRetrace(bigtime_t timeout)
 }
 
 
+/**
+ * @brief Updates the local cursor and forwards the new cursor bitmap to
+ *        the viewer.
+ *
+ * @param cursor  New cursor; ownership transfers to the base implementation.
+ */
 void
 RemoteHWInterface::SetCursor(ServerCursor* cursor)
 {
@@ -527,6 +775,12 @@ RemoteHWInterface::SetCursor(ServerCursor* cursor)
 }
 
 
+/**
+ * @brief Updates local cursor visibility and notifies the viewer.
+ *
+ * @param visible  true to show the cursor on the remote screen, false to
+ *                 hide it.
+ */
 void
 RemoteHWInterface::SetCursorVisible(bool visible)
 {
@@ -537,6 +791,12 @@ RemoteHWInterface::SetCursorVisible(bool visible)
 }
 
 
+/**
+ * @brief Moves the local cursor and tells the viewer to do the same.
+ *
+ * @param x  Target X in screen pixels.
+ * @param y  Target Y in screen pixels.
+ */
 void
 RemoteHWInterface::MoveCursorTo(float x, float y)
 {
@@ -548,6 +808,13 @@ RemoteHWInterface::MoveCursorTo(float x, float y)
 }
 
 
+/**
+ * @brief Updates the drag bitmap composited onto the cursor and forwards
+ *        the combined cursor image to the viewer.
+ *
+ * @param bitmap            Drag preview bitmap; may be NULL to clear.
+ * @param offsetFromCursor  Hotspot offset from the cursor origin.
+ */
 void
 RemoteHWInterface::SetDragBitmap(const ServerBitmap* bitmap,
 	const BPoint& offsetFromCursor)
@@ -559,6 +826,11 @@ RemoteHWInterface::SetDragBitmap(const ServerBitmap* bitmap,
 }
 
 
+/**
+ * @brief No local front buffer exists; pixels live on the viewer.
+ *
+ * @return     Always NULL.
+ */
 RenderingBuffer*
 RemoteHWInterface::FrontBuffer() const
 {
@@ -566,6 +838,11 @@ RemoteHWInterface::FrontBuffer() const
 }
 
 
+/**
+ * @brief No local back buffer exists; pixels live on the viewer.
+ *
+ * @return     Always NULL.
+ */
 RenderingBuffer*
 RemoteHWInterface::BackBuffer() const
 {
@@ -573,6 +850,12 @@ RemoteHWInterface::BackBuffer() const
 }
 
 
+/**
+ * @brief The remote driver has no local buffers, so it is not double
+ *        buffered.
+ *
+ * @return     Always false.
+ */
 bool
 RemoteHWInterface::IsDoubleBuffered() const
 {
@@ -580,6 +863,12 @@ RemoteHWInterface::IsDoubleBuffered() const
 }
 
 
+/**
+ * @brief Sends an RP_INVALIDATE_REGION to the viewer.
+ *
+ * @param region  Region to invalidate in screen coordinates.
+ * @return        Always B_OK; transmission errors surface on the send ring.
+ */
 status_t
 RemoteHWInterface::InvalidateRegion(const BRegion& region)
 {
@@ -590,6 +879,12 @@ RemoteHWInterface::InvalidateRegion(const BRegion& region)
 }
 
 
+/**
+ * @brief Sends an RP_INVALIDATE_RECT to the viewer.
+ *
+ * @param frame  Rectangle to invalidate in screen coordinates.
+ * @return       Always B_OK; transmission errors surface on the send ring.
+ */
 status_t
 RemoteHWInterface::Invalidate(const BRect& frame)
 {
@@ -600,6 +895,12 @@ RemoteHWInterface::Invalidate(const BRect& frame)
 }
 
 
+/**
+ * @brief No-op: the viewer composites whatever it likes from incoming
+ *        drawing operations.
+ *
+ * @return     Always B_OK.
+ */
 status_t
 RemoteHWInterface::CopyBackToFront(const BRect& frame)
 {
@@ -607,6 +908,16 @@ RemoteHWInterface::CopyBackToFront(const BRect& frame)
 }
 
 
+/**
+ * @brief Computes a synthetic VESA-style timing for @a mode based purely on
+ *        its virtual dimensions.
+ *
+ * Used to populate fFallbackMode and any RP_UPDATE_DISPLAY_MODE we accept;
+ * the timing fields are not used by the remote viewer but are required by
+ * the display_mode contract.
+ *
+ * @param mode  Mode whose timing block is filled in.
+ */
 void
 RemoteHWInterface::_FillDisplayModeTiming(display_mode &mode)
 {

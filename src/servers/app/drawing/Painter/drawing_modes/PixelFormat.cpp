@@ -1,14 +1,50 @@
 /*
- * Copyright 2005, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * A class implementing the AGG "pixel format" interface which maintains
- * a PatternHandler and pointers to blending functions implementing the
- * different BeOS "drawing_modes".
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005, Stephan Aßmus <superstippi@gmx.de>.
+ *   Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ *
+ *   A class implementing the AGG "pixel format" interface which maintains
+ *   a PatternHandler and pointers to blending functions implementing the
+ *   different BeOS "drawing_modes".
+ */
+
+
+/**
+ * @file PixelFormat.cpp
+ * @brief Implementation of PixelFormat, the AGG pixel format dispatcher that
+ *        wires the active drawing_mode and source_alpha / alpha_function
+ *        combination to the matching per-mode blend_* function family.
+ *
+ * PixelFormat is the bridge between AGG's renderer scanline interface and
+ * the Haiku-style drawing modes (B_OP_COPY, B_OP_OVER, B_OP_BLEND, B_OP_ADD,
+ * B_OP_ALPHA with overlay or composite alpha plus the Porter-Duff
+ * SOURCE_IN/OUT/ATOP, DESTINATION_OVER/IN/OUT/ATOP, XOR, CLEAR, DIFFERENCE,
+ * LIGHTEN, DARKEN modes). For every (mode, alpha src, alpha fn, solid pattern,
+ * subpixel) tuple it stores function pointers that AGG calls per pixel,
+ * hline, vline, solid hspan, color hspan and the subpixel hspan variant.
+ *
+ * @see PatternHandler, AggCompOpAdapter, DrawingMode.h
  */
 
 #include "PixelFormat.h"
@@ -56,7 +92,10 @@
 
 #include "PatternHandler.h"
 
-// blend_pixel_empty
+/**
+ * @brief Default fallback blend_pixel that traces a stub call when no
+ *        drawing_mode has been bound yet.
+ */
 void
 blend_pixel_empty(int x, int y, const color_type& c, uint8 cover,
 				  agg_buffer* buffer, const PatternHandler* pattern)
@@ -64,7 +103,11 @@ blend_pixel_empty(int x, int y, const color_type& c, uint8 cover,
 	printf("blend_pixel_empty()\n");
 }
 
-// blend_hline_empty
+
+/**
+ * @brief Default fallback blend_hline used before SetDrawingMode() rebinds
+ *        the function pointers.
+ */
 void
 blend_hline_empty(int x, int y, unsigned len,
 				  const color_type& c, uint8 cover,
@@ -73,7 +116,11 @@ blend_hline_empty(int x, int y, unsigned len,
 	printf("blend_hline_empty()\n");
 }
 
-// blend_vline_empty
+
+/**
+ * @brief Default fallback blend_vline used before SetDrawingMode() rebinds
+ *        the function pointers.
+ */
 void
 blend_vline_empty(int x, int y, unsigned len,
 				  const color_type& c, uint8 cover,
@@ -82,7 +129,11 @@ blend_vline_empty(int x, int y, unsigned len,
 	printf("blend_vline_empty()\n");
 }
 
-// blend_solid_hspan_empty
+
+/**
+ * @brief Default fallback blend_solid_hspan used before SetDrawingMode()
+ *        binds the active drawing mode.
+ */
 void
 blend_solid_hspan_empty(int x, int y, unsigned len,
 						const color_type& c, const uint8* covers,
@@ -91,7 +142,11 @@ blend_solid_hspan_empty(int x, int y, unsigned len,
 	printf("blend_solid_hspan_empty()\n");
 }
 
-// blend_solid_hspan_subpix_empty
+
+/**
+ * @brief Default fallback subpixel solid hspan blender used before
+ *        SetDrawingMode() binds the active drawing mode.
+ */
 void
 blend_solid_hspan_empty_subpix(int x, int y, unsigned len,
 						const color_type& c, const uint8* covers,
@@ -100,7 +155,11 @@ blend_solid_hspan_empty_subpix(int x, int y, unsigned len,
 	printf("blend_solid_hspan_empty_subpix()\n");
 }
 
-// blend_solid_vspan_empty
+
+/**
+ * @brief Default fallback blend_solid_vspan used before SetDrawingMode()
+ *        binds the active drawing mode.
+ */
 void
 blend_solid_vspan_empty(int x, int y,
 						unsigned len, const color_type& c,
@@ -110,7 +169,11 @@ blend_solid_vspan_empty(int x, int y,
 	printf("blend_solid_vspan_empty()\n");
 }
 
-// blend_color_hspan_empty
+
+/**
+ * @brief Default fallback blend_color_hspan used before SetDrawingMode()
+ *        binds the active drawing mode.
+ */
 void
 blend_color_hspan_empty(int x, int y, unsigned len,
 						const color_type* colors,
@@ -120,7 +183,11 @@ blend_color_hspan_empty(int x, int y, unsigned len,
 	printf("blend_color_hspan_empty()\n");
 }
 
-// blend_color_vspan_empty
+
+/**
+ * @brief Default fallback blend_color_vspan used before SetDrawingMode()
+ *        binds the active drawing mode.
+ */
 void
 blend_color_vspan_empty(int x, int y, unsigned len,
 						const color_type* colors,
@@ -132,7 +199,16 @@ blend_color_vspan_empty(int x, int y, unsigned len,
 
 // #pragma mark -
 
-// constructor
+/**
+ * @brief Constructs a PixelFormat bound to an AGG rendering buffer and a
+ *        PatternHandler.
+ *
+ * All blend function pointers are wired to the empty stubs above; callers
+ * must invoke SetDrawingMode() to bind concrete blend implementations.
+ *
+ * @param rb       AGG rendering buffer that will receive pixel writes.
+ * @param handler  Pattern handler queried for source colors per (x, y).
+ */
 PixelFormat::PixelFormat(agg::rendering_buffer& rb,
 						 const PatternHandler* handler)
 	: fBuffer(&rb),
@@ -149,12 +225,31 @@ PixelFormat::PixelFormat(agg::rendering_buffer& rb,
 {
 }
 
-// destructor
+/**
+ * @brief Destroys the PixelFormat. Does not own the rendering buffer or
+ *        the PatternHandler.
+ */
 PixelFormat::~PixelFormat()
 {
 }
 
-// SetDrawingMode
+
+/**
+ * @brief Selects the blend function family that implements a given
+ *        (drawing_mode, source_alpha, alpha_function) tuple.
+ *
+ * Picks per-mode implementations and, for the modes that have one, the
+ * solid-pattern fast path when the bound PatternHandler reports a solid
+ * pattern. For B_OP_ALPHA, dispatches across B_CONSTANT_ALPHA /
+ * B_PIXEL_ALPHA crossed with B_ALPHA_OVERLAY / B_ALPHA_COMPOSITE plus the
+ * Porter-Duff B_ALPHA_COMPOSITE_* operators (SOURCE_IN/OUT/ATOP,
+ * DESTINATION_OVER/IN/OUT/ATOP, XOR, CLEAR, DIFFERENCE, LIGHTEN, DARKEN)
+ * that are routed through AggCompOpAdapter.
+ *
+ * @param mode          Haiku drawing mode to install.
+ * @param alphaSrcMode  Source-alpha selector (only used for B_OP_ALPHA).
+ * @param alphaFncMode  Alpha function selector (only used for B_OP_ALPHA).
+ */
 void
 PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 							alpha_function alphaFncMode)

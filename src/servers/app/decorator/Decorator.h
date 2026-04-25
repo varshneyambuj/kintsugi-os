@@ -1,17 +1,31 @@
 /*
- * Copyright 2001-2020 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Tri-Edge AI
- *		Jacob Secunda, secundja@gmail.com
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2020, Haiku.
+ * Original authors: Stephan Aßmus, DarkWyrm, John Scipione, Ingo Weinhold,
+ *                   Clemens Zeidler, Joseph Groover, Tri-Edge AI,
+ *                   Jacob Secunda.
  */
+
+/** @file Decorator.h
+    @brief Abstract base class for window decorators: title bar, tab buttons,
+           border frame, hit-testing, and footprint computation. */
+
 #ifndef DECORATOR_H
 #define DECORATOR_H
 
@@ -32,8 +46,15 @@ class ServerFont;
 class BRegion;
 
 
+/** @brief Abstract policy for drawing a window's frame and tabs and for
+           translating screen coordinates back to logical decorator regions
+           (close button, zoom button, borders, corners). Subclasses such as
+           TabDecorator and DefaultDecorator implement the painting. */
 class Decorator {
 public:
+	/** @brief Per-tab state held by a multi-tab window: rectangles for the tab
+	           and its buttons, look/flags, focus and pressed state, cached
+	           truncated title, and per-state button bitmap caches. */
 	struct Tab {
 							Tab();
 		virtual				~Tab() {}
@@ -73,6 +94,8 @@ public:
 		ServerBitmap*		zoomBitmaps[4];
 	};
 
+	/** @brief Logical regions of the decorator used by hit-testing and by
+	           highlight rendering. */
 	enum Region {
 		REGION_NONE,
 
@@ -124,6 +147,8 @@ public:
 			void				SetTopTab(int32 tab);
 
 			void				SetDrawingEngine(DrawingEngine *driver);
+	/** @brief Returns the DrawingEngine the decorator paints into, or NULL
+	           if not yet attached. */
 	inline	DrawingEngine*		GetDrawingEngine() const
 									{ return fDrawingEngine; }
 
@@ -165,7 +190,7 @@ public:
 			bool				SetTabLocation(int32 tab, float location,
 									bool isShifting,
 									BRegion* updateRegion = NULL);
-				/*! \return true if tab location updated, false if out of
+				/*! @return true if tab location updated, false if out of
 					bounds or unsupported */
 
 	virtual	Region				RegionAt(BPoint where, int32& tab) const;
@@ -178,6 +203,8 @@ public:
 			void				ResizeBy(float x, float y, BRegion* dirty);
 			void				ResizeBy(BPoint offset, BRegion* dirty);
 			void				SetOutlinesDelta(BPoint delta, BRegion* dirty);
+			/** @brief Returns true when an interactive outline-resize is in
+			           progress (a non-zero outline delta is pending). */
 			bool				IsOutlineResizing() const
 									{ return fOutlinesDelta != BPoint(0, 0); }
 
@@ -323,6 +350,13 @@ private:
 };
 
 
+/**
+ * @brief Returns the highlight value previously set for @a region.
+ *
+ * @param region The decorator region whose highlight is queried.
+ * @param tab    Tab index (currently unused by the base implementation).
+ * @return The stored highlight kind, or 0 if @a region is invalid.
+ */
 uint8
 Decorator::RegionHighlight(Region region, int32 tab) const
 {

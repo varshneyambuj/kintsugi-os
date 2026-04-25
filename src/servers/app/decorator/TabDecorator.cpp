@@ -1,21 +1,51 @@
 /*
- * Copyright 2001-2020 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Ryan Leavengood, leavengood@gmail.com
- *		Philippe Saint-Pierre, stpere@gmail.com
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Jacob Secunda, secundaja@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020 Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Ryan Leavengood, leavengood@gmail.com
+ *       Philippe Saint-Pierre, stpere@gmail.com
+ *       John Scipione, jscipione@gmail.com
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *       Clemens Zeidler, haiku@clemens-zeidler.de
+ *       Joseph Groover, looncraz@looncraz.net
+ *       Jacob Secunda, secundaja@gmail.com
  */
 
 
-/*!	Decorator made up of tabs */
+/**
+ * @file TabDecorator.cpp
+ * @brief Decorator base class that arranges a tabbed title bar and a
+ *        resizable border frame.
+ *
+ * TabDecorator provides the geometry pass: it computes border widths, tab
+ * rectangles, resize-knob placement, and multi-tab stacking layout based on
+ * the window look and font metrics. Concrete painting (gradients, button
+ * artwork, title text) is left to subclasses such as DefaultDecorator.
+ *
+ * @see DefaultDecorator, Decorator
+ */
 
 
 #include "TabDecorator.h"
@@ -49,6 +79,16 @@
 #endif
 
 
+/**
+ * @brief Returns true when two float widths differ by at most one pixel.
+ *
+ * Used by the multi-tab size distribution to coalesce tabs whose widths are
+ * effectively equal under rounding.
+ *
+ * @param x First width.
+ * @param y Second width.
+ * @return true if the values are within one pixel of each other.
+ */
 static bool
 int_equal(float x, float y)
 {
@@ -56,13 +96,30 @@ int_equal(float x, float y)
 }
 
 
+/** @brief Length, in pixels (at 1x font scale), of the lines that mark the
+           resize-active region along the bottom and right borders. */
 static const float kBorderResizeLength = 22.0;
+/** @brief Side length, in pixels (at 1x font scale), of the document-look
+           resize knob in the bottom-right corner. */
 static const float kResizeKnobSize = 18.0;
 
 
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a TabDecorator for @a frame on @a desktop.
+ *
+ * The base Decorator initializer is invoked first; this constructor only
+ * resets the moving-tab cache used during multi-tab drag.
+ *
+ * @param settings Current desktop settings.
+ * @param frame    Initial client-area frame.
+ * @param desktop  Desktop the window belongs to.
+ *
+ * @todo Drop the DesktopSettings parameter and use a private accessor on
+ *       the Decorator base instead.
+ */
 // TODO: get rid of DesktopSettings here, and introduce private accessor
 //	methods to the Decorator base class
 TabDecorator::TabDecorator(DesktopSettings& settings, BRect frame,
@@ -80,6 +137,10 @@ TabDecorator::TabDecorator(DesktopSettings& settings, BRect frame,
 }
 
 
+/**
+ * @brief Destroys the TabDecorator. Tab list members are deleted by the
+ *        Decorator base class.
+ */
 TabDecorator::~TabDecorator()
 {
 	STRACE(("TabDecorator: ~TabDecorator()\n"));
@@ -89,12 +150,14 @@ TabDecorator::~TabDecorator()
 // #pragma mark - Public methods
 
 
-/*!	\brief Updates the decorator in the rectangular area \a updateRect.
-
-	Updates all areas which intersect the frame and tab.
-
-	\param updateRect The rectangular area to update.
-*/
+/**
+ * @brief Repaints the parts of the decorator that intersect @a updateRect.
+ *
+ * The frame, optional outline frame (during interactive resize), and the
+ * tab bar are each clipped against @a updateRect before drawing.
+ *
+ * @param updateRect Rectangle to repaint, in screen coordinates.
+ */
 void
 TabDecorator::Draw(BRect updateRect)
 {
@@ -113,7 +176,11 @@ TabDecorator::Draw(BRect updateRect)
 }
 
 
-//! Forces a complete decorator update
+/**
+ * @brief Repaints the entire decorator, ignoring the dirty region.
+ *
+ * Used for full refreshes after a font, color, or look change.
+ */
 void
 TabDecorator::Draw()
 {
@@ -130,6 +197,17 @@ TabDecorator::Draw()
 }
 
 
+/**
+ * @brief Hit-tests @a where against tabs, borders, and the resize corner.
+ *
+ * Extends the base class behaviour by recognising hits on the four borders
+ * and on the resize knob/corner, including the diagonal resize area at the
+ * bottom-right of titled, floating, and modal windows.
+ *
+ * @param where Point to test, in screen coordinates.
+ * @param tab   Out-parameter receiving the index of the hit tab, or -1.
+ * @return The matching Region constant, or REGION_NONE.
+ */
 Decorator::Region
 TabDecorator::RegionAt(BPoint where, int32& tab) const
 {
@@ -174,6 +252,20 @@ TabDecorator::RegionAt(BPoint where, int32& tab) const
 }
 
 
+/**
+ * @brief Updates a region highlight and invalidates affected button bitmap
+ *        caches.
+ *
+ * When the close or zoom button highlight changes, the cached pre-rendered
+ * bitmap arrays for that button are zeroed so that the next paint pass
+ * regenerates them with the new highlight color.
+ *
+ * @param region    Region whose highlight is being updated.
+ * @param highlight New highlight value.
+ * @param dirty     Region extended with affected paint area; may be NULL.
+ * @param tabIndex  Tab index whose button caches should be invalidated.
+ * @return true on success; false if the base class rejects the change.
+ */
 bool
 TabDecorator::SetRegionHighlight(Region region, uint8 highlight,
 	BRegion* dirty, int32 tabIndex)
@@ -202,6 +294,15 @@ TabDecorator::SetRegionHighlight(Region region, uint8 highlight,
 }
 
 
+/**
+ * @brief Recomputes focused and unfocused frame, tab, bevel, shadow, and
+ *        text colors from the current desktop settings.
+ *
+ * Called both at construction and whenever the system color set changes.
+ * The desktop is held write-locked during the call so the work must be brief.
+ *
+ * @param settings Current desktop settings.
+ */
 void
 TabDecorator::UpdateColors(DesktopSettings& settings)
 {
@@ -226,6 +327,14 @@ TabDecorator::UpdateColors(DesktopSettings& settings)
 }
 
 
+/**
+ * @brief Recomputes border, frame, resize, and tab geometry.
+ *
+ * Selects a border width based on the window look, scales it to the current
+ * font size, lays out the four border rectangles around the client frame,
+ * positions the resize knob, and finally delegates to _DoTabLayout when the
+ * window has a tab.
+ */
 void
 TabDecorator::_DoLayout()
 {
@@ -316,6 +425,10 @@ TabDecorator::_DoLayout()
 }
 
 
+/**
+ * @brief Computes the one-pixel-wide outline rectangles used to render the
+ *        ghost frame during interactive outline-resize.
+ */
 void
 TabDecorator::_DoOutlineLayout()
 {
@@ -344,6 +457,14 @@ TabDecorator::_DoOutlineLayout()
 }
 
 
+/**
+ * @brief Lays out every tab in the title bar.
+ *
+ * Computes minimum and maximum tab widths from the title's measured text,
+ * places each tab side by side, applies floating-window inset adjustments,
+ * shrinks tabs proportionally if the combined width exceeds the window
+ * width, and finally lays out the buttons inside each tab.
+ */
 void
 TabDecorator::_DoTabLayout()
 {
@@ -456,6 +577,19 @@ TabDecorator::_DoTabLayout()
 }
 
 
+/**
+ * @brief Reduces tab widths by @a delta total pixels in a stacked window.
+ *
+ * Iteratively shrinks the widest tab(s) by the gap to the second-widest
+ * width until the requested reduction has been absorbed. After distributing
+ * the shrink, neighbouring tabs are pulled inward to keep the row contiguous
+ * and tabOffset values are refreshed for each tab.
+ *
+ * @param delta Total width to remove from the tab row, in pixels.
+ *
+ * @note The function recurses with the remaining delta when the largest
+ *       single shrink step did not absorb the full request.
+ */
 void
 TabDecorator::_DistributeTabSize(float delta)
 {
@@ -525,6 +659,12 @@ TabDecorator::_DistributeTabSize(float delta)
 }
 
 
+/**
+ * @brief Strokes the dashed alpha-blended outline of a window during
+ *        interactive outline-resize.
+ *
+ * @param rect Outline rectangle to stroke, in screen coordinates.
+ */
 void
 TabDecorator::_DrawOutlineFrame(BRect rect)
 {
@@ -538,6 +678,14 @@ TabDecorator::_DrawOutlineFrame(BRect rect)
 }
 
 
+/**
+ * @brief Subclass title hook: relays out tabs and adds the affected area to
+ *        @a updateRegion.
+ *
+ * @param tab          Tab whose title was just changed.
+ * @param string       New title text (already stored on @a tab).
+ * @param updateRegion Optional dirty region; may be NULL.
+ */
 void
 TabDecorator::_SetTitle(Decorator::Tab* tab, const char* string,
 	BRegion* updateRegion)
@@ -563,6 +711,12 @@ TabDecorator::_SetTitle(Decorator::Tab* tab, const char* string,
 }
 
 
+/**
+ * @brief Translates every internal rectangle (frame, borders, tabs, resize
+ *        rect, title bar) by @a offset.
+ *
+ * @param offset Move offset, in pixels.
+ */
 void
 TabDecorator::_MoveBy(BPoint offset)
 {
@@ -589,6 +743,18 @@ TabDecorator::_MoveBy(BPoint offset)
 }
 
 
+/**
+ * @brief Resizes the decorator's frame and borders, and emits the dirty
+ *        rectangles needed to repaint the changed area.
+ *
+ * Handles both the document-look resize knob and the line-style resize
+ * markers used by titled, floating, and modal looks. For single-tab
+ * windows the tab is resized in place; for multi-tab windows the full
+ * tab layout is rerun.
+ *
+ * @param offset Size delta in pixels.
+ * @param dirty  Region extended with areas requiring repaint; may be NULL.
+ */
 void
 TabDecorator::_ResizeBy(BPoint offset, BRegion* dirty)
 {
@@ -744,6 +910,16 @@ TabDecorator::_ResizeBy(BPoint offset, BRegion* dirty)
 }
 
 
+/**
+ * @brief Subclass focus hook: tracks button focus state and reflows the
+ *        clicked tab's items if the window is a stack.
+ *
+ * Floating and left-titled windows that opt out of focus still receive
+ * button focus highlighting, allowing the user to interact with the close
+ * button without stealing focus from the active window.
+ *
+ * @param tab Tab whose focus state changed.
+ */
 void
 TabDecorator::_SetFocus(Decorator::Tab* tab)
 {
@@ -758,6 +934,21 @@ TabDecorator::_SetFocus(Decorator::Tab* tab)
 }
 
 
+/**
+ * @brief Implements interactive tab sliding for both single- and multi-tab
+ *        windows.
+ *
+ * For single-tab windows the tab is moved horizontally within the available
+ * range. For multi-tab windows the row layout is rerun on commit; while the
+ * user is still dragging, a snapshot of the original tab position is kept so
+ * the row can be redrawn cleanly when the drag ends.
+ *
+ * @param _tab         Tab being slid.
+ * @param location     Requested new horizontal offset.
+ * @param isShifting   true while the user is mid-drag, false on commit.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ * @return true if the tab location actually changed.
+ */
 bool
 TabDecorator::_SetTabLocation(Decorator::Tab* _tab, float location,
 	bool isShifting, BRegion* updateRegion)
@@ -824,6 +1015,14 @@ TabDecorator::_SetTabLocation(Decorator::Tab* _tab, float location,
 }
 
 
+/**
+ * @brief Restores per-tab horizontal offsets from a flattened settings
+ *        message.
+ *
+ * @param settings     Flattened settings (per-tab "tab location" floats).
+ * @param updateRegion Optional dirty region; may be NULL.
+ * @return true if any tab location changed; false on read failure or no-op.
+ */
 bool
 TabDecorator::_SetSettings(const BMessage& settings, BRegion* updateRegion)
 {
@@ -838,6 +1037,15 @@ TabDecorator::_SetSettings(const BMessage& settings, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Subclass hook for tab addition: refreshes the font and reruns
+ *        layout, then marks the title bar dirty.
+ *
+ * @param settings     Current desktop settings.
+ * @param index        Insertion index (currently unused beyond layout).
+ * @param updateRegion Optional dirty region; may be NULL.
+ * @return Always true.
+ */
 bool
 TabDecorator::_AddTab(DesktopSettings& settings, int32 index,
 	BRegion* updateRegion)
@@ -853,6 +1061,14 @@ TabDecorator::_AddTab(DesktopSettings& settings, int32 index,
 }
 
 
+/**
+ * @brief Subclass hook for tab removal: marks both the old contiguous tab
+ *        block and the new title bar dirty so the row can shift left.
+ *
+ * @param index        Index of the tab being removed.
+ * @param updateRegion Optional dirty region; may be NULL.
+ * @return Always true.
+ */
 bool
 TabDecorator::_RemoveTab(int32 index, BRegion* updateRegion)
 {
@@ -870,6 +1086,16 @@ TabDecorator::_RemoveTab(int32 index, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Subclass hook for tab reordering: visually swaps the affected pair
+ *        by adjusting their tab rectangles and recomputing the tabs region.
+ *
+ * @param from         Source index.
+ * @param to           Destination index.
+ * @param isMoving     true while the user is mid-drag.
+ * @param updateRegion Optional dirty region; may be NULL.
+ * @return true on success, false if @a to is out of range.
+ */
 bool
 TabDecorator::_MoveTab(int32 from, int32 to, bool isMoving,
 	BRegion* updateRegion)
@@ -897,6 +1123,15 @@ TabDecorator::_MoveTab(int32 from, int32 to, bool isMoving,
 }
 
 
+/**
+ * @brief Populates @a region with the screen-space footprint of the
+ *        decorator borders, tabs, and (for document-look) the resize knob.
+ *
+ * Returns immediately for borderless looks. Bordered-only looks include
+ * just the four borders; otherwise tabs and resize knobs are added.
+ *
+ * @param region Region to populate; ignored if NULL.
+ */
 void
 TabDecorator::_GetFootprint(BRegion *region)
 {
@@ -931,6 +1166,13 @@ TabDecorator::_GetFootprint(BRegion *region)
 }
 
 
+/**
+ * @brief Draws the close and zoom buttons of a tab when their rectangles
+ *        intersect @a invalid and the corresponding flags allow them.
+ *
+ * @param tab     Tab whose buttons are being drawn.
+ * @param invalid Update rectangle, in screen coordinates.
+ */
 void
 TabDecorator::_DrawButtons(Decorator::Tab* tab, const BRect& invalid)
 {
@@ -944,6 +1186,15 @@ TabDecorator::_DrawButtons(Decorator::Tab* tab, const BRect& invalid)
 }
 
 
+/**
+ * @brief Selects the title-bar font from the current desktop settings.
+ *
+ * Floating and left-titled looks use the plain font (rotated 90 degrees for
+ * left-titled), while titled and modal looks use the bold font. Forced
+ * antialiasing and string spacing are always enabled.
+ *
+ * @param settings Current desktop settings.
+ */
 void
 TabDecorator::_UpdateFont(DesktopSettings& settings)
 {
@@ -962,6 +1213,20 @@ TabDecorator::_UpdateFont(DesktopSettings& settings)
 }
 
 
+/**
+ * @brief Derives the button offset, size, and inset from the current font
+ *        size.
+ *
+ * The numerical ratios come from the historical app_server tuning and
+ * differ between regular and small (floating, left-titled) tabs.
+ *
+ * @param tabRect Tab rectangle whose major dimension drives the button size.
+ * @param _offset Out-parameter receiving the inset of the button from the
+ *                tab edge.
+ * @param _size   Out-parameter receiving the button side length.
+ * @param _inset  Out-parameter receiving an extra inset added to centre the
+ *                button artwork.
+ */
 void
 TabDecorator::_GetButtonSizeAndOffset(const BRect& tabRect, float* _offset,
 	float* _size, float* _inset) const
@@ -983,6 +1248,17 @@ TabDecorator::_GetButtonSizeAndOffset(const BRect& tabRect, float* _offset,
 }
 
 
+/**
+ * @brief Positions the close and zoom buttons inside @a tabRect and computes
+ *        the title's truncated form to fit between them.
+ *
+ * For stacked tabs the zoom button is hidden on non-focused tabs, the
+ * truncate mode falls back to end-truncation when tabs are narrow, and the
+ * text offset is shrunk to give the title more room when needed.
+ *
+ * @param _tab    Tab whose items are being placed.
+ * @param tabRect Rectangle the tab now occupies.
+ */
 void
 TabDecorator::_LayoutTabItems(Decorator::Tab* _tab, const BRect& tabRect)
 {
@@ -1063,6 +1339,14 @@ TabDecorator::_LayoutTabItems(Decorator::Tab* _tab, const BRect& tabRect)
 }
 
 
+/**
+ * @brief Returns the default horizontal text offset for the title text,
+ *        scaled to the current border width.
+ *
+ * Floating and left-titled looks use a slightly tighter ratio.
+ *
+ * @return Offset in pixels.
+ */
 float
 TabDecorator::_DefaultTextOffset() const
 {
@@ -1073,6 +1357,14 @@ TabDecorator::_DefaultTextOffset() const
 }
 
 
+/**
+ * @brief Computes the tab size and starting offset for a window with exactly
+ *        one tab, honouring its persisted relative tab location.
+ *
+ * @param tabSize Out-parameter receiving the available size for the tab
+ *                (width for top tabs, height for left-titled tabs).
+ * @return Tab offset in pixels along the relevant axis.
+ */
 float
 TabDecorator::_SingleTabOffsetAndSize(float& tabSize)
 {
@@ -1091,6 +1383,12 @@ TabDecorator::_SingleTabOffsetAndSize(float& tabSize)
 }
 
 
+/**
+ * @brief Rebuilds fTabsRegion as the union of every tab rectangle.
+ *
+ * Used after a tab move or size redistribution so the title-bar dirty
+ * region accurately reflects the currently occupied area.
+ */
 void
 TabDecorator::_CalculateTabsRegion()
 {

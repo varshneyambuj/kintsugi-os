@@ -1,12 +1,32 @@
 /*
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2008, Andrej Spielmann.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
- 
+
+/** @file agg_rasterizer_scanline_aa_subpix.h
+    @brief Subpixel-aware scanline rasterizer; runs the AGG cells_aa pipeline
+           at 3x horizontal resolution and emits per-subpixel covers. */
+
 #ifndef AGG_RASTERIZER_SCANLINE_AA_SUBPIX_INCLUDED
 #define AGG_RASTERIZER_SCANLINE_AA_SUBPIX_INCLUDED
 
@@ -17,6 +37,18 @@
 
 namespace agg
 {
+	/**
+	 * @brief Scanline rasterizer that produces three covers per pixel.
+	 *
+	 * Drop-in replacement for agg::rasterizer_scanline_aa that scales path
+	 * coordinates by 3 horizontally before feeding them into the cells_aa
+	 * outline. During sweep_scanline() it interprets every group of three
+	 * cells as the R/G/B subpixel covers for one pixel and forwards them to
+	 * a subpixel-aware scanline (scanline_u8_subpix / scanline_p8_subpix).
+	 *
+	 * Template parameter @c Clip selects the clip implementation; defaults
+	 * to integer-coordinate clipping.
+	 */
 	template<class Clip=rasterizer_sl_clip_int> class rasterizer_scanline_aa_subpix
 	{
 		enum status

@@ -1,11 +1,29 @@
 /*
- * Copyright 2010-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Clemens Zeidler, haiku@clemens-zeidler.de
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2010-2014, Haiku.
+ * Original authors: John Scipione, Clemens Zeidler.
  */
+
+/** @file StackAndTile.h
+    @brief DesktopListener and helper iterators that drive the Stack and Tile
+           window-management feature. */
+
 #ifndef STACK_AND_TILE_H
 #define STACK_AND_TILE_H
 
@@ -35,9 +53,18 @@ class Window;
 class WindowArea;
 
 
+/** @brief Maps each app_server Window to the SATWindow that wraps it. */
 typedef std::map<Window*, SATWindow*> SATWindowMap;
 
 
+/**
+ * @brief DesktopListener that implements Stack and Tile.
+ *
+ * Owns one SATWindow per server-side window, watches the modifier key plus
+ * mouse events to enter snapping mode, and forwards every desktop hook
+ * (move, resize, look/feel change, hide, etc.) to the affected window's group
+ * so the constraint solver can keep the layout consistent.
+ */
 class StackAndTile : public DesktopListener {
 public:
 								StackAndTile();
@@ -55,7 +82,7 @@ public:
 
 	virtual void				WindowAdded(Window* window);
 	virtual void				WindowRemoved(Window* window);
-	
+
 	virtual bool				KeyPressed(uint32 what, int32 key,
 									int32 modifiers);
 	virtual void				MouseEvent(BMessage* message) {}
@@ -91,6 +118,7 @@ public:
 	virtual void				GetDecoratorSettings(Window* window,
 									BMessage& settings);
 
+			/** @brief Returns true while the SAT modifier is held. */
 			bool				SATKeyPressed()
 									{ return fSATKeyPressed; }
 
@@ -108,7 +136,7 @@ private:
 			Desktop*			fDesktop;
 
 			bool				fSATKeyPressed;
-		
+
 			SATWindowMap		fSATWindowMap;
 			BObjectList<SATWindow>	fGrouplessWindows;
 
@@ -116,13 +144,21 @@ private:
 };
 
 
+/**
+ * @brief Forward iterator over all SATGroups currently on the desktop.
+ *
+ * Walks the desktop's window list back-to-front, mapping each visible window
+ * to its SATGroup and skipping repeats so that every group is yielded once.
+ */
 class GroupIterator {
 public:
 								GroupIterator(StackAndTile* sat,
 									Desktop* desktop);
 
+			/** @brief Returns the most recently yielded group, or NULL. */
 			SATGroup*			CurrentGroup(void) const
 									{ return fCurrentGroup; };
+			/** @brief Anchors iteration as if @a group had just been returned. */
 			void				SetCurrentGroup(SATGroup* group)
 									{ fCurrentGroup = group; };
 
@@ -137,6 +173,12 @@ private:
 };
 
 
+/**
+ * @brief Iterates every window in a SATGroup in z-order within each area.
+ *
+ * Visits each WindowArea of the group and yields its SATWindows in layer
+ * order (bottom-up by default, top-down if reverseLayerOrder is set).
+ */
 class WindowIterator {
 public:
 								WindowIterator(SATGroup* group,
@@ -162,6 +204,13 @@ private:
 };
 
 
+/**
+ * @brief Abstract policy for one kind of Stack and Tile snapping gesture.
+ *
+ * Concrete subclasses (SATStacking, SATTiling) probe a candidate group for
+ * a viable join, paint a visual highlight describing the proposed result,
+ * and commit or roll back the join when the user releases the modifier.
+ */
 class SATSnappingBehaviour {
 public:
 	virtual						~SATSnappingBehaviour() {};
@@ -170,7 +219,7 @@ public:
 	candidates are marked here visual. */
 	virtual bool				FindSnappingCandidates(SATGroup* group) = 0;
 	/*! Join all candidates found in FindSnappingCandidates to the group.
-	Previously visually mark should be removed here. \return true if
+	Previously visually mark should be removed here. @return true if
 	integration has been succeed. */
 	virtual bool				JoinCandidates() = 0;
 	/*! Update the window tab values, solve the layout and move all windows in

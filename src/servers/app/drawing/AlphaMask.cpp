@@ -1,11 +1,43 @@
 /*
- * Copyright 2014-2015, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Adrien Destugues <pulkomandy@pulkomandy.tk>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Julian Harnath <julian.harnath@rwth-aachen.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014-2015, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Adrien Destugues <pulkomandy@pulkomandy.tk>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
+ */
+
+
+/**
+ * @file AlphaMask.cpp
+ * @brief Implementation of the alpha clipping masks consumed by Painter.
+ *
+ * This translation unit implements the AlphaMask base class plus the
+ * concrete UniformAlphaMask, VectorAlphaMask, PictureAlphaMask, and
+ * ShapeAlphaMask subclasses. The shared logic deals with stacking masks,
+ * regenerating them when the canvas grows, and combining the current mask
+ * with the previous mask in the stack so the rasteriser sees a single
+ * 8-bit clipping bitmap.
  */
 
 
@@ -28,6 +60,16 @@
 // #pragma mark - AlphaMask
 
 
+/**
+ * @brief Constructs an empty mask placed on top of @a previousMask.
+ *
+ * Initialises every owned member to a defined state and bumps the next-mask
+ * reference count of @a previousMask so the cache eviction logic does not
+ * remove a mask that is still being used as a base.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param inverse      Whether to interpret the mask in inverted form.
+ */
 AlphaMask::AlphaMask(AlphaMask* previousMask, bool inverse)
 	:
 	fPreviousMask(previousMask),
@@ -54,6 +96,15 @@ AlphaMask::AlphaMask(AlphaMask* previousMask, bool inverse)
 }
 
 
+/**
+ * @brief Constructs a mask that shares the rendered bitmap of @a other.
+ *
+ * Used by AlphaMaskCache to hand out a fresh wrapper that reuses an
+ * already-rendered bitmap. The new mask stacks on top of @a previousMask.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param other        Donor mask whose rendered bitmap is shared.
+ */
 AlphaMask::AlphaMask(AlphaMask* previousMask, AlphaMask* other)
 	:
 	fPreviousMask(previousMask),
@@ -82,6 +133,15 @@ AlphaMask::AlphaMask(AlphaMask* previousMask, AlphaMask* other)
 }
 
 
+/**
+ * @brief Constructs a uniform mask with the given background opacity.
+ *
+ * The resulting mask has no shape: every pixel evaluates to
+ * @a backgroundOpacity. Used as the leaf mask for B_OP_ALPHA blending where
+ * a constant opacity is needed.
+ *
+ * @param backgroundOpacity Constant alpha applied to every pixel (0..255).
+ */
 AlphaMask::AlphaMask(uint8 backgroundOpacity)
 	:
 	fPreviousMask(),
@@ -105,6 +165,9 @@ AlphaMask::AlphaMask(uint8 backgroundOpacity)
 }
 
 
+/**
+ * @brief Destructor; releases the recursive lock and decrements parent counters.
+ */
 AlphaMask::~AlphaMask()
 {
 	if (fPreviousMask.IsSet())
@@ -114,6 +177,17 @@ AlphaMask::~AlphaMask()
 }
 
 
+/**
+ * @brief Records the canvas geometry, regenerating the mask if the canvas grew.
+ *
+ * If the canvas is now larger than when the mask was last drawn and the mask
+ * was clipped to the (smaller) old canvas, the mask is rebuilt at the new
+ * size. The previous canvas origin is returned so the caller can restore it.
+ *
+ * @param origin New canvas origin.
+ * @param bounds New canvas bounds.
+ * @return The canvas origin in effect before this call.
+ */
 IntPoint
 AlphaMask::SetCanvasGeometry(IntPoint origin, IntRect bounds)
 {
@@ -146,6 +220,9 @@ AlphaMask::SetCanvasGeometry(IntPoint origin, IntRect bounds)
 }
 
 
+/**
+ * @brief Returns the size of the rendered mask bitmap in bytes.
+ */
 size_t
 AlphaMask::BitmapSize() const
 {
@@ -153,6 +230,12 @@ AlphaMask::BitmapSize() const
 }
 
 
+/**
+ * @brief Allocates a temporary B_RGBA32 bitmap pre-filled with the background opacity.
+ *
+ * @param bounds Bitmap dimensions.
+ * @return New bitmap (caller adopts the reference) or NULL on allocation failure.
+ */
 ServerBitmap*
 AlphaMask::_CreateTemporaryBitmap(BRect bounds) const
 {
@@ -170,6 +253,17 @@ AlphaMask::_CreateTemporaryBitmap(BRect bounds) const
 }
 
 
+/**
+ * @brief Rasterises the mask and combines it with the previous mask in the stack.
+ *
+ * Renders the source bitmap (provided by the subclass via _RenderSource()),
+ * extracts its alpha channel, and multiplies it with the previous mask's
+ * alpha (if any) into a fresh 8-bit UtilityBitmap. The result is then
+ * attached to the AGG rendering buffer and registered with the cache.
+ *
+ * @note Holds the mask's recursive lock plus the previous mask's lock for
+ *       the duration of the call.
+ */
 void
 AlphaMask::_Generate()
 {
@@ -272,6 +366,9 @@ AlphaMask::_Generate()
 }
 
 
+/**
+ * @brief Detaches any backing buffer so the mask becomes a no-op clip.
+ */
 void
 AlphaMask::_SetNoClipping()
 {
@@ -280,6 +377,11 @@ AlphaMask::_SetNoClipping()
 }
 
 
+/**
+ * @brief Returns the bounds of the previous mask in the stack.
+ *
+ * @note The caller must ensure @c fPreviousMask is non-NULL.
+ */
 const IntRect&
 AlphaMask::_PreviousMaskBounds() const
 {
@@ -287,6 +389,13 @@ AlphaMask::_PreviousMaskBounds() const
 }
 
 
+/**
+ * @brief Attaches the AGG clipped-alpha-mask to the rendering buffer at the right offset.
+ *
+ * Computes the global pixel offset of the mask (taking into account the
+ * mask's own offset, the canvas origin, and the mask bounds) and pushes it
+ * into AGG along with the outside opacity.
+ */
 void
 AlphaMask::_AttachMaskToBuffer()
 {
@@ -298,6 +407,12 @@ AlphaMask::_AttachMaskToBuffer()
 }
 
 
+/**
+ * @brief Computes the alpha applied to pixels outside the mask bitmap.
+ *
+ * Combines the background opacity with the previous mask's outside opacity,
+ * inverting the value when @c fInverse is set.
+ */
 void
 AlphaMask::_SetOutsideOpacity()
 {
@@ -314,6 +429,11 @@ AlphaMask::_SetOutsideOpacity()
 // #pragma mark - UniformAlphaMask
 
 
+/**
+ * @brief Constructs a mask of constant @a opacity covering the whole canvas.
+ *
+ * @param opacity Constant alpha (0..255).
+ */
 UniformAlphaMask::UniformAlphaMask(uint8 opacity)
 	:
 	AlphaMask(opacity)
@@ -323,6 +443,11 @@ UniformAlphaMask::UniformAlphaMask(uint8 opacity)
 }
 
 
+/**
+ * @brief A uniform mask has no source bitmap.
+ *
+ * @return Always NULL.
+ */
 ServerBitmap*
 UniformAlphaMask::_RenderSource(const IntRect&)
 {
@@ -330,6 +455,11 @@ UniformAlphaMask::_RenderSource(const IntRect&)
 }
 
 
+/**
+ * @brief A uniform mask has no positional offset.
+ *
+ * @return Always (0, 0).
+ */
 IntPoint
 UniformAlphaMask::_Offset()
 {
@@ -337,6 +467,9 @@ UniformAlphaMask::_Offset()
 }
 
 
+/**
+ * @brief Uniform masks are not cached; this is a no-op.
+ */
 void
 UniformAlphaMask::_AddToCache()
 {
@@ -346,6 +479,13 @@ UniformAlphaMask::_AddToCache()
 // #pragma mark - VectorAlphaMask
 
 
+/**
+ * @brief Constructs a vector mask placed at @a where.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param where        Position offset applied to the rasterised vectors.
+ * @param inverse      Whether to invert the mask alpha after rasterising.
+ */
 template<class VectorMaskType>
 VectorAlphaMask<VectorMaskType>::VectorAlphaMask(AlphaMask* previousMask,
 	BPoint where, bool inverse)
@@ -356,6 +496,9 @@ VectorAlphaMask<VectorMaskType>::VectorAlphaMask(AlphaMask* previousMask,
 }
 
 
+/**
+ * @brief Constructs a vector mask sharing the rendered bitmap of @a other.
+ */
 template<class VectorMaskType>
 VectorAlphaMask<VectorMaskType>::VectorAlphaMask(AlphaMask* previousMask,
 	VectorAlphaMask* other)
@@ -366,6 +509,17 @@ VectorAlphaMask<VectorMaskType>::VectorAlphaMask(AlphaMask* previousMask,
 }
 
 
+/**
+ * @brief Rasterises the vector content into a temporary B_RGBA32 bitmap.
+ *
+ * Computes the bounding box (clipping to the canvas if larger), allocates a
+ * scratch UtilityBitmap, builds a BitmapHWInterface / DrawingEngine pair,
+ * pushes a B_OP_ALPHA / B_PIXEL_ALPHA + B_ALPHA_COMPOSITE draw state onto
+ * the canvas, and asks the subclass to draw its vectors.
+ *
+ * @param canvasBounds Bounds of the parent canvas; the mask is clipped here when needed.
+ * @return Newly allocated bitmap with the rendered shapes (caller owns), or NULL.
+ */
 template<class VectorMaskType>
 ServerBitmap*
 VectorAlphaMask<VectorMaskType>::_RenderSource(const IntRect& canvasBounds)
@@ -431,6 +585,11 @@ VectorAlphaMask<VectorMaskType>::_RenderSource(const IntRect& canvasBounds)
 }
 
 
+/**
+ * @brief Returns the per-instance positional offset of a vector mask.
+ *
+ * @return The @c fWhere point supplied at construction.
+ */
 template<class VectorMaskType>
 IntPoint
 VectorAlphaMask<VectorMaskType>::_Offset()
@@ -443,6 +602,15 @@ VectorAlphaMask<VectorMaskType>::_Offset()
 // #pragma mark - PictureAlphaMask
 
 
+/**
+ * @brief Constructs a mask that rasterises the contents of a ServerPicture.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param picture      ServerPicture whose drawing operations form the mask.
+ * @param drawState    DrawState used while replaying @a picture.
+ * @param where        Position offset applied to the rasterised picture.
+ * @param inverse      Whether to invert the resulting mask alpha.
+ */
 PictureAlphaMask::PictureAlphaMask(AlphaMask* previousMask,
 	ServerPicture* picture, const DrawState& drawState, BPoint where,
 	bool inverse)
@@ -454,11 +622,17 @@ PictureAlphaMask::PictureAlphaMask(AlphaMask* previousMask,
 }
 
 
+/**
+ * @brief Destructor; releases references to the picture and draw state.
+ */
 PictureAlphaMask::~PictureAlphaMask()
 {
 }
 
 
+/**
+ * @brief Replays the picture into @a canvas to produce the mask.
+ */
 void
 PictureAlphaMask::DrawVectors(Canvas* canvas)
 {
@@ -466,6 +640,14 @@ PictureAlphaMask::DrawVectors(Canvas* canvas)
 }
 
 
+/**
+ * @brief Computes the picture's bounding box by playing it without rendering.
+ *
+ * The returned box is rounded outwards (and padded by two pixels on the
+ * bottom/right) to compensate for Painter's various rounding modes.
+ *
+ * @return The bounding box of the picture, or an invalid rect when empty.
+ */
 BRect
 PictureAlphaMask::DetermineBoundingBox() const
 {
@@ -486,6 +668,9 @@ PictureAlphaMask::DetermineBoundingBox() const
 }
 
 
+/**
+ * @brief Returns the saved DrawState used to replay the picture.
+ */
 const DrawState&
 PictureAlphaMask::GetDrawState() const
 {
@@ -493,6 +678,11 @@ PictureAlphaMask::GetDrawState() const
 }
 
 
+/**
+ * @brief Picture masks are not cached at the moment; this is a no-op.
+ *
+ * @todo Implement picture-mask caching once a stable hash key is defined.
+ */
 void
 PictureAlphaMask::_AddToCache()
 {
@@ -503,9 +693,18 @@ PictureAlphaMask::_AddToCache()
 // #pragma mark - ShapeAlphaMask
 
 
+/** @brief Process-global default DrawState used to render shape-based masks. */
 DrawState* ShapeAlphaMask::fDrawState = NULL;
 
 
+/**
+ * @brief Private constructor used by ShapeAlphaMask::Create() on a cache miss.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param shape        Shape to rasterise.
+ * @param where        Position offset applied to the rasterised shape.
+ * @param inverse      Whether to invert the resulting mask alpha.
+ */
 ShapeAlphaMask::ShapeAlphaMask(AlphaMask* previousMask,
 	const shape_data& shape, BPoint where, bool inverse)
 	:
@@ -519,6 +718,15 @@ ShapeAlphaMask::ShapeAlphaMask(AlphaMask* previousMask,
 }
 
 
+/**
+ * @brief Private constructor used by ShapeAlphaMask::Create() on a cache hit.
+ *
+ * Wraps the supplied @a other so the new instance shares its rendered bitmap
+ * but starts with a clean parent reference.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param other        Donor mask whose bitmap and shape are reused.
+ */
 ShapeAlphaMask::ShapeAlphaMask(AlphaMask* previousMask,
 	ShapeAlphaMask* other)
 	:
@@ -529,11 +737,27 @@ ShapeAlphaMask::ShapeAlphaMask(AlphaMask* previousMask,
 }
 
 
+/**
+ * @brief Destructor; the shape reference and rendered bitmap are released by smart pointers.
+ */
 ShapeAlphaMask::~ShapeAlphaMask()
 {
 }
 
 
+/**
+ * @brief Returns a (possibly cached) ShapeAlphaMask for the supplied parameters.
+ *
+ * Looks up the AlphaMaskCache for an existing match. On a hit, a wrapper
+ * is created that reuses the cached bitmap. On a miss, a fresh mask is
+ * created which will rasterise on demand and register itself with the cache.
+ *
+ * @param previousMask Lower mask in the stack (may be NULL).
+ * @param shape        Shape that defines the mask outline.
+ * @param where        Position offset applied to the rasterised shape.
+ * @param inverse      Whether the resulting mask should be inverted.
+ * @return New reference-counted mask (caller owns), or NULL on allocation failure.
+ */
 /* static */ ShapeAlphaMask*
 ShapeAlphaMask::Create(AlphaMask* previousMask, const shape_data& shape,
 	BPoint where, bool inverse)
@@ -559,6 +783,9 @@ ShapeAlphaMask::Create(AlphaMask* previousMask, const shape_data& shape,
 }
 
 
+/**
+ * @brief Strokes / fills the shape into @a canvas to produce the mask alpha.
+ */
 void
 ShapeAlphaMask::DrawVectors(Canvas* canvas)
 {
@@ -569,6 +796,9 @@ ShapeAlphaMask::DrawVectors(Canvas* canvas)
 }
 
 
+/**
+ * @brief Returns the cached shape bounding box.
+ */
 BRect
 ShapeAlphaMask::DetermineBoundingBox() const
 {
@@ -576,6 +806,9 @@ ShapeAlphaMask::DetermineBoundingBox() const
 }
 
 
+/**
+ * @brief Returns the static fall-back DrawState shared by every ShapeAlphaMask.
+ */
 const DrawState&
 ShapeAlphaMask::GetDrawState() const
 {
@@ -583,6 +816,9 @@ ShapeAlphaMask::GetDrawState() const
 }
 
 
+/**
+ * @brief Registers the freshly rendered mask with the global cache.
+ */
 void
 ShapeAlphaMask::_AddToCache()
 {

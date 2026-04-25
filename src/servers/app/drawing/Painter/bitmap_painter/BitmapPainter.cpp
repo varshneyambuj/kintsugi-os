@@ -1,10 +1,51 @@
 /*
- * Copyright 2009, Christian Packmann.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Christian Packmann.
+ *   Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
+ *   Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
+ *   Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file BitmapPainter.cpp
+ * @brief Implementation of Painter::BitmapPainter, the top-level dispatcher
+ *        that picks the most specialised bitmap-blit code path for a given
+ *        source/destination rectangle, drawing mode, color space, alpha
+ *        mask and B_FILTER_BITMAP_BILINEAR / B_TILE_BITMAP options.
+ *
+ * BitmapPainter routes to one of the BitmapPainterPrivate specialisations:
+ * DrawBitmapNoScale (CMap8/Bgr32 with no scale and no transform),
+ * DrawBitmapBilinear (bilinear filtering with optional SIMD),
+ * DrawBitmapNearestNeighborCopy (nearest-neighbor scaled B_OP_COPY) and
+ * DrawBitmapGeneric (the generic AGG-rasterised fallback that also
+ * handles affine transforms, alpha masks, and tiled fills). Color-space
+ * conversion to B_RGBA32 happens up front when needed, with
+ * B_TRANSPARENT_MAGIC_* values translated to alpha = 0.
+ *
+ * @see DrawBitmapBilinear, DrawBitmapNoScale, DrawBitmapNearestNeighbor,
+ *      DrawBitmapGeneric, Painter
+ */
+
 #include "BitmapPainter.h"
 
 #include <Bitmap.h>
@@ -30,6 +71,21 @@
 #endif
 
 
+/**
+ * @brief Constructs a BitmapPainter bound to a source @a bitmap and a
+ *        Painter instance.
+ *
+ * Captures the bitmap's bounds, color space, options and pixel buffer.
+ * Sets fStatus to B_OK only when @a bitmap is non-NULL and IsValid();
+ * Draw() returns immediately when the status is not B_OK.
+ *
+ * @param painter  Owning Painter providing transform, clipping, drawing
+ *                 mode and alpha mode state.
+ * @param bitmap   Source bitmap to blit. May be NULL; status will reflect
+ *                 the failure.
+ * @param options  Bitmap drawing options bitfield (B_FILTER_BITMAP_BILINEAR,
+ *                 B_TILE_BITMAP).
+ */
 Painter::BitmapPainter::BitmapPainter(const Painter* painter,
 	const ServerBitmap* bitmap, uint32 options)
 	:
@@ -54,6 +110,22 @@ Painter::BitmapPainter::BitmapPainter(const Painter* painter,
 }
 
 
+/**
+ * @brief Renders the configured source bitmap into @a destinationRect.
+ *
+ * Computes scale and offset from @a sourceRect and @a destinationRect via
+ * _DetermineTransform(), then walks a chain of fast-path checks ordered
+ * from cheapest to most general. Optimised paths cover (1) CMAP8 and
+ * RGB32 no-scale/no-transform/no-mask copies and overs without color
+ * space conversion, (2) Bgr32 no-scale/no-transform copies, alpha
+ * overlays and masked copies after conversion, (3) bilinear or
+ * nearest-neighbor scaled B_OP_COPY, and (4) bilinear B_OP_ALPHA pixel
+ * overlay. Anything else (including B_TILE_BITMAP and affine transforms)
+ * falls through to DrawBitmapGeneric with Fill or Tile semantics.
+ *
+ * @param sourceRect       Region of the source bitmap to draw from.
+ * @param destinationRect  Destination rectangle in painter coordinates.
+ */
 void
 Painter::BitmapPainter::Draw(const BRect& sourceRect,
 	const BRect& destinationRect)
@@ -174,6 +246,22 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 }
 
 
+/**
+ * @brief Computes the per-axis scale factors and the source-to-destination
+ *        offset, and clips the source rectangle to the bitmap bounds.
+ *
+ * In non-tiling mode, computes fScaleX and fScaleY from the source and
+ * destination widths/heights, then trims @a sourceRect to fBitmapBounds
+ * propagating the trim into fDestinationRect at the same scale. In
+ * B_TILE_BITMAP mode, scale is forced to 1:1. Aligns rectangles to whole
+ * pixels when the painter is not in subpixel-precise mode.
+ *
+ * @param sourceRect       Requested source rectangle (passed by value
+ *                         because it is mutated locally).
+ * @param destinationRect  Requested destination rectangle.
+ * @return  @c true on success; @c false when clipping is invalid, the
+ *          source intersects nothing, or the computed scale would be 0.
+ */
 bool
 Painter::BitmapPainter::_DetermineTransform(BRect sourceRect,
 	const BRect& destinationRect)
@@ -234,6 +322,8 @@ Painter::BitmapPainter::_DetermineTransform(BRect sourceRect,
 }
 
 
+/** @brief Returns @c true when the destination scale is not 1:1 on either
+           axis, indicating that resampling is required. */
 bool
 Painter::BitmapPainter::_HasScale()
 {
@@ -241,6 +331,8 @@ Painter::BitmapPainter::_HasScale()
 }
 
 
+/** @brief Returns @c true when the painter has a non-identity affine
+           transform, ruling out the no-transform fast paths. */
 bool
 Painter::BitmapPainter::_HasAffineTransform()
 {
@@ -248,6 +340,8 @@ Painter::BitmapPainter::_HasAffineTransform()
 }
 
 
+/** @brief Returns @c true when an AGG alpha mask scanline is bound on
+           the painter, so masked code paths must be used. */
 bool
 Painter::BitmapPainter::_HasAlphaMask()
 {
@@ -255,6 +349,21 @@ Painter::BitmapPainter::_HasAlphaMask()
 }
 
 
+/**
+ * @brief Converts the source bitmap to B_RGBA32 in-place when needed and
+ *        translates legacy transparent-magic colors to alpha = 0.
+ *
+ * Skips conversion entirely for B_RGBA32 sources, and for B_RGB32 sources
+ * when the painter is in B_OP_COPY or B_OP_ALPHA (matching BeOS
+ * behaviour). Otherwise allocates a temporary BBitmap, owned via @a
+ * convertedBitmapDeleter, ImportBits-converts the source into it, then
+ * rewrites B_TRANSPARENT_MAGIC_RGBA32 / B_TRANSPARENT_MAGIC_RGBA15 pixels
+ * to alpha-zero. Finally re-points fBitmap at the converted buffer.
+ *
+ * @param convertedBitmapDeleter  Sink that takes ownership of the
+ *                                temporary RGBA32 bitmap; must outlive
+ *                                the subsequent draw call.
+ */
 void
 Painter::BitmapPainter::_ConvertColorSpace(
 	ObjectDeleter<BBitmap>& convertedBitmapDeleter)
@@ -329,6 +438,22 @@ Painter::BitmapPainter::_ConvertColorSpace(
 }
 
 
+/**
+ * @brief Rewrites pixels equal to @a transparentMagic in @a buffer to have
+ *        alpha = 0 in @a output, leaving other pixels unchanged.
+ *
+ * Used after a color-space ImportBits-conversion that does not preserve
+ * BeOS-style transparent-magic markers; @a sourcePixel is the source
+ * bitmap's native pixel type (uint16 for B_RGB15, uint32 for B_RGB32).
+ *
+ * @param buffer              Source pixels in the original color space.
+ * @param width               Image width in pixels.
+ * @param height              Image height in pixels.
+ * @param sourceBytesPerRow   Stride of @a buffer in bytes.
+ * @param transparentMagic    Magic pixel value to treat as transparent.
+ * @param output              RGBA32 destination bitmap; pixels matching
+ *                            @a transparentMagic get their alpha cleared.
+ */
 template<typename sourcePixel>
 void
 Painter::BitmapPainter::_TransparentMagicToAlpha(sourcePixel* buffer,

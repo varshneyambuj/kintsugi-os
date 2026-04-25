@@ -1,10 +1,29 @@
 /*
- * Copyright 2009, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Haiku, Inc.
+ * Original author: Michael Lotz.
  */
+
+/** @file RemoteMessage.h
+    @brief Wire-format encoder and decoder for the remote-display
+           RP_* protocol used between app_server and the network viewer. */
+
 #ifndef REMOTE_MESSAGE_H
 #define REMOTE_MESSAGE_H
 
@@ -35,6 +54,10 @@ class ServerCursor;
 class ServerFont;
 struct ViewLineArrayInfo;
 
+/** @brief RP_* opcodes carried in the leading uint16 of every
+           RemoteMessage frame. Value ranges are blocked out by category
+           (connection / state / draw / cursor / input / gradient) to make
+           extensions easy and routing fast. */
 enum {
 	RP_INIT_CONNECTION = 1,
 	RP_UPDATE_DISPLAY_MODE,
@@ -139,6 +162,13 @@ enum {
 };
 
 
+/** @brief One end of the RP_* wire protocol. A RemoteMessage instance is
+           either a writer (target ring set), a reader (source ring set),
+           or both; every encode buffers into a small heap-grown work area
+           that Flush() copies into the target ring as a single contiguous
+           frame, while the decode side pulls bytes directly from the source
+           ring. The leading uint16 carries the opcode and is followed by a
+           uint32 length so receivers can size each frame. */
 class RemoteMessage {
 public:
 								RemoteMessage(StreamingRingBuffer* source,
@@ -150,7 +180,11 @@ public:
 		void					Cancel();
 
 		status_t				NextMessage(uint16& code);
+		/** @brief Returns the opcode of the message currently being
+		           decoded; valid only after a successful NextMessage(). */
 		uint16					Code() { return fCode; }
+		/** @brief Returns the number of payload bytes remaining in the
+		           current inbound frame. */
 		uint32					DataLeft() { return fDataLeft; }
 
 		template<typename T>
@@ -212,6 +246,15 @@ private:
 };
 
 
+/**
+ * @brief Constructs a message bound to the given inbound and/or outbound
+ *        ring buffers.
+ *
+ * @param source  Ring to read inbound bytes from; may be NULL when the
+ *                instance is used purely for encoding.
+ * @param target  Ring to write encoded frames into; may be NULL when the
+ *                instance is used purely for decoding.
+ */
 inline
 RemoteMessage::RemoteMessage(StreamingRingBuffer* source,
 	StreamingRingBuffer* target)
@@ -226,6 +269,9 @@ RemoteMessage::RemoteMessage(StreamingRingBuffer* source,
 }
 
 
+/**
+ * @brief Flushes any pending frame and frees the working buffer.
+ */
 inline
 RemoteMessage::~RemoteMessage()
 {
@@ -235,6 +281,15 @@ RemoteMessage::~RemoteMessage()
 }
 
 
+/**
+ * @brief Begins a new outbound frame with the given opcode.
+ *
+ * Writes the opcode and a placeholder length into the working buffer; the
+ * length is back-patched when Flush() runs. Auto-flushes any previously
+ * staged frame.
+ *
+ * @param code  RP_* opcode for the frame.
+ */
 inline void
 RemoteMessage::Start(uint16 code)
 {
@@ -248,6 +303,14 @@ RemoteMessage::Start(uint16 code)
 }
 
 
+/**
+ * @brief Patches the frame length field and pushes the staged bytes into
+ *        the target ring as a single Write().
+ *
+ * @return     B_OK on success, B_NO_INIT if nothing has been staged or the
+ *             instance has no target ring, otherwise the error code from
+ *             the underlying ring write.
+ */
 inline status_t
 RemoteMessage::Flush()
 {
@@ -263,6 +326,14 @@ RemoteMessage::Flush()
 }
 
 
+/**
+ * @brief Appends a POD value verbatim to the staged frame.
+ *
+ * @param value  Value to append; must be trivially copyable.
+ * @note  Silently drops the byte on allocation failure of the working
+ *        buffer; callers normally Flush() and inspect its return code to
+ *        observe transport errors.
+ */
 template<typename T>
 inline void
 RemoteMessage::Add(const T& value)
@@ -276,6 +347,12 @@ RemoteMessage::Add(const T& value)
 }
 
 
+/**
+ * @brief Appends a length-prefixed byte string.
+ *
+ * @param string  Source bytes; may be non-NUL-terminated.
+ * @param length  Number of bytes to copy.
+ */
 inline void
 RemoteMessage::AddString(const char* string, size_t length)
 {
@@ -289,6 +366,12 @@ RemoteMessage::AddString(const char* string, size_t length)
 }
 
 
+/**
+ * @brief Appends a BRegion as a uint32 rectangle count followed by each
+ *        BRect.
+ *
+ * @param region  Region to encode.
+ */
 inline void
 RemoteMessage::AddRegion(const BRegion& region)
 {
@@ -300,6 +383,12 @@ RemoteMessage::AddRegion(const BRegion& region)
 }
 
 
+/**
+ * @brief Appends @a count POD values from @a array in order.
+ *
+ * @param array  Source array of length @a count.
+ * @param count  Number of elements to append.
+ */
 template<typename T>
 inline void
 RemoteMessage::AddList(const T* array, int32 count)
@@ -309,6 +398,15 @@ RemoteMessage::AddList(const T* array, int32 count)
 }
 
 
+/**
+ * @brief Reads one POD value from the inbound ring into @a value.
+ *
+ * @param value  Destination; populated only on success.
+ * @return       B_OK on success, B_ERROR if the current frame has too few
+ *               bytes left or the ring read short, B_NO_INIT if the
+ *               instance has no source ring, or the negative ring error
+ *               code.
+ */
 template<typename T>
 inline status_t
 RemoteMessage::Read(T& value)
@@ -331,6 +429,16 @@ RemoteMessage::Read(T& value)
 }
 
 
+/**
+ * @brief Reads a region encoded by AddRegion() into @a region.
+ *
+ * The region is emptied first, then re-populated from the inbound
+ * rectangles.
+ *
+ * @param region  Destination region.
+ * @return        B_OK on success, B_ERROR or the underlying read error
+ *                otherwise.
+ */
 inline status_t
 RemoteMessage::ReadRegion(BRegion& region)
 {
@@ -354,6 +462,13 @@ RemoteMessage::ReadRegion(BRegion& region)
 }
 
 
+/**
+ * @brief Reads @a count POD values into @a array in order.
+ *
+ * @param array  Destination array of length @a count.
+ * @param count  Number of elements to read.
+ * @return       B_OK on success, otherwise the first error encountered.
+ */
 template<typename T>
 inline status_t
 RemoteMessage::ReadList(T* array, int32 count)
@@ -368,6 +483,15 @@ RemoteMessage::ReadList(T* array, int32 count)
 }
 
 
+/**
+ * @brief Grows the working buffer so at least @a size bytes can be staged.
+ *
+ * Always reserves a small slack on top of the requested size to amortise
+ * realloc cost.
+ *
+ * @param size  Minimum number of free bytes the caller needs.
+ * @return      true on success, false if realloc() fails.
+ */
 inline bool
 RemoteMessage::_MakeSpace(size_t size)
 {

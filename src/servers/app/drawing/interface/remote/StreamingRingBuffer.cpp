@@ -1,10 +1,44 @@
 /*
- * Copyright 2009, 2017, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, 2017, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
  */
+
+
+/**
+ * @file StreamingRingBuffer.cpp
+ * @brief Implementation of the blocking single-producer / single-consumer
+ *        byte ring buffer used between protocol encode/decode threads and
+ *        the network I/O threads.
+ *
+ * The reader and writer paths each take their own outer lock (so two
+ * readers cannot race), then take the shared data lock to mutate the
+ * ring state. When a side runs out of room or data it parks on a
+ * dedicated semaphore; the opposite side releases the semaphore once it
+ * makes progress. MakeEmpty() additionally cancels parked threads.
+ */
+
 
 #include "StreamingRingBuffer.h"
 
@@ -25,6 +59,14 @@
 #define TRACE_ERROR(x...)		TRACE_ALWAYS(x)
 
 
+/**
+ * @brief Allocates the ring storage and the reader / writer semaphores.
+ *
+ * If allocation of the storage fails, fBufferSize is reset to zero and
+ * InitCheck() will report the failure.
+ *
+ * @param bufferSize  Capacity of the ring in bytes.
+ */
 StreamingRingBuffer::StreamingRingBuffer(size_t bufferSize)
 	:
 	fReaderWaiting(false),
@@ -51,6 +93,9 @@ StreamingRingBuffer::StreamingRingBuffer(size_t bufferSize)
 }
 
 
+/**
+ * @brief Releases the semaphores and frees the ring storage.
+ */
 StreamingRingBuffer::~StreamingRingBuffer()
 {
 	delete_sem(fReaderNotifier);
@@ -59,6 +104,12 @@ StreamingRingBuffer::~StreamingRingBuffer()
 }
 
 
+/**
+ * @brief Reports whether construction succeeded.
+ *
+ * @return     B_OK if both semaphores and the backing storage are valid;
+ *             otherwise the negative semaphore error code or B_NO_MEMORY.
+ */
 status_t
 StreamingRingBuffer::InitCheck()
 {
@@ -73,6 +124,22 @@ StreamingRingBuffer::InitCheck()
 }
 
 
+/**
+ * @brief Reads up to @a length bytes from the ring, blocking when empty.
+ *
+ * Pass @a buffer NULL to discard input (useful for skipping). When
+ * @a onlyBlockOnNoData is true the call returns as soon as some data has
+ * been copied even if @a length is not yet satisfied.
+ *
+ * @param buffer             Destination, or NULL to drop the bytes.
+ * @param length             Maximum number of bytes to read.
+ * @param onlyBlockOnNoData  If true, only block when no bytes have been
+ *                           read yet; otherwise block until @a length is
+ *                           fully satisfied.
+ * @return                   Number of bytes read on success, B_CANCELED if
+ *                           woken by MakeEmpty(), or a negative error code
+ *                           on lock or semaphore failure.
+ */
 int32
 StreamingRingBuffer::Read(void *buffer, size_t length, bool onlyBlockOnNoData)
 {
@@ -142,6 +209,17 @@ StreamingRingBuffer::Read(void *buffer, size_t length, bool onlyBlockOnNoData)
 }
 
 
+/**
+ * @brief Writes @a length bytes into the ring, blocking when full.
+ *
+ * Wakes a parked reader exactly when bytes become available. Returns
+ * B_CANCELED if MakeEmpty() releases the writer while it is parked.
+ *
+ * @param buffer  Source bytes; must be non-NULL when @a length > 0.
+ * @param length  Number of bytes to write.
+ * @return        B_OK on success, B_CANCELED if woken by MakeEmpty(),
+ *                or a negative error code on lock or semaphore failure.
+ */
 status_t
 StreamingRingBuffer::Write(const void *buffer, size_t length)
 {
@@ -203,6 +281,13 @@ StreamingRingBuffer::Write(const void *buffer, size_t length)
 }
 
 
+/**
+ * @brief Discards every buffered byte and wakes any parked reader/writer
+ *        with a cancellation.
+ *
+ * Used by RemoteHWInterface when a connection is dropped to flush stale
+ * outbound data and unblock the I/O threads.
+ */
 void
 StreamingRingBuffer::MakeEmpty()
 {

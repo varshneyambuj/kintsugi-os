@@ -1,12 +1,31 @@
 /*
- * Copyright 2014, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Class clipped_alpha_mask, a modified version of alpha_mask_u8 that can
- * offset the mask, and has a controllable value for the area outside it.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2014, Haiku, Inc.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
+
+/** @file agg_clipped_alpha_mask.h
+    @brief AGG alpha_mask_u8 variant that supports an offset and a configurable
+           outside-cover value, used by Painter for ClipToPicture-style masking. */
 
 #ifndef AGG_CLIPED_ALPHA_MASK_INCLUDED
 #define AGG_CLIPED_ALPHA_MASK_INCLUDED
@@ -18,6 +37,15 @@
 
 namespace agg
 {
+	/**
+	 * @brief Alpha mask wrapping a rendering buffer with offset and out-of-bounds cover.
+	 *
+	 * Modified copy of agg::alpha_mask_u8 that lets callers translate the mask
+	 * relative to the rendered geometry (m_xOffset/m_yOffset) and pick the
+	 * coverage value (m_outside) returned for spans that fall outside the
+	 * mask buffer. Used by the Painter when ClipToPicture pictures are smaller
+	 * than the destination canvas.
+	 */
 	class clipped_alpha_mask
 	{
 		public:

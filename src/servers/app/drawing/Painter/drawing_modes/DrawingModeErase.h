@@ -1,10 +1,28 @@
 /*
- * Copyright 2005, Stephan Aßmus <superstippi@gmx.de>. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005, Stephan Aßmus.
  * DrawingMode implementing B_OP_ERASE on B_RGBA32.
- *
  */
+
+/** @file DrawingModeErase.h
+    @brief Blend functions for B_OP_ERASE: replaces destination pixels
+           that match the high pattern color with the low color. */
 
 #ifndef DRAWING_MODE_ERASE_H
 #define DRAWING_MODE_ERASE_H
@@ -26,7 +44,8 @@
 	d[3] = 255; \
 }
 
-// blend_pixel_erase
+/** @brief Blends one B_OP_ERASE pixel: writes low color where the
+           pattern is high. */
 void
 blend_pixel_erase(int x, int y, const color_type& c, uint8 cover,
 				  agg_buffer* buffer, const PatternHandler* pattern)
@@ -42,7 +61,7 @@ blend_pixel_erase(int x, int y, const color_type& c, uint8 cover,
 	}
 }
 
-// blend_hline_erase
+/** @brief Horizontal-line B_OP_ERASE blend with a single AA cover. */
 void
 blend_hline_erase(int x, int y, unsigned len, 
 						 const color_type& c, uint8 cover,
@@ -76,7 +95,7 @@ blend_hline_erase(int x, int y, unsigned len,
 	}
 }
 
-// blend_solid_hspan_erase
+/** @brief Anti-aliased horizontal solid span using B_OP_ERASE. */
 void
 blend_solid_hspan_erase(int x, int y, unsigned len, 
 						const color_type& c, const uint8* covers,
@@ -102,7 +121,7 @@ blend_solid_hspan_erase(int x, int y, unsigned len,
 
 
 
-// blend_solid_vspan_erase
+/** @brief Anti-aliased vertical solid span using B_OP_ERASE. */
 void
 blend_solid_vspan_erase(int x, int y, unsigned len, 
 						const color_type& c, const uint8* covers,
@@ -127,7 +146,7 @@ blend_solid_vspan_erase(int x, int y, unsigned len,
 }
 
 
-// blend_color_hspan_erase
+/** @brief Per-pixel-color horizontal span using B_OP_ERASE. */
 void
 blend_color_hspan_erase(int x, int y, unsigned len, 
 						const color_type* colors, 

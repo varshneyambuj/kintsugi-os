@@ -1,10 +1,43 @@
 /*
- * Copyright 2001-2018, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Julian Harnath <julian.harnath@rwth-aachen.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2018, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
+ */
+
+
+/**
+ * @file DrawingEngine.cpp
+ * @brief Implementation of the software drawing pipeline used by every Window.
+ *
+ * DrawingEngine wraps a Painter (AGG-based software rasteriser) bound to the
+ * frame buffer of an HWInterface. Drawing primitive entry points compute a
+ * bounding rectangle, hide floating overlays such as the cursor through
+ * AutoFloatingOverlaysHider, run the Painter to produce pixels, and emit a
+ * dirty region back to the HWInterface through DrawTransaction. The class
+ * also implements text rendering, region-aware copies (CopyRegion), and a
+ * read-back path used to capture screenshots.
  */
 
 
@@ -39,6 +72,15 @@
 #endif
 
 
+/**
+ * @brief Swaps the corners of @a rect when needed so that left <= right and top <= bottom.
+ *
+ * Several BView entry points accept rectangles whose @c right/@c bottom is
+ * smaller than @c left/@c top; the rasteriser needs them normalised before
+ * the bounds tests can be trusted.
+ *
+ * @param rect Rectangle to normalise in place.
+ */
 static inline void
 make_rect_valid(BRect& rect)
 {
@@ -55,6 +97,15 @@ make_rect_valid(BRect& rect)
 }
 
 
+/**
+ * @brief Inflates @a rect outwards by half the stroke width.
+ *
+ * Used to extend the bounding rectangle of a stroked primitive so the
+ * rasteriser sees the full pen-painted extent.
+ *
+ * @param rect    Rectangle to inflate in place.
+ * @param penSize Current pen size in pixels.
+ */
 static inline void
 extend_by_stroke_width(BRect& rect, float penSize)
 {
@@ -64,8 +115,10 @@ extend_by_stroke_width(BRect& rect, float penSize)
 }
 
 
+/** @brief RAII helper that hides cursor / drag bitmap for the lifetime of the scope. */
 class AutoFloatingOverlaysHider {
 	public:
+		/** @brief Hides overlays that intersect @a area. */
 		AutoFloatingOverlaysHider(HWInterface* interface, const BRect& area)
 			:
 			fInterface(interface),
@@ -73,6 +126,7 @@ class AutoFloatingOverlaysHider {
 		{
 		}
 
+		/** @brief Hides overlays unconditionally. */
 		AutoFloatingOverlaysHider(HWInterface* interface)
 			:
 			fInterface(interface),
@@ -80,12 +134,14 @@ class AutoFloatingOverlaysHider {
 		{
 		}
 
+		/** @brief Restores any overlays that were hidden by the constructor. */
 		~AutoFloatingOverlaysHider()
 		{
 			if (fHidden)
 				fInterface->ShowFloatingOverlays();
 		}
 
+		/** @brief Returns true when overlays were actually hidden by the constructor. */
 		bool WasHidden() const
 		{
 			return fHidden;
@@ -97,8 +153,16 @@ class AutoFloatingOverlaysHider {
 
 };
 
+/** @brief Computes a dirty region for a single drawing primitive and refreshes it on destruction.
+ *
+ * DrawTransaction snapshots the current Painter clipping region, intersects
+ * it with the supplied bounds, hides floating overlays that intersect the
+ * resulting region, and finally schedules an InvalidateRegion() on the
+ * HWInterface when the engine has copy-back-to-front enabled.
+ */
 class DrawTransaction {
 public:
+	/** @brief Builds a transaction whose initial dirty region is @a bounds clipped to the painter. */
 	DrawTransaction(DrawingEngine *engine, const BRect &bounds)
 		:
 		fEngine(engine),
@@ -112,6 +176,7 @@ public:
 			= fEngine->fGraphicsCard->HideFloatingOverlays(fDirty.Frame());
 	}
 
+	/** @brief Builds a transaction covering the entire painter clipping region. */
 	DrawTransaction(DrawingEngine *engine)
 		:
 		fEngine(engine),
@@ -124,6 +189,7 @@ public:
 			= fEngine->fGraphicsCard->HideFloatingOverlays(fDirty.Frame());
 	}
 
+	/** @brief Builds a transaction whose dirty region is exactly @a region (already clipped). */
 	DrawTransaction(DrawingEngine *engine, const BRegion &region)
 		:
 		fEngine(engine),
@@ -137,6 +203,7 @@ public:
 			= fEngine->fGraphicsCard->HideFloatingOverlays(fDirty.Frame());
 	}
 
+	/** @brief Schedules invalidation and restores overlays. */
 	~DrawTransaction()
 	{
 		if (fEngine->fCopyToFront)
@@ -145,22 +212,26 @@ public:
 			fEngine->fGraphicsCard->ShowFloatingOverlays();
 	}
 
+	/** @brief Returns true when the dirty region is non-empty (drawing should proceed). */
 	bool IsDirty() const
 	{
 		return fDirty.CountRects() > 0;
 	}
 
+	/** @brief Replaces the dirty region with @a rect intersected with the painter clip. */
 	void SetDirty(const BRect &rect)
 	{
 		fDirty.Set(rect);
 		fDirty.IntersectWith(fEngine->fPainter->ClippingRegion());
 	}
 
+	/** @brief Returns the current dirty region. */
 	const BRegion &DirtyRegion() const
 	{
 		return fDirty;
 	}
 
+	/** @brief Returns true when the constructor hid overlays. */
 	bool WasOverlaysHidden() const
 	{
 		return fOverlaysHidden;
@@ -176,6 +247,12 @@ private:
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the engine, optionally pre-attaching it to @a interface.
+ *
+ * @param interface HWInterface to attach to (may be NULL; subsequent
+ *                  SetHWInterface() calls can change this).
+ */
 DrawingEngine::DrawingEngine(HWInterface* interface)
 	:
 	fPainter(new Painter()),
@@ -186,6 +263,9 @@ DrawingEngine::DrawingEngine(HWInterface* interface)
 }
 
 
+/**
+ * @brief Detaches from the HWInterface; the Painter is freed by the smart pointer.
+ */
 DrawingEngine::~DrawingEngine()
 {
 	SetHWInterface(NULL);
@@ -195,6 +275,11 @@ DrawingEngine::~DrawingEngine()
 // #pragma mark - locking
 
 
+/**
+ * @brief Acquires the HWInterface's parallel (read) lock.
+ *
+ * @return True when the lock was acquired.
+ */
 bool
 DrawingEngine::LockParallelAccess()
 {
@@ -203,6 +288,11 @@ DrawingEngine::LockParallelAccess()
 
 
 #if DEBUG
+/**
+ * @brief Returns true while the calling thread holds the parallel lock.
+ *
+ * @return Lock state of the underlying HWInterface (debug only).
+ */
 bool
 DrawingEngine::IsParallelAccessLocked() const
 {
@@ -211,6 +301,9 @@ DrawingEngine::IsParallelAccessLocked() const
 #endif
 
 
+/**
+ * @brief Releases the parallel lock.
+ */
 void
 DrawingEngine::UnlockParallelAccess()
 {
@@ -218,6 +311,11 @@ DrawingEngine::UnlockParallelAccess()
 }
 
 
+/**
+ * @brief Acquires the HWInterface's exclusive (write) lock.
+ *
+ * @return True when the lock was acquired.
+ */
 bool
 DrawingEngine::LockExclusiveAccess()
 {
@@ -225,6 +323,9 @@ DrawingEngine::LockExclusiveAccess()
 }
 
 
+/**
+ * @brief Returns true while the calling thread holds the exclusive lock.
+ */
 bool
 DrawingEngine::IsExclusiveAccessLocked() const
 {
@@ -232,6 +333,9 @@ DrawingEngine::IsExclusiveAccessLocked() const
 }
 
 
+/**
+ * @brief Releases the exclusive lock.
+ */
 void
 DrawingEngine::UnlockExclusiveAccess()
 {
@@ -242,6 +346,15 @@ DrawingEngine::UnlockExclusiveAccess()
 // #pragma mark -
 
 
+/**
+ * @brief HWInterfaceListener entry point invoked when the framebuffer changes.
+ *
+ * Detaches the Painter from the previous buffer (or attaches it to the new
+ * one), holding the exclusive lock for the duration of the swap.
+ *
+ * @note Locking is approximate; we are typically called on the thread that
+ *       just performed the swap.
+ */
 void
 DrawingEngine::FrameBufferChanged()
 {
@@ -259,6 +372,14 @@ DrawingEngine::FrameBufferChanged()
 }
 
 
+/**
+ * @brief Re-binds the engine to a different HWInterface.
+ *
+ * Removes the listener registration from the old interface, registers with
+ * the new one, and re-attaches the Painter to the new framebuffer.
+ *
+ * @param interface New HWInterface to use; may be NULL.
+ */
 void
 DrawingEngine::SetHWInterface(HWInterface* interface)
 {
@@ -277,6 +398,15 @@ DrawingEngine::SetHWInterface(HWInterface* interface)
 }
 
 
+/**
+ * @brief Toggles automatic copy-back-to-front after each draw.
+ *
+ * When false, drawing still happens in the back buffer but no invalidation
+ * is sent to the HWInterface; the caller is then responsible for refreshing
+ * the screen via CopyToFront().
+ *
+ * @param enable Desired state.
+ */
 void
 DrawingEngine::SetCopyToFrontEnabled(bool enable)
 {
@@ -284,6 +414,9 @@ DrawingEngine::SetCopyToFrontEnabled(bool enable)
 }
 
 
+/**
+ * @brief Schedules @a region for back-to-front refresh on the HWInterface.
+ */
 void
 DrawingEngine::CopyToFront(/*const*/ BRegion& region)
 {
@@ -294,7 +427,14 @@ DrawingEngine::CopyToFront(/*const*/ BRegion& region)
 // #pragma mark -
 
 
-//! the DrawingEngine needs to be locked!
+/**
+ * @brief Updates the Painter clipping region.
+ *
+ * @param region New clip region; pass NULL to remove any clipping (drawing
+ *               then is allowed everywhere on the buffer).
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::ConstrainClippingRegion(const BRegion* region)
 {
@@ -304,6 +444,13 @@ DrawingEngine::ConstrainClippingRegion(const BRegion* region)
 }
 
 
+/**
+ * @brief Sets every Painter parameter from a complete DrawState snapshot.
+ *
+ * @param state   Source draw state.
+ * @param xOffset Origin X offset added to the state's coordinate system.
+ * @param yOffset Origin Y offset added to the state's coordinate system.
+ */
 void
 DrawingEngine::SetDrawState(const DrawState* state, int32 xOffset,
 	int32 yOffset)
@@ -312,6 +459,9 @@ DrawingEngine::SetDrawState(const DrawState* state, int32 xOffset,
 }
 
 
+/**
+ * @brief Sets the high color used by stipple patterns.
+ */
 void
 DrawingEngine::SetHighColor(const rgb_color& color)
 {
@@ -319,6 +469,9 @@ DrawingEngine::SetHighColor(const rgb_color& color)
 }
 
 
+/**
+ * @brief Sets the low color used by stipple patterns.
+ */
 void
 DrawingEngine::SetLowColor(const rgb_color& color)
 {
@@ -326,6 +479,9 @@ DrawingEngine::SetLowColor(const rgb_color& color)
 }
 
 
+/**
+ * @brief Sets the pen size used by all stroking primitives.
+ */
 void
 DrawingEngine::SetPenSize(float size)
 {
@@ -333,6 +489,9 @@ DrawingEngine::SetPenSize(float size)
 }
 
 
+/**
+ * @brief Sets the cap, join, and miter parameters used while stroking paths.
+ */
 void
 DrawingEngine::SetStrokeMode(cap_mode lineCap, join_mode joinMode,
 	float miterLimit)
@@ -341,6 +500,9 @@ DrawingEngine::SetStrokeMode(cap_mode lineCap, join_mode joinMode,
 }
 
 
+/**
+ * @brief Selects between B_NONZERO and B_EVEN_ODD fill rules.
+ */
 void
 DrawingEngine::SetFillRule(int32 fillRule)
 {
@@ -348,6 +510,9 @@ DrawingEngine::SetFillRule(int32 fillRule)
 }
 
 
+/**
+ * @brief Configures the source-alpha and alpha-function used in B_OP_ALPHA.
+ */
 void
 DrawingEngine::SetBlendingMode(source_alpha srcAlpha, alpha_function alphaFunc)
 {
@@ -355,6 +520,9 @@ DrawingEngine::SetBlendingMode(source_alpha srcAlpha, alpha_function alphaFunc)
 }
 
 
+/**
+ * @brief Sets the active stipple pattern.
+ */
 void
 DrawingEngine::SetPattern(const struct pattern& pattern)
 {
@@ -362,6 +530,11 @@ DrawingEngine::SetPattern(const struct pattern& pattern)
 }
 
 
+/**
+ * @brief Sets the active drawing mode.
+ *
+ * @param mode One of B_OP_COPY, B_OP_OVER, B_OP_ALPHA, etc.
+ */
 void
 DrawingEngine::SetDrawingMode(drawing_mode mode)
 {
@@ -369,6 +542,9 @@ DrawingEngine::SetDrawingMode(drawing_mode mode)
 }
 
 
+/**
+ * @brief Sets the drawing mode and returns the previous one in @a oldMode.
+ */
 void
 DrawingEngine::SetDrawingMode(drawing_mode mode, drawing_mode& oldMode)
 {
@@ -377,6 +553,9 @@ DrawingEngine::SetDrawingMode(drawing_mode mode, drawing_mode& oldMode)
 }
 
 
+/**
+ * @brief Sets the current text font from a ServerFont.
+ */
 void
 DrawingEngine::SetFont(const ServerFont& font)
 {
@@ -384,6 +563,9 @@ DrawingEngine::SetFont(const ServerFont& font)
 }
 
 
+/**
+ * @brief Sets the current text font from the font slot of @a state.
+ */
 void
 DrawingEngine::SetFont(const DrawState* state)
 {
@@ -391,6 +573,9 @@ DrawingEngine::SetFont(const DrawState* state)
 }
 
 
+/**
+ * @brief Sets the current view-to-screen affine transform.
+ */
 void
 DrawingEngine::SetTransform(const BAffineTransform& transform, int32 xOffset,
 	int32 yOffset)
@@ -456,6 +641,7 @@ DrawingEngine::SetTransform(const BAffineTransform& transform, int32 xOffset,
 // NOTE: comparison of coordinates assumes that rects don't overlap
 // and don't share the actual edge either (as is the case in BRegions).
 
+/** @brief DAG node used by CopyRegion() to topologically order overlapping rects. */
 struct node {
 	node()
 	{
@@ -472,6 +658,7 @@ struct node {
 		delete [] pointers;
 	}
 
+	/** @brief Initialises the rectangle and allocates the successor array. */
 	void init(const BRect& r, int32 maxPointers)
 	{
 		rect = r;
@@ -480,17 +667,20 @@ struct node {
 		next_pointer = 0;
 	}
 
+	/** @brief Pushes a successor pointer onto the node's array. */
 	void push(node* node)
 	{
 		pointers[next_pointer] = node;
 		next_pointer++;
 	}
 
+	/** @brief Returns the successor at the current top of the array. */
 	node* top()
 	{
 		return pointers[next_pointer];
 	}
 
+	/** @brief Pops and returns the successor at the top of the array. */
 	node* pop()
 	{
 		node* ret = top();
@@ -505,6 +695,9 @@ struct node {
 };
 
 
+/**
+ * @brief Returns true when @a a is strictly to the left of @a b (no edge sharing).
+ */
 static bool
 is_left_of(const BRect& a, const BRect& b)
 {
@@ -512,6 +705,9 @@ is_left_of(const BRect& a, const BRect& b)
 }
 
 
+/**
+ * @brief Returns true when @a a is strictly above @a b (no edge sharing).
+ */
 static bool
 is_above(const BRect& a, const BRect& b)
 {
@@ -519,6 +715,19 @@ is_above(const BRect& a, const BRect& b)
 }
 
 
+/**
+ * @brief Topologically sorts and copies the rectangles of @a region by (xOffset, yOffset).
+ *
+ * The algorithm prevents pixels that have not yet been copied from being
+ * overwritten by their own translated copies. See the long comment block
+ * above for a detailed explanation of the topological ordering.
+ *
+ * @param region  Region to copy (already clipped against the destination).
+ * @param xOffset Horizontal translation in pixels.
+ * @param yOffset Vertical translation in pixels.
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::CopyRegion(/*const*/ BRegion* region, int32 xOffset,
 	int32 yOffset)
@@ -614,6 +823,13 @@ DrawingEngine::CopyRegion(/*const*/ BRegion* region, int32 xOffset,
 }
 
 
+/**
+ * @brief Inverts the pixels inside @a r (XOR with white).
+ *
+ * @param r Rectangle to invert; normalised before clipping.
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::InvertRect(BRect r)
 {
@@ -629,6 +845,16 @@ DrawingEngine::InvertRect(BRect r)
 }
 
 
+/**
+ * @brief Blits @a bitmap into @a viewRect using @a bitmapRect as the source.
+ *
+ * @param bitmap     Source bitmap.
+ * @param bitmapRect Sub-rectangle of @a bitmap to sample from.
+ * @param viewRect   Destination rectangle on the drawing target.
+ * @param options    Bitmap drawing options (filter mode, tile mode, ...).
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::DrawBitmap(ServerBitmap* bitmap, const BRect& bitmapRect,
 	const BRect& viewRect, uint32 options)
@@ -641,6 +867,16 @@ DrawingEngine::DrawBitmap(ServerBitmap* bitmap, const BRect& bitmapRect,
 }
 
 
+/**
+ * @brief Draws a circular arc inside @a r starting at @a angle, sweeping @a span degrees.
+ *
+ * @param r      Bounding rectangle of the ellipse the arc is part of.
+ * @param angle  Start angle in degrees.
+ * @param span   Sweep in degrees (positive counter-clockwise).
+ * @param filled True to fill the pie slice, false to stroke the arc.
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::DrawArc(BRect r, const float& angle, const float& span,
 	bool filled)
@@ -669,6 +905,9 @@ DrawingEngine::DrawArc(BRect r, const float& angle, const float& span,
 }
 
 
+/**
+ * @brief Draws a gradient-filled arc.
+ */
 void
 DrawingEngine::DrawArc(BRect r, const float& angle, const float& span,
 	bool filled, const BGradient& gradient)
@@ -693,6 +932,14 @@ DrawingEngine::DrawArc(BRect r, const float& angle, const float& span,
 }
 
 
+/**
+ * @brief Draws a cubic Bezier curve through four control points.
+ *
+ * @param pts    Array of four BPoints (start, two control points, end).
+ * @param filled True to fill the resulting closed curve.
+ *
+ * @todo Compute the actual bounding box rather than hiding overlays for the entire clip.
+ */
 void
 DrawingEngine::DrawBezier(BPoint* pts, bool filled)
 {
@@ -705,6 +952,9 @@ DrawingEngine::DrawBezier(BPoint* pts, bool filled)
 }
 
 
+/**
+ * @brief Draws a gradient-filled cubic Bezier curve.
+ */
 void
 DrawingEngine::DrawBezier(BPoint* pts, bool filled, const BGradient& gradient)
 {
@@ -717,6 +967,12 @@ DrawingEngine::DrawBezier(BPoint* pts, bool filled, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Draws an ellipse fitting the rectangle @a r.
+ *
+ * @param r      Bounding rectangle.
+ * @param filled True to fill, false to stroke.
+ */
 void
 DrawingEngine::DrawEllipse(BRect r, bool filled)
 {
@@ -742,6 +998,9 @@ DrawingEngine::DrawEllipse(BRect r, bool filled)
 }
 
 
+/**
+ * @brief Draws a gradient-filled ellipse.
+ */
 void
 DrawingEngine::DrawEllipse(BRect r, bool filled, const BGradient& gradient)
 {
@@ -767,6 +1026,15 @@ DrawingEngine::DrawEllipse(BRect r, bool filled, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Draws a polygon described by @a ptlist / @a numpts.
+ *
+ * @param ptlist Array of polygon vertices.
+ * @param numpts Vertex count.
+ * @param bounds Bounding rectangle (used for clipping / overlay hiding).
+ * @param filled True to fill, false to stroke.
+ * @param closed True to close the polygon by connecting the last vertex to the first.
+ */
 void
 DrawingEngine::DrawPolygon(BPoint* ptlist, int32 numpts, BRect bounds,
 	bool filled, bool closed)
@@ -784,6 +1052,9 @@ DrawingEngine::DrawPolygon(BPoint* ptlist, int32 numpts, BRect bounds,
 }
 
 
+/**
+ * @brief Draws a gradient-filled polygon.
+ */
 void
 DrawingEngine::DrawPolygon(BPoint* ptlist, int32 numpts, BRect bounds,
 	bool filled, bool closed, const BGradient& gradient)
@@ -804,6 +1075,11 @@ DrawingEngine::DrawPolygon(BPoint* ptlist, int32 numpts, BRect bounds,
 // #pragma mark - rgb_color
 
 
+/**
+ * @brief Plots a single pixel at @a pt in the supplied @a color.
+ *
+ * Implemented as a degenerate StrokeLine() to keep one rasteriser code path.
+ */
 void
 DrawingEngine::StrokePoint(const BPoint& pt, const rgb_color& color)
 {
@@ -811,9 +1087,15 @@ DrawingEngine::StrokePoint(const BPoint& pt, const rgb_color& color)
 }
 
 
-/*!	This function is only used by Decorators,
-	it assumes a one pixel wide line
-*/
+/**
+ * @brief Strokes a 1-pixel-wide line in @a color (server-internal entry point).
+ *
+ * Used by Decorators where the pen size and pattern are known to be the
+ * defaults. The fast path uses Painter::StraightLine() for axis-aligned
+ * cases and falls back to a full StrokeLine() with B_OP_OVER otherwise.
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::StrokeLine(const BPoint& start, const BPoint& end,
 	const rgb_color& color)
@@ -839,7 +1121,11 @@ DrawingEngine::StrokeLine(const BPoint& start, const BPoint& end,
 }
 
 
-//!	This function is used to draw a one pixel wide rect
+/**
+ * @brief Strokes a 1-pixel-wide rectangle in @a color (server-internal entry point).
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::StrokeRect(BRect r, const rgb_color& color)
 {
@@ -854,6 +1140,11 @@ DrawingEngine::StrokeRect(BRect r, const rgb_color& color)
 }
 
 
+/**
+ * @brief Fills a rectangle with @a color (server-internal entry point).
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 void
 DrawingEngine::FillRect(BRect r, const rgb_color& color)
 {
@@ -869,6 +1160,16 @@ DrawingEngine::FillRect(BRect r, const rgb_color& color)
 }
 
 
+/**
+ * @brief Fills @a r with @a color, expecting it to already be clipped (server-internal).
+ *
+ * @param r     Already-clipped region (one rect per FillRectNoClipping call).
+ * @param color Solid fill color.
+ *
+ * @note The DrawingEngine must be parallel-locked. The caller is responsible
+ *       for ensuring @a r lies inside the framebuffer bounds. See bug #634
+ *       for context on the upstream defensive check.
+ */
 void
 DrawingEngine::FillRegion(BRegion& r, const rgb_color& color)
 {
@@ -902,6 +1203,9 @@ DrawingEngine::FillRegion(BRegion& r, const rgb_color& color)
 // #pragma mark - DrawState
 
 
+/**
+ * @brief Strokes a rectangle using the current draw state.
+ */
 void
 DrawingEngine::StrokeRect(BRect r)
 {
@@ -919,6 +1223,9 @@ DrawingEngine::StrokeRect(BRect r)
 }
 
 
+/**
+ * @brief Fills a rectangle using the current draw state.
+ */
 void
 DrawingEngine::FillRect(BRect r)
 {
@@ -936,6 +1243,9 @@ DrawingEngine::FillRect(BRect r)
 }
 
 
+/**
+ * @brief Strokes a rectangle, sampling @a gradient along the stroke path.
+ */
 void
 DrawingEngine::StrokeRect(BRect r, const BGradient& gradient)
 {
@@ -953,6 +1263,9 @@ DrawingEngine::StrokeRect(BRect r, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills a rectangle with @a gradient.
+ */
 void
 DrawingEngine::FillRect(BRect r, const BGradient& gradient)
 {
@@ -969,6 +1282,9 @@ DrawingEngine::FillRect(BRect r, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills @a r using the current draw state, walking the region rect by rect.
+ */
 void
 DrawingEngine::FillRegion(BRegion& r)
 {
@@ -985,6 +1301,9 @@ DrawingEngine::FillRegion(BRegion& r)
 }
 
 
+/**
+ * @brief Fills @a r with @a gradient, walking the region rect by rect.
+ */
 void
 DrawingEngine::FillRegion(BRegion& r, const BGradient& gradient)
 {
@@ -1001,6 +1320,14 @@ DrawingEngine::FillRegion(BRegion& r, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Draws a rounded rectangle with corner radii (@a xrad, @a yrad).
+ *
+ * @param r      Bounding rectangle.
+ * @param xrad   Horizontal corner radius.
+ * @param yrad   Vertical corner radius.
+ * @param filled True to fill, false to stroke.
+ */
 void
 DrawingEngine::DrawRoundRect(BRect r, float xrad, float yrad, bool filled)
 {
@@ -1027,6 +1354,9 @@ DrawingEngine::DrawRoundRect(BRect r, float xrad, float yrad, bool filled)
 }
 
 
+/**
+ * @brief Draws a gradient-filled rounded rectangle.
+ */
 void
 DrawingEngine::DrawRoundRect(BRect r, float xrad, float yrad,
 	bool filled, const BGradient& gradient)
@@ -1054,6 +1384,23 @@ DrawingEngine::DrawRoundRect(BRect r, float xrad, float yrad,
 }
 
 
+/**
+ * @brief Renders a BShape described by @a opList / @a ptList.
+ *
+ * @param bounds              Bounding box reported by the caller (currently
+ *                            only used for documentation; clipping happens
+ *                            inside Painter).
+ * @param opCount             Number of operation codes in @a opList.
+ * @param opList              BShape operation codes.
+ * @param ptCount             Number of points in @a ptList.
+ * @param ptList              BShape control points.
+ * @param filled              True to fill, false to stroke.
+ * @param viewToScreenOffset  Offset added to all points before rasterising.
+ * @param viewScale           Scale applied to all points before rasterising.
+ *
+ * @todo The supplied bounds do not currently take curves and arcs into
+ *       account, so the precomputed clip path is bypassed.
+ */
 void
 DrawingEngine::DrawShape(const BRect& bounds, int32 opCount,
 	const uint32* opList, int32 ptCount, const BPoint* ptList, bool filled,
@@ -1082,6 +1429,9 @@ DrawingEngine::DrawShape(const BRect& bounds, int32 opCount,
 }
 
 
+/**
+ * @brief Renders a gradient-filled BShape.
+ */
 void
 DrawingEngine::DrawShape(const BRect& bounds, int32 opCount,
 	const uint32* opList, int32 ptCount, const BPoint* ptList,
@@ -1108,6 +1458,13 @@ DrawingEngine::DrawShape(const BRect& bounds, int32 opCount,
 }
 
 
+/**
+ * @brief Draws a triangle.
+ *
+ * @param pts    Three vertices.
+ * @param bounds Pre-computed bounding box.
+ * @param filled True to fill, false to stroke.
+ */
 void
 DrawingEngine::DrawTriangle(BPoint* pts, const BRect& bounds, bool filled)
 {
@@ -1127,6 +1484,9 @@ DrawingEngine::DrawTriangle(BPoint* pts, const BRect& bounds, bool filled)
 }
 
 
+/**
+ * @brief Draws a gradient-filled triangle.
+ */
 void
 DrawingEngine::DrawTriangle(BPoint* pts, const BRect& bounds,
 	bool filled, const BGradient& gradient)
@@ -1147,6 +1507,9 @@ DrawingEngine::DrawTriangle(BPoint* pts, const BRect& bounds,
 }
 
 
+/**
+ * @brief Strokes a line using the current draw state.
+ */
 void
 DrawingEngine::StrokeLine(const BPoint& start, const BPoint& end)
 {
@@ -1163,6 +1526,9 @@ DrawingEngine::StrokeLine(const BPoint& start, const BPoint& end)
 }
 
 
+/**
+ * @brief Strokes a line, sampling @a gradient along its length.
+ */
 void
 DrawingEngine::StrokeLine(const BPoint& start, const BPoint& end, const BGradient& gradient)
 {
@@ -1179,6 +1545,15 @@ DrawingEngine::StrokeLine(const BPoint& start, const BPoint& end, const BGradien
 }
 
 
+/**
+ * @brief Strokes an array of independently colored lines (BView::StrokeLineArray).
+ *
+ * @param numLines Number of entries in @a lineData.
+ * @param lineData Array of line / color records.
+ *
+ * @note Saves and restores the painter's high color and pattern around the
+ *       loop because each entry has its own color.
+ */
 void
 DrawingEngine::StrokeLineArray(int32 numLines,
 	const ViewLineArrayInfo *lineData)
@@ -1234,6 +1609,22 @@ DrawingEngine::StrokeLineArray(int32 numLines,
 // #pragma mark -
 
 
+/**
+ * @brief Renders @a string at @a pt and returns the resulting pen position.
+ *
+ * The fast path returns the advance without rendering when the string is
+ * entirely outside the clipping region (avoids the expensive bounding box
+ * computation). Otherwise the bounding box is computed via Painter, the
+ * dirty region is clipped, and the string is rendered.
+ *
+ * @param string   UTF-8 string to render.
+ * @param length   Length of @a string in bytes.
+ * @param pt       Pen baseline position.
+ * @param delta    Optional escapement deltas, NULL for default spacing.
+ * @return  The pen position after rendering the string.
+ *
+ * @note The DrawingEngine must be parallel-locked.
+ */
 BPoint
 DrawingEngine::DrawString(const char* string, int32 length,
 	const BPoint& pt, escapement_delta* delta)
@@ -1273,17 +1664,25 @@ DrawingEngine::DrawString(const char* string, int32 length,
 	// stop here if we're supposed to render outside of the clipping
 	DrawTransaction transaction(this, fPainter->ClipRect(b));
 	if (transaction.IsDirty()) {
-//printf("bounding box '%s': %lld µs\n", string, system_time() - now);
+//printf("bounding box '%s': %lld us\n", string, system_time() - now);
 
 //now = system_time();
 		fPainter->DrawString(string, length, pt, delta, &cacheReference);
-//printf("drawing string: %lld µs\n", system_time() - now);
+//printf("drawing string: %lld us\n", string, system_time() - now);
 	}
 
 	return penLocation;
 }
 
 
+/**
+ * @brief Renders @a string with a per-glyph @a offsets array.
+ *
+ * @param string  UTF-8 string to render.
+ * @param length  Length of @a string in bytes.
+ * @param offsets Array of glyph positions, one per UTF-8 character.
+ * @return  The pen position after rendering the string.
+ */
 BPoint
 DrawingEngine::DrawString(const char* string, int32 length,
 	const BPoint* offsets)
@@ -1300,17 +1699,20 @@ DrawingEngine::DrawString(const char* string, int32 length,
 	// stop here if we're supposed to render outside of the clipping
 	DrawTransaction transaction(this, fPainter->ClipRect(b));
 	if (transaction.IsDirty()) {
-//printf("bounding box '%s': %lld µs\n", string, system_time() - now);
+//printf("bounding box '%s': %lld us\n", string, system_time() - now);
 
 //now = system_time();
 		fPainter->DrawString(string, length, offsets, &cacheReference);
-//printf("drawing string: %lld µs\n", system_time() - now);
+//printf("drawing string: %lld us\n", string, system_time() - now);
 	}
 
 	return penLocation;
 }
 
 
+/**
+ * @brief Returns the rendered width of @a string under the current font.
+ */
 float
 DrawingEngine::StringWidth(const char* string, int32 length,
 	escapement_delta* delta)
@@ -1319,6 +1721,12 @@ DrawingEngine::StringWidth(const char* string, int32 length,
 }
 
 
+/**
+ * @brief Returns the rendered width of @a string under the supplied @a font.
+ *
+ * @note Independent of the current draw state; useful for Decorator code that
+ *       must measure text without disturbing the engine state.
+ */
 float
 DrawingEngine::StringWidth(const char* string, int32 length,
 	const ServerFont& font, escapement_delta* delta)
@@ -1327,6 +1735,11 @@ DrawingEngine::StringWidth(const char* string, int32 length,
 }
 
 
+/**
+ * @brief Computes the pen advance for @a string at @a pt without rendering it.
+ *
+ * @return The pen position that would result from a real DrawString().
+ */
 BPoint
 DrawingEngine::DrawStringDry(const char* string, int32 length,
 	const BPoint& pt, escapement_delta* delta)
@@ -1348,6 +1761,9 @@ DrawingEngine::DrawStringDry(const char* string, int32 length,
 }
 
 
+/**
+ * @brief Computes the pen advance for @a string with offsets, without rendering.
+ */
 BPoint
 DrawingEngine::DrawStringDry(const char* string, int32 length,
 	const BPoint* offsets)
@@ -1364,6 +1780,12 @@ DrawingEngine::DrawStringDry(const char* string, int32 length,
 // #pragma mark -
 
 
+/**
+ * @brief Returns a freshly allocated bitmap with the framebuffer contents.
+ *
+ * @return Always NULL in the base implementation; subclasses with screen
+ *         capture support override it.
+ */
 ServerBitmap*
 DrawingEngine::DumpToBitmap()
 {
@@ -1371,6 +1793,22 @@ DrawingEngine::DumpToBitmap()
 }
 
 
+/**
+ * @brief Reads framebuffer pixels into @a bitmap, optionally including the cursor.
+ *
+ * Captures @a bounds from the front buffer into @a bitmap; when @a drawCursor
+ * is true, composites the cursor sprite at its current location on top of
+ * the captured pixels.
+ *
+ * @param bitmap     Destination bitmap; must be large enough for @a bounds.
+ * @param drawCursor When true, blends the cursor onto the captured pixels.
+ * @param bounds     Source rectangle in framebuffer coordinates; clipped to
+ *                   the buffer.
+ * @retval B_OK     Capture succeeded.
+ * @retval B_ERROR  No front buffer available.
+ *
+ * @note The DrawingEngine must be exclusive-locked.
+ */
 status_t
 DrawingEngine::ReadBitmap(ServerBitmap* bitmap, bool drawCursor, BRect bounds)
 {
@@ -1434,6 +1872,19 @@ DrawingEngine::ReadBitmap(ServerBitmap* bitmap, bool drawCursor, BRect bounds)
 // #pragma mark -
 
 
+/**
+ * @brief Performs the actual back-buffer pixel move for one rect of CopyRegion().
+ *
+ * Calculates the clipped source / destination rectangles, walks the back
+ * buffer, and dispatches to _CopyRect() to do the byte-level move.
+ *
+ * @param src     Source rectangle in framebuffer coordinates.
+ * @param xOffset Horizontal translation in pixels.
+ * @param yOffset Vertical translation in pixels.
+ * @return        The destination rectangle that was actually touched.
+ *
+ * @todo Currently assumes the drawing buffer is 32 bits per pixel.
+ */
 BRect
 DrawingEngine::CopyRect(BRect src, int32 xOffset, int32 yOffset) const
 {
@@ -1475,6 +1926,9 @@ DrawingEngine::CopyRect(BRect src, int32 xOffset, int32 yOffset) const
 }
 
 
+/**
+ * @brief Sets the renderer's offset (used when drawing into a sub-region).
+ */
 void
 DrawingEngine::SetRendererOffset(int32 offsetX, int32 offsetY)
 {
@@ -1482,6 +1936,22 @@ DrawingEngine::SetRendererOffset(int32 offsetX, int32 offsetY)
 }
 
 
+/**
+ * @brief Performs the byte-level pixel block move for CopyRect().
+ *
+ * Chooses copy direction (top-to-bottom or bottom-to-top) based on the sign
+ * of @a yOffset and uses memmove() instead of memcpy() when the source and
+ * destination ranges overlap horizontally.
+ *
+ * @param src         Pointer to the first source pixel.
+ * @param width       Number of pixels per row.
+ * @param height      Number of rows.
+ * @param bytesPerRow Stride in bytes.
+ * @param xOffset     Horizontal translation in pixels.
+ * @param yOffset     Vertical translation in pixels.
+ *
+ * @todo Currently assumes the drawing buffer is 32 bits per pixel.
+ */
 void
 DrawingEngine::_CopyRect(uint8* src, uint32 width, uint32 height,
 	uint32 bytesPerRow, int32 xOffset, int32 yOffset) const

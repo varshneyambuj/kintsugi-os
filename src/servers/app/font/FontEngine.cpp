@@ -1,28 +1,60 @@
 /*
- * Copyright 2007, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Maxim Shemanarev <mcseemagg@yahoo.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Anthony Lee <don.anthony.lee@gmail.com>
- *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Maxim Shemanarev <mcseemagg@yahoo.com>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Anthony Lee <don.anthony.lee@gmail.com>
+ *       Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ *
+ *   Portions derived from Anti-Grain Geometry, version 2.4,
+ *   Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com).
+ *   Permission to copy, use, modify, sell and distribute this software is
+ *   granted provided this copyright notice appears in all copies. This
+ *   software is provided "as is" without express or implied warranty,
+ *   and with no claim as to its suitability for any purpose.
+ *
+ *   Contact: mcseem@antigrain.com
+ *            mcseemagg@yahoo.com
+ *            http://www.antigrain.com
  */
 
-//----------------------------------------------------------------------------
-// Anti-Grain Geometry - Version 2.4
-// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
-//
-// Permission to copy, use, modify, sell and distribute this software
-// is granted provided this copyright notice appears in all copies.
-// This software is provided "as is" without express or implied
-// warranty, and with no claim as to its suitability for any purpose.
-//
-//----------------------------------------------------------------------------
-// Contact: mcseem@antigrain.com
-//			mcseemagg@yahoo.com
-//			http://www.antigrain.com
-//----------------------------------------------------------------------------
+
+/**
+ * @file FontEngine.cpp
+ * @brief FreeType wrapper that produces AGG scanline storage for cached glyphs.
+ *
+ * The engine owns one FT_Library and one FT_Face. Init() configures the
+ * face for one of four rendering modes (mono, gray8, subpixel LCD, or
+ * vector outline). PrepareGlyph() loads and rasterizes a glyph into
+ * internal AGG buffers (or path storage for outline mode); WriteGlyphTo()
+ * then copies the serialized representation into a caller buffer for
+ * inclusion in a FontCacheEntry's glyph pool. The decompose_ft_*
+ * helpers translate FreeType's outline / bitmap data into the AGG
+ * scanline form the renderer expects.
+ *
+ * @see FontCacheEntry
+ */
 
 
 #include "FontEngine.h"
@@ -39,9 +71,16 @@
 #include "GlobalSubpixelSettings.h"
 
 
+/** @brief When true, glyph y-coordinates are flipped to match the screen origin. */
 static const bool kFlipY = true;
 
 
+/**
+ * @brief Converts a FreeType 26.6 fixed-point value to double pixels.
+ *
+ * @param p  Value in 26.6 fixed-point units.
+ * @return   Equivalent value in floating-point pixels.
+ */
 static inline double
 int26p6_to_dbl(int p)
 {
@@ -49,6 +88,12 @@ int26p6_to_dbl(int p)
 }
 
 
+/**
+ * @brief Converts double pixels back to FreeType 26.6 fixed-point.
+ *
+ * @param p  Value in floating-point pixels.
+ * @return   Rounded 26.6 fixed-point value.
+ */
 static inline int
 dbl_to_int26p6(double p)
 {
@@ -56,6 +101,21 @@ dbl_to_int26p6(double p)
 }
 
 
+/**
+ * @brief Walks a FreeType outline and emits AGG path commands.
+ *
+ * Iterates contours and points in the FT_Outline, converting tags
+ * (on-curve, conic, cubic) into the corresponding AGG move/line/curve
+ * operations. Optionally flips the y axis so the result lives in
+ * screen-down coordinates.
+ *
+ * @tparam PathStorage  Sink type providing move_to/line_to/curve3/curve4.
+ * @param  outline      The FreeType outline to translate.
+ * @param  flip_y       When true, negate every y coordinate before emitting.
+ * @param  path         Destination path; appended-to.
+ * @return  true on success, false when the outline is malformed (e.g. a
+ *          contour starting with a cubic control point).
+ */
 template<class PathStorage>
 bool
 decompose_ft_outline(const FT_Outline& outline, bool flip_y, PathStorage& path)
@@ -292,6 +352,22 @@ decompose_ft_outline(const FT_Outline& outline, bool flip_y, PathStorage& path)
 }
 
 
+/**
+ * @brief Translates a FreeType monochrome bitmap into AGG binary scanlines.
+ *
+ * Iterates every row of the @c FT_PIXEL_MODE_MONO bitmap, packing
+ * set bits into AGG scanline cells with full coverage; transparent
+ * runs are simply skipped.
+ *
+ * @tparam Scanline         AGG scanline type (binary).
+ * @tparam ScanlineStorage  AGG scanline storage type (binary).
+ * @param  bitmap   FreeType bitmap.
+ * @param  x        Pen x in pixels.
+ * @param  y        Pen y in pixels.
+ * @param  flip_y   When true, render rows bottom-up.
+ * @param  sl       Working scanline used for accumulation.
+ * @param  storage  Output storage.
+ */
 template<class Scanline, class ScanlineStorage>
 void
 decompose_ft_bitmap_mono(const FT_Bitmap& bitmap, int x, int y,
@@ -323,6 +399,22 @@ decompose_ft_bitmap_mono(const FT_Bitmap& bitmap, int x, int y,
 }
 
 
+/**
+ * @brief Translates a FreeType bitmap into AGG 8-bit AA scanlines.
+ *
+ * Handles both the antialiased gray8 path and the rare case where a
+ * supposedly-AA face supplies a mono bitmap; in the latter case set bits
+ * are emitted with full coverage.
+ *
+ * @tparam Scanline         AGG scanline type (8-bit AA).
+ * @tparam ScanlineStorage  AGG scanline storage type (8-bit AA).
+ * @param  bitmap   FreeType bitmap.
+ * @param  x        Pen x in pixels.
+ * @param  y        Pen y in pixels.
+ * @param  flip_y   When true, render rows bottom-up.
+ * @param  sl       Working scanline used for accumulation.
+ * @param  storage  Output storage.
+ */
 template<class Scanline, class ScanlineStorage>
 void
 decompose_ft_bitmap_gray8(const FT_Bitmap& bitmap, int x, int y,
@@ -366,6 +458,23 @@ decompose_ft_bitmap_gray8(const FT_Bitmap& bitmap, int x, int y,
 }
 
 
+/**
+ * @brief Translates an LCD-rendered FreeType bitmap into AGG subpixel scanlines.
+ *
+ * Emits one AGG cell per LCD triplet (R, G, B coverage), or falls back
+ * to mono behavior when the source is unexpectedly @c FT_PIXEL_MODE_MONO.
+ * The Greek subpixel filtering work that selects how the triplet is
+ * authored is upstream from this routine and is preserved verbatim.
+ *
+ * @tparam Scanline         AGG scanline type (subpixel).
+ * @tparam ScanlineStorage  AGG scanline storage type (subpixel).
+ * @param  bitmap   FreeType bitmap.
+ * @param  x        Pen x in pixels.
+ * @param  y        Pen y in pixels.
+ * @param  flip_y   When true, render rows bottom-up.
+ * @param  sl       Working scanline used for accumulation.
+ * @param  storage  Output storage.
+ */
 template<class Scanline, class ScanlineStorage>
 void
 decompose_ft_bitmap_subpix(const FT_Bitmap& bitmap, int x, int y,
@@ -421,6 +530,13 @@ decompose_ft_bitmap_subpix(const FT_Bitmap& bitmap, int x, int y,
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an engine and initializes the FreeType library.
+ *
+ * Sets up the curve approximation scale used by AGG outline conversion
+ * and records whether FT_Init_FreeType succeeded; failure is later
+ * surfaced through Init() returning false.
+ */
 FontEngine::FontEngine()
 	:
 	fLastError(0),
@@ -456,6 +572,9 @@ FontEngine::FontEngine()
 }
 
 
+/**
+ * @brief Releases the FT_Face and tears down the FreeType library.
+ */
 FontEngine::~FontEngine()
 {
 	FT_Done_Face(fFace);
@@ -465,6 +584,11 @@ FontEngine::~FontEngine()
 }
 
 
+/**
+ * @brief Returns the total number of faces in the loaded font file.
+ *
+ * @return The face count, or 0 when no face is currently loaded.
+ */
 unsigned
 FontEngine::CountFaces() const
 {
@@ -475,6 +599,12 @@ FontEngine::CountFaces() const
 }
 
 
+/**
+ * @brief Maps a Unicode code point to a glyph index in the loaded face.
+ *
+ * @param glyphCode  Unicode character code.
+ * @return  Glyph index, or 0 when the face has no glyph for that code.
+ */
 uint32
 FontEngine::GlyphIndexForGlyphCode(uint32 glyphCode) const
 {
@@ -482,6 +612,19 @@ FontEngine::GlyphIndexForGlyphCode(uint32 glyphCode) const
 }
 
 
+/**
+ * @brief Loads, rasterizes, and stages glyph data for a single glyph index.
+ *
+ * Performs two FT_Load_Glyph calls: one unhinted/unscaled to recover
+ * precise advance widths used by B_CHAR_SPACING, and one hinted to
+ * obtain the actual rasterization. Then renders into the AGG storage
+ * matching @c fGlyphRendering and records bounds, advances, and side
+ * bearings on the engine instance for later retrieval.
+ *
+ * @param glyphIndex  FreeType glyph index (not a Unicode code point).
+ * @return  true when the glyph was rasterized successfully into the
+ *          internal staging buffers.
+ */
 bool
 FontEngine::PrepareGlyph(uint32 glyphIndex)
 {
@@ -587,6 +730,15 @@ FontEngine::PrepareGlyph(uint32 glyphIndex)
 
 // #pragma mark -
 
+/**
+ * @brief Serializes the most recently prepared glyph into @a data.
+ *
+ * Writes the binary, gray8, subpixel scanline storage, or path bytes
+ * depending on @c fDataType. Silently does nothing when @a data is NULL
+ * or no glyph has been prepared.
+ *
+ * @param data  Caller-owned destination buffer of at least DataSize() bytes.
+ */
 // WriteGlyphTo
 void
 FontEngine::WriteGlyphTo(uint8* data) const
@@ -617,6 +769,16 @@ FontEngine::WriteGlyphTo(uint8* data) const
 }
 
 
+/**
+ * @brief Looks up the kerning offset between two glyphs and adds it to (x, y).
+ *
+ * @param first   First glyph index.
+ * @param second  Second glyph index.
+ * @param x       In-out pen x; receives the kerning x delta.
+ * @param y       In-out pen y; receives the kerning y delta.
+ * @return  true when the face supports kerning and a non-zero pair was
+ *          found, false otherwise.
+ */
 // GetKerning
 bool
 FontEngine::GetKerning(uint32 first, uint32 second, double* x, double* y)
@@ -640,6 +802,26 @@ FontEngine::GetKerning(uint32 first, uint32 second, double* x, double* y)
 // #pragma mark -
 
 
+/**
+ * @brief Loads a face and configures the engine for one rendering mode.
+ *
+ * Accepts either an on-disk font file path or an in-memory blob; the
+ * latter is used for fonts the application registered via the runtime
+ * AppFontManager API. Selects the rasterization mode, falling back from
+ * outline to gray8 for non-scalable faces, and sets the pixel size.
+ *
+ * @param fontFilePath        Path to font file, or NULL when a buffer is used.
+ * @param faceIndex           FT face index (with optional variation in high bits).
+ * @param size                Em size in pixels.
+ * @param charMap             FreeType encoding to select; FT_ENCODING_NONE
+ *                            tries Unicode and falls back to the first available.
+ * @param ren_type            Desired ::glyph_rendering mode.
+ * @param hinting             When true, hint glyphs during rasterization.
+ * @param fontFileBuffer      Optional in-memory font data.
+ * @param fontFileBufferSize  Size of @a fontFileBuffer in bytes.
+ * @return  true on success, false if the FreeType library was not
+ *          initialized or face creation/charmap selection failed.
+ */
 bool
 FontEngine::Init(const char* fontFilePath, unsigned faceIndex, double size,
 	FT_Encoding charMap, glyph_rendering ren_type, bool hinting,

@@ -1,22 +1,52 @@
 /*
- * Copyright 2001-2020 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Ryan Leavengood, leavengood@gmail.com
- *		Philippe Saint-Pierre, stpere@gmail.com
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Tri-Edge AI
- *		Jacob Secunda, secundja@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020 Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Ryan Leavengood, leavengood@gmail.com
+ *       Philippe Saint-Pierre, stpere@gmail.com
+ *       John Scipione, jscipione@gmail.com
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *       Clemens Zeidler, haiku@clemens-zeidler.de
+ *       Joseph Groover, looncraz@looncraz.net
+ *       Tri-Edge AI
+ *       Jacob Secunda, secundja@gmail.com
  */
 
 
-/*!	Default and fallback decorator for the app_server - the yellow tabs */
+/**
+ * @file DefaultDecorator.cpp
+ * @brief Default and fallback window decorator for the app_server (the
+ *        familiar yellow tabs).
+ *
+ * Renders gradient tabs, beveled border frames, blended close/zoom buttons
+ * with cached pre-rendered bitmaps, and the document-look resize knob. All
+ * geometry comes from the TabDecorator base class; this subclass is purely
+ * about painting.
+ *
+ * @see TabDecorator, Decorator
+ */
 
 
 #include "DefaultDecorator.h"
@@ -52,6 +82,14 @@
 #endif
 
 
+/**
+ * @brief Linearly interpolates a single color channel between @a a and @a b.
+ *
+ * @param a        Channel value at position 0.0.
+ * @param b        Channel value at position 1.0.
+ * @param position Interpolation parameter in [0.0, 1.0].
+ * @return Clamped 8-bit channel value.
+ */
 static inline uint8
 blend_color_value(uint8 a, uint8 b, float position)
 {
@@ -69,6 +107,17 @@ blend_color_value(uint8 a, uint8 b, float position)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a DefaultDecorator on @a desktop with initial frame
+ *        @a rect.
+ *
+ * @param settings Current desktop settings (forwarded to TabDecorator).
+ * @param rect     Initial client-area frame.
+ * @param desktop  Owning desktop.
+ *
+ * @todo Auto-resize the decorator if it is constructed with a too-small
+ *       frame.
+ */
 // TODO: get rid of DesktopSettings here, and introduce private accessor
 //	methods to the Decorator base class
 DefaultDecorator::DefaultDecorator(DesktopSettings& settings, BRect rect,
@@ -85,6 +134,9 @@ DefaultDecorator::DefaultDecorator(DesktopSettings& settings, BRect rect,
 }
 
 
+/**
+ * @brief Destroys the DefaultDecorator.
+ */
 DefaultDecorator::~DefaultDecorator()
 {
 	STRACE(("DefaultDecorator: ~DefaultDecorator()\n"));
@@ -94,15 +146,22 @@ DefaultDecorator::~DefaultDecorator()
 // #pragma mark - Public methods
 
 
-/*!	Returns the frame colors for the specified decorator component.
-
-	The meaning of the color array elements depends on the specified component.
-	For some components some array elements are unused.
-
-	\param component The component for which to return the frame colors.
-	\param highlight The highlight set for the component.
-	\param colors An array of colors to be initialized by the function.
-*/
+/**
+ * @brief Fills @a _colors with the painting palette for a decorator
+ *        component.
+ *
+ * The contents of the array depend on the component: for tab and button
+ * components the slots map to the COLOR_TAB_* / COLOR_BUTTON_* indices
+ * defined on TabDecorator; for borders and the resize corner six progressive
+ * shades of the frame color are produced. The HIGHLIGHT_RESIZE_BORDER
+ * highlight tints every output blue.
+ *
+ * @param component Decorator component being painted.
+ * @param highlight Highlight kind for the component.
+ * @param _colors   Output array; the function fills it in place.
+ * @param _tab      Tab whose focus state drives the focused/non-focused
+ *                  palette selection; may be NULL for non-tab components.
+ */
 void
 DefaultDecorator::GetComponentColors(Component component, uint8 highlight,
 	ComponentColors _colors, Decorator::Tab* _tab)
@@ -181,6 +240,11 @@ DefaultDecorator::GetComponentColors(Component component, uint8 highlight,
 }
 
 
+/**
+ * @brief Forwards color refresh to the TabDecorator base implementation.
+ *
+ * @param settings Current desktop settings.
+ */
 void
 DefaultDecorator::UpdateColors(DesktopSettings& settings)
 {
@@ -191,6 +255,20 @@ DefaultDecorator::UpdateColors(DesktopSettings& settings)
 // #pragma mark - Protected methods
 
 
+/**
+ * @brief Renders the four border strips of the window frame and any
+ *        document-look resize knob within @a rect.
+ *
+ * Different looks use different border depths and shading: titled, document
+ * and modal looks paint five-step gradients; floating and left-titled looks
+ * use a tighter three-step palette; bordered windows draw a single line.
+ *
+ * @param rect Update rectangle, in screen coordinates. Each border is only
+ *             repainted if it intersects @a rect.
+ *
+ * @note The DrawingEngine must remain locked across this entire call so
+ *       that the border clipping stays valid.
+ */
 void
 DefaultDecorator::_DrawFrame(BRect rect)
 {
@@ -435,6 +513,18 @@ DefaultDecorator::_DrawFrame(BRect rect)
 }
 
 
+/**
+ * @brief Paints the document-look resize knob in @a rect.
+ *
+ * Always paints the gradient body and L-shaped highlight; when @a full is
+ * true, the dotted texture filling the knob is also drawn (for the
+ * focused window). Non-focused windows paint only the outline so the knob
+ * looks subdued.
+ *
+ * @param rect   Resize knob rectangle, in screen coordinates.
+ * @param full   true to paint the dotted interior, false for outline only.
+ * @param colors Six-element color array supplied by _GetComponentColors().
+ */
 void
 DefaultDecorator::_DrawResizeKnob(BRect rect, bool full,
 	const ComponentColors& colors)
@@ -477,14 +567,16 @@ DefaultDecorator::_DrawResizeKnob(BRect rect, bool full,
 }
 
 
-/*!	\brief Actually draws the tab
-
-	This function is called when the tab itself needs drawn. Other items,
-	like the window title or buttons, should not be drawn here.
-
-	\param tab The \a tab to update.
-	\param rect The area of the \a tab to update.
-*/
+/**
+ * @brief Paints the tab body, including outer frame, bevel highlights, and
+ *        gradient fill, then draws the title and buttons on top.
+ *
+ * Only repaints if @a invalid intersects the tab rectangle. The non-focused
+ * tab is drawn one pixel shorter so the focused tab visually overlaps it.
+ *
+ * @param tab     Tab to paint.
+ * @param invalid Update rectangle, in screen coordinates.
+ */
 void
 DefaultDecorator::_DrawTab(Decorator::Tab* tab, BRect invalid)
 {
@@ -559,16 +651,16 @@ DefaultDecorator::_DrawTab(Decorator::Tab* tab, BRect invalid)
 }
 
 
-/*!	\brief Actually draws the title
-
-	The main tasks for this function are to ensure that the decorator draws
-	the title only in its own area and drawing the title itself.
-	Using B_OP_COPY for drawing the title is recommended because of the marked
-	performance hit of the other drawing modes, but it is not a requirement.
-
-	\param tab The \a tab to update.
-	\param rect area of the title to update.
-*/
+/**
+ * @brief Renders the truncated title text into the tab.
+ *
+ * The text is drawn in B_OP_OVER so the gradient fill bleeds through, then
+ * the drawing mode is restored to B_OP_COPY for performance on subsequent
+ * paints.
+ *
+ * @param _tab Tab whose title is being drawn.
+ * @param rect Tab area to update, in screen coordinates.
+ */
 void
 DefaultDecorator::_DrawTitle(Decorator::Tab* _tab, BRect rect)
 {
@@ -614,15 +706,18 @@ DefaultDecorator::_DrawTitle(Decorator::Tab* _tab, BRect rect)
 }
 
 
-/*!	\brief Actually draws the close button
-
-	Unless a subclass has a particularly large button, it is probably
-	unnecessary to check the update rectangle.
-
-	\param _tab The \a tab to update.
-	\param direct Draw without double buffering.
-	\param rect The area of the button to update.
-*/
+/**
+ * @brief Paints the close button by blitting a cached pre-rendered bitmap.
+ *
+ * The cache key combines focus and pressed state so each transition
+ * (focused-up, focused-down, unfocused-up, unfocused-down) hits the right
+ * artwork.
+ *
+ * @param _tab   Tab whose close button is being drawn.
+ * @param direct true to bypass double buffering (used for instant button
+ *               feedback during a click).
+ * @param rect   Button rectangle, in screen coordinates.
+ */
 void
 DefaultDecorator::_DrawClose(Decorator::Tab* _tab, bool direct, BRect rect)
 {
@@ -643,15 +738,16 @@ DefaultDecorator::_DrawClose(Decorator::Tab* _tab, bool direct, BRect rect)
 }
 
 
-/*!	\brief Actually draws the zoom button
-
-	Unless a subclass has a particularly large button, it is probably
-	unnecessary to check the update rectangle.
-
-	\param _tab The \a tab to update.
-	\param direct Draw without double buffering.
-	\param rect The area of the button to update.
-*/
+/**
+ * @brief Paints the zoom button by blitting a cached pre-rendered bitmap.
+ *
+ * Skipped when the button rectangle is degenerate (less than one pixel
+ * wide), which happens when the zoom button has been hidden.
+ *
+ * @param _tab   Tab whose zoom button is being drawn.
+ * @param direct true to bypass double buffering for instant feedback.
+ * @param rect   Button rectangle, in screen coordinates.
+ */
 void
 DefaultDecorator::_DrawZoom(Decorator::Tab* _tab, bool direct, BRect rect)
 {
@@ -674,6 +770,13 @@ DefaultDecorator::_DrawZoom(Decorator::Tab* _tab, bool direct, BRect rect)
 }
 
 
+/**
+ * @brief No-op: the default decorator does not paint a minimize button.
+ *
+ * @param tab    Tab (unused).
+ * @param direct Draw mode (unused).
+ * @param rect   Button rectangle (unused).
+ */
 void
 DefaultDecorator::_DrawMinimize(Decorator::Tab* tab, bool direct, BRect rect)
 {
@@ -684,6 +787,17 @@ DefaultDecorator::_DrawMinimize(Decorator::Tab* tab, bool direct, BRect rect)
 // #pragma mark - Private methods
 
 
+/**
+ * @brief Blits a cached button bitmap to @a rect, optionally bypassing the
+ *        back buffer.
+ *
+ * Saves and restores the engine's drawing mode and copy-to-front setting so
+ * the call has no side effects on subsequent paints.
+ *
+ * @param bitmap Pre-rendered button artwork; no-op when NULL.
+ * @param direct true to draw straight to the front buffer.
+ * @param rect   Destination rectangle.
+ */
 void
 DefaultDecorator::_DrawButtonBitmap(ServerBitmap* bitmap, bool direct,
 	BRect rect)
@@ -701,12 +815,17 @@ DefaultDecorator::_DrawButtonBitmap(ServerBitmap* bitmap, bool direct,
 }
 
 
-/*!	\brief Draws a framed rectangle with a gradient.
-	\param engine The drawing engine to use.
-	\param rect The rectangular area to draw in.
-	\param down The rectangle should be drawn recessed or not.
-	\param colors A button color array of the colors to be used.
-*/
+/**
+ * @brief Draws a small bevel-shaded rectangle, used as the artwork inside
+ *        the close and zoom buttons.
+ *
+ * The pressed state inverts the gradient so the button visually recesses.
+ *
+ * @param engine Drawing engine to render through.
+ * @param rect   Button rectangle.
+ * @param down   true to draw the rectangle recessed.
+ * @param colors Six-element button palette from _GetComponentColors().
+ */
 void
 DefaultDecorator::_DrawBlendedRect(DrawingEngine* engine, const BRect rect,
 	bool down, const ComponentColors& colors)
@@ -737,11 +856,32 @@ DefaultDecorator::_DrawBlendedRect(DrawingEngine* engine, const BRect rect,
 }
 
 
+/**
+ * @brief Returns a cached pre-rendered button bitmap, generating it on first
+ *        use.
+ *
+ * The cache is keyed on component, pressed state, dimensions, and the two
+ * relevant button colors so palette or DPI changes regenerate the artwork
+ * naturally. The cache is process-wide and shared across all decorator
+ * instances.
+ *
+ * @param tab    Tab whose button is being rendered (drives palette).
+ * @param item   COMPONENT_CLOSE_BUTTON or COMPONENT_ZOOM_BUTTON.
+ * @param down   true if the button should be drawn pressed.
+ * @param width  Bitmap width in pixels.
+ * @param height Bitmap height in pixels.
+ * @return Cached or newly-generated bitmap, or NULL on allocation failure.
+ *
+ * @todo Replace the linked list with a hash map and free entries when the
+ *       app_server shuts down.
+ */
 ServerBitmap*
 DefaultDecorator::_GetBitmapForButton(Decorator::Tab* tab, Component item,
 	bool down, int32 width, int32 height)
 {
 	// TODO: the list of shared bitmaps is never freed
+	/** @brief Linked-list entry caching a single rendered button bitmap
+	           keyed by component, pressed state, size, and colors. */
 	struct decorator_bitmap {
 		Component			item;
 		bool				down;
@@ -843,6 +983,14 @@ DefaultDecorator::_GetBitmapForButton(Decorator::Tab* tab, Component item,
 }
 
 
+/**
+ * @brief Convenience wrapper that maps a Component to its enclosing Region
+ *        and forwards to GetComponentColors() with the current highlight.
+ *
+ * @param component Component to fetch colors for.
+ * @param _colors   Output palette array.
+ * @param tab       Tab driving the focused/non-focused selection.
+ */
 void
 DefaultDecorator::_GetComponentColors(Component component,
 	ComponentColors _colors, Decorator::Tab* tab)

@@ -1,27 +1,55 @@
 /*
- * Copyright 2009, Christian Packmann.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Christian Packmann; 2008, Andrej Spielmann;
+ * 2005-2014, Stephan Aßmus; 2015, Julian Harnath.
  */
+
+/** @file DrawBitmapGeneric.h
+    @brief Generic AGG-rasterised bitmap blit fallback that handles
+           affine transforms, alpha masks, and tiled or clamped fills. */
+
 #ifndef DRAW_BITMAP_GENERIC_H
 #define DRAW_BITMAP_GENERIC_H
 
 #include "Painter.h"
 
 
+/** @brief Fill mode tag: clamps source coordinates to the bitmap edge. */
 struct Fill {};
+
+/** @brief Fill mode tag: wraps source coordinates with repeat semantics. */
 struct Tile {};
 
+/** @brief Primary template selecting the AGG image-accessor type for a
+           pixel format and a Fill / Tile fill mode. */
 template<typename PixFmt, typename Mode>
 struct ImageAccessor {};
 
+/** @brief ImageAccessor specialisation for Fill: edge-clamping clone
+           accessor. */
 template<typename PixFmt>
 struct ImageAccessor<PixFmt, Fill> {
 	typedef agg::image_accessor_clone<PixFmt> type;
 };
 
+/** @brief ImageAccessor specialisation for Tile: 2D wrap-repeat
+           accessor. */
 template<typename PixFmt>
 struct ImageAccessor<PixFmt, Tile> {
 	typedef agg::image_accessor_wrap<PixFmt,
@@ -29,8 +57,20 @@ struct ImageAccessor<PixFmt, Tile> {
 };
 
 
+/**
+ * @brief Generic bitmap blitter that uses AGG's rasterizer plus an image
+ *        span generator to render an affinely-transformed bitmap.
+ *
+ * Handles bilinear and nearest-neighbor sampling per
+ * B_FILTER_BITMAP_BILINEAR, alpha masks, and tile or fill behaviour
+ * selected by the FillMode template tag.
+ */
 template<typename FillMode>
 struct DrawBitmapGeneric {
+	/** @brief Sets up the source/destination affine transforms, the AGG
+	           image span generator (bilinear or nearest-neighbor), and
+	           runs render_scanlines_aa over a quad enclosing the
+	           destination rect, optionally through an alpha mask. */
 	static void
 	Draw(const Painter* painter, PainterAggInterface& aggInterface,
 		agg::rendering_buffer& bitmap, BPoint offset,

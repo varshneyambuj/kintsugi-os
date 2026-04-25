@@ -129,7 +129,7 @@ WorkspacesView::_GetGrid(int32& columns, int32& rows)
 }
 
 
-/*!	\brief Returns the frame of the screen for the specified workspace.
+/*!	@brief Returns the frame of the screen for the specified workspace.
 */
 /** @brief Returns the physical screen frame for the workspace at index \a i.
  *  @param i Zero-based workspace index.
@@ -142,7 +142,7 @@ WorkspacesView::_ScreenFrame(int32 i)
 }
 
 
-/*!	\brief Returns the frame of the specified workspace within the
+/*!	@brief Returns the frame of the specified workspace within the
 		workspaces view.
 */
 /** @brief Computes the view-local rectangle occupied by workspace \a i.
@@ -184,7 +184,7 @@ WorkspacesView::_WorkspaceAt(int32 i)
 }
 
 
-/*!	\brief Returns the workspace frame and index of the workspace
+/*!	@brief Returns the workspace frame and index of the workspace
 		under \a where.
 
 	If, for some reason, there is no workspace located under \where,

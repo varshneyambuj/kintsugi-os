@@ -1,12 +1,43 @@
 /*
- * Copyright (c) 2001-2020 Haiku, Inc. All right reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Clemens Zeidler <haiku@clemens-zeidler.de>
- *		Joseph Groover <looncraz@satx.rr.com>
- *		John Scipione <jscipione@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2001-2020 Haiku, Inc. All right reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Clemens Zeidler <haiku@clemens-zeidler.de>
+ *       Joseph Groover <looncraz@satx.rr.com>
+ *       John Scipione <jscipione@gmail.com>
+ */
+
+
+/**
+ * @file DecorManager.cpp
+ * @brief Loader and registry for window decorator add-ons.
+ *
+ * DecorManager owns the currently active DecorAddOn, which produces both the
+ * Decorator (window-frame renderer) and the WindowBehaviour (input policy)
+ * for every window the desktop creates. It also supports a transient preview
+ * decorator on a single window and persists the user's selection to the
+ * settings file under the user settings directory.
  */
 
 #include "DecorManager.h"
@@ -28,13 +59,23 @@
 #include "SATDecorator.h"
 #include "Window.h"
 
+/** @brief Signature for the optional decorator add-on version export. */
 typedef float get_version(void);
+/** @brief Signature for the decorator add-on factory entry point. */
 typedef DecorAddOn* create_decor_addon(image_id id, const char* name);
 
 // Globals
+/** @brief Process-wide singleton accessed by Window and Desktop to obtain
+           decorators and window behaviours. */
 DecorManager gDecorManager;
 
 
+/**
+ * @brief Constructs a DecorAddOn wrapper for an already-loaded image.
+ *
+ * @param id   Loaded add-on image, or -1 for the built-in default decorator.
+ * @param name Display name of the decorator (filename of the add-on).
+ */
 DecorAddOn::DecorAddOn(image_id id, const char* name)
 	:
 	fImageID(id),
@@ -43,11 +84,24 @@ DecorAddOn::DecorAddOn(image_id id, const char* name)
 }
 
 
+/**
+ * @brief Destroys the DecorAddOn wrapper.
+ *
+ * @note Unloading the underlying add-on image is the responsibility of
+ *       DecorManager so that windows owning Decorator instances from this
+ *       add-on can be torn down first.
+ */
 DecorAddOn::~DecorAddOn()
 {
 }
 
 
+/**
+ * @brief Validates that this add-on is usable.
+ *
+ * @return B_OK in the base implementation. Subclasses may report failures
+ *         such as missing required symbols.
+ */
 status_t
 DecorAddOn::InitCheck() const
 {
@@ -55,6 +109,21 @@ DecorAddOn::InitCheck() const
 }
 
 
+/**
+ * @brief Allocates a new Decorator for the given window parameters.
+ *
+ * Locks the desktop's single-window lock long enough to read DesktopSettings,
+ * then constructs the Decorator, applies colors, adds the initial tab and
+ * binds the drawing engine.
+ *
+ * @param desktop Desktop the window belongs to (used for locking and settings).
+ * @param engine  DrawingEngine the new decorator will paint into.
+ * @param rect    Initial frame of the client area.
+ * @param title   Initial window title shown in the tab.
+ * @param look    Window look (titled, modal, document, etc.).
+ * @param flags   Initial window flags.
+ * @return Newly allocated Decorator owned by the caller, or NULL on failure.
+ */
 Decorator*
 DecorAddOn::AllocateDecorator(Desktop* desktop, DrawingEngine* engine,
 	BRect rect, const char* title, window_look look, uint32 flags)
@@ -81,6 +150,17 @@ DecorAddOn::AllocateDecorator(Desktop* desktop, DrawingEngine* engine,
 }
 
 
+/**
+ * @brief Allocates the WindowBehaviour that drives mouse/keyboard input for
+ *        @a window.
+ *
+ * The default implementation returns a stack-and-tile aware behaviour bound
+ * to the desktop's StackAndTile manager.
+ *
+ * @param window The window the behaviour will be installed on.
+ * @return New WindowBehaviour owned by the caller, or NULL on allocation
+ *         failure.
+ */
 WindowBehaviour*
 DecorAddOn::AllocateWindowBehaviour(Window* window)
 {
@@ -89,6 +169,12 @@ DecorAddOn::AllocateWindowBehaviour(Window* window)
 }
 
 
+/**
+ * @brief Returns the desktop listeners contributed by this add-on.
+ *
+ * @return Reference to the (possibly empty) listener list. Lifetime matches
+ *         this DecorAddOn.
+ */
 const DesktopListenerList&
 DecorAddOn::GetDesktopListeners()
 {
@@ -96,6 +182,17 @@ DecorAddOn::GetDesktopListeners()
 }
 
 
+/**
+ * @brief Constructs the concrete Decorator instance for this add-on.
+ *
+ * The base class returns a SATDecorator (stack-and-tile decorator); custom
+ * add-ons override this to provide their own painting.
+ *
+ * @param settings Currently effective desktop settings.
+ * @param rect     Initial frame of the decorated window's client area.
+ * @param desktop  Desktop the window will live on.
+ * @return Newly allocated Decorator, or NULL on allocation failure.
+ */
 Decorator*
 DecorAddOn::_AllocateDecorator(DesktopSettings& settings, BRect rect,
 	Desktop* desktop)
@@ -107,6 +204,13 @@ DecorAddOn::_AllocateDecorator(DesktopSettings& settings, BRect rect,
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the singleton DecorManager and loads the persisted
+ *        decorator selection from disk.
+ *
+ * If no settings file is present or the selection cannot be loaded, the
+ * built-in default decorator remains active.
+ */
 DecorManager::DecorManager()
 	:
 	fDefaultDecor(-1, "Default"),
@@ -119,11 +223,24 @@ DecorManager::DecorManager()
 }
 
 
+/**
+ * @brief Destroys the DecorManager.
+ */
 DecorManager::~DecorManager()
 {
 }
 
 
+/**
+ * @brief Allocates the decorator for @a window using either the preview or
+ *        the currently active add-on.
+ *
+ * Ownership of the returned Decorator is transferred to the caller (typically
+ * the Window itself).
+ *
+ * @param window Window that will own the decorator.
+ * @return New Decorator, or NULL on failure.
+ */
 Decorator*
 DecorManager::AllocateDecorator(Window* window)
 {
@@ -153,6 +270,12 @@ DecorManager::AllocateDecorator(Window* window)
 }
 
 
+/**
+ * @brief Allocates the WindowBehaviour for @a window from the active add-on.
+ *
+ * @param window Window the behaviour is bound to.
+ * @return New WindowBehaviour, or NULL on failure.
+ */
 WindowBehaviour*
 DecorManager::AllocateWindowBehaviour(Window* window)
 {
@@ -166,6 +289,15 @@ DecorManager::AllocateWindowBehaviour(Window* window)
 }
 
 
+/**
+ * @brief Releases preview state associated with a window that is being
+ *        destroyed.
+ *
+ * Called by Desktop just before the window is deleted. If the dying window
+ * is the preview target, the preview add-on image is unloaded.
+ *
+ * @param window Window being deleted.
+ */
 void
 DecorManager::CleanupForWindow(Window* window)
 {
@@ -181,6 +313,22 @@ DecorManager::CleanupForWindow(Window* window)
 }
 
 
+/**
+ * @brief Installs a decorator from @a path onto a single window for live
+ *        preview.
+ *
+ * Only one window can preview at a time; previewing on a new window resets
+ * the prior preview window back to the active decorator.
+ *
+ * @param path   Filesystem path to the decorator add-on.
+ * @param window Window on which to apply the preview.
+ * @retval B_OK            Preview successfully installed.
+ * @retval B_BAD_VALUE     @a window was NULL.
+ * @retval B_ENTRY_NOT_FOUND The path does not exist.
+ * @retval B_BAD_IMAGE_ID  The add-on could not be loaded.
+ * @retval B_MISSING_SYMBOL Required factory symbol was missing.
+ * @retval B_ERROR         Some other failure occurred.
+ */
 status_t
 DecorManager::PreviewDecorator(BString path, Window* window)
 {
@@ -223,6 +371,11 @@ DecorManager::PreviewDecorator(BString path, Window* window)
 }
 
 
+/**
+ * @brief Returns the desktop listeners contributed by the active decorator.
+ *
+ * @return Reference to the active add-on's listener list.
+ */
 const DesktopListenerList&
 DecorManager::GetDesktopListeners()
 {
@@ -230,6 +383,11 @@ DecorManager::GetDesktopListeners()
 }
 
 
+/**
+ * @brief Returns the path of the currently active decorator add-on.
+ *
+ * @return Path string, or "Default" for the built-in decorator.
+ */
 BString
 DecorManager::GetCurrentDecorator() const
 {
@@ -237,6 +395,21 @@ DecorManager::GetCurrentDecorator() const
 }
 
 
+/**
+ * @brief Switches all windows on @a desktop to a new decorator add-on.
+ *
+ * Loads the new add-on, asks the desktop to rebuild every window with the
+ * new decorator, and on success unloads the old image and persists the
+ * choice. On partial failure the previous decorator is reinstated.
+ *
+ * @param path    Filesystem path to the decorator add-on, or "Default".
+ * @param desktop Desktop whose windows are to be updated.
+ * @retval B_OK     Decorator switched successfully and saved.
+ * @retval B_ERROR  Switch failed; previous decorator is still in effect.
+ *
+ * @todo If the new decorator is only partially adopted, unload the new image
+ *       and recover any windows that already migrated.
+ */
 status_t
 DecorManager::SetDecorator(BString path, Desktop* desktop)
 {
@@ -273,6 +446,20 @@ DecorManager::SetDecorator(BString path, Desktop* desktop)
 }
 
 
+/**
+ * @brief Resolves a path to a DecorAddOn, loading the image if necessary.
+ *
+ * The literal string "Default" returns the built-in default decorator without
+ * loading any image. Otherwise the file is loaded as an add-on and the
+ * factory symbol "instantiate_decor_addon" is invoked to construct the
+ * wrapper.
+ *
+ * @param _path Filesystem path or the literal string "Default".
+ * @param error Out-parameter receiving a B_* error code on failure.
+ * @return Pointer to the resulting DecorAddOn, or NULL on failure.
+ *
+ * @note On failure the loaded image (if any) is unloaded before returning.
+ */
 DecorAddOn*
 DecorManager::_LoadDecor(BString _path, status_t& error )
 {
@@ -315,10 +502,18 @@ DecorManager::_LoadDecor(BString _path, status_t& error )
 }
 
 
+/** @brief Subdirectory under the user settings directory for app_server data. */
 static const char* kSettingsDir = "system/app_server";
+/** @brief Filename inside kSettingsDir holding the persisted decorator choice. */
 static const char* kSettingsFile = "decorator_settings";
 
 
+/**
+ * @brief Reads the persisted decorator selection from disk and applies it.
+ *
+ * @return true if a decorator path was loaded and successfully applied,
+ *         false otherwise (the built-in default remains active).
+ */
 bool
 DecorManager::_LoadSettingsFromDisk()
 {
@@ -354,6 +549,13 @@ DecorManager::_LoadSettingsFromDisk()
 }
 
 
+/**
+ * @brief Persists the currently active decorator path under the user
+ *        settings directory.
+ *
+ * @return true on success, false if the directory could not be created or the
+ *         settings could not be flattened to disk.
+ */
 bool
 DecorManager::_SaveSettingsToDisk()
 {

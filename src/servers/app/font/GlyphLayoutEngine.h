@@ -1,10 +1,38 @@
 /*
- * Copyright 2007-2022, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2007-2022, Haiku.
+ * Original authors: Stephan Aßmus.
  */
+
+/** @file GlyphLayoutEngine.h
+    @brief Header-only template engine that turns a UTF-8 string into a stream
+           of cached glyphs, driving fallback selection and consumer callbacks.
+
+    The core entry point is the function template
+    GlyphLayoutEngine::LayoutGlyphs<GlyphConsumer>(). It walks a UTF-8 string,
+    looks each character up in a primary FontCacheEntry, falls back through
+    Noto-family caches when the primary engine cannot render a character, and
+    invokes @c consumer.ConsumeGlyph()/ConsumeEmptyGlyph() for each code point.
+    Templated on the consumer so the same layout logic serves bounding-box
+    measurement, painting, and width queries without allocations or virtual
+    dispatch. FontCacheReference encapsulates the read/write locking dance
+    around a FontCacheEntry plus its currently-promoted fallback. */
 
 #ifndef GLYPH_LAYOUT_ENGINE_H
 #define GLYPH_LAYOUT_ENGINE_H
@@ -23,6 +51,14 @@
 
 #include <ctype.h>
 
+/**
+ * @brief Scoped read/write lock around a FontCacheEntry plus optional fallback.
+ *
+ * Owns the lock state for one primary FontCacheEntry and at most one
+ * fallback FontCacheReference. Promotes the read lock to a write lock
+ * when CreateGlyph() needs to mutate the cache, and tears everything down
+ * (unlocking and recycling) on destruction or after a lock failure.
+ */
 class FontCacheReference {
 public:
 	FontCacheReference()
@@ -45,6 +81,7 @@ public:
 			FontCache::Default()->Recycle(fCacheEntry);
 	}
 
+	/** @brief Adopts @a entry as the primary cache entry; must be unset. */
 	void SetTo(FontCacheEntry* entry)
 	{
 		ASSERT(entry != NULL);
@@ -53,6 +90,7 @@ public:
 		fCacheEntry = entry;
 	}
 
+	/** @brief Acquires (or upgrades to) a read lock on the primary entry. */
 	bool ReadLock()
 	{
 		ASSERT(fCacheEntry != NULL);
@@ -70,6 +108,7 @@ public:
 		return true;
 	}
 
+	/** @brief Promotes the held lock to a write lock for cache mutation. */
 	bool WriteLock()
 	{
 		ASSERT(fCacheEntry != NULL);
@@ -93,6 +132,7 @@ public:
 		return true;
 	}
 
+	/** @brief Releases whichever (read or write) lock is currently held. */
 	bool Unlock()
 	{
 		ASSERT(fCacheEntry != NULL);
@@ -117,6 +157,14 @@ public:
 		return true;
 	}
 
+	/**
+	 * @brief Sets @a fallback as the engine for missing glyphs and locks both.
+	 *
+	 * Both the primary and fallback entries are taken under their write
+	 * locks in pointer order to avoid deadlock, since CreateGlyph() needs
+	 * to consult the fallback engine but write the resulting glyph into
+	 * the primary cache.
+	 */
 	bool SetFallback(FontCacheReference* fallback)
 	{
 		ASSERT(fCacheEntry != NULL);
@@ -153,11 +201,13 @@ public:
 		return true;
 	}
 
+	/** @brief Returns the held primary FontCacheEntry, or NULL if unset. */
 	inline FontCacheEntry* Entry() const
 	{
 		return fCacheEntry;
 	}
 
+	/** @brief Returns true when the primary entry is currently write-locked. */
 	inline bool WriteLocked() const
 	{
 		return fWriteLocked;
@@ -186,6 +236,14 @@ private:
 };
 
 
+/**
+ * @brief Static, header-only facade that drives glyph layout for ServerFont text.
+ *
+ * The class is non-instantiable: every member is a static (or template-static)
+ * helper. LayoutGlyphs() is the workhorse template; the rest of the surface
+ * provides utilities to look up cache entries, build the fallback chain
+ * (Noto Sans family by default), and classify white-space code points.
+ */
 class GlyphLayoutEngine {
 public:
 	static	bool				IsWhiteSpace(uint32 glyphCode);
@@ -223,6 +281,12 @@ private:
 };
 
 
+/**
+ * @brief Returns true if @a charCode is one of the recognized white-space code points.
+ *
+ * Used by LayoutGlyphs() to decide whether @c escapement_delta::space or
+ * @c escapement_delta::nonspace should be applied for that character.
+ */
 inline bool
 GlyphLayoutEngine::IsWhiteSpace(uint32 charCode)
 {
@@ -243,6 +307,14 @@ GlyphLayoutEngine::IsWhiteSpace(uint32 charCode)
 }
 
 
+/**
+ * @brief Looks up or creates the FontCache entry matching @a font.
+ *
+ * @param font         ServerFont describing family/style/size/hinting.
+ * @param forceVector  Force vector (outline) glyph storage even when the
+ *                     subpixel rasterizer would otherwise be selected.
+ * @return The cache entry, or NULL on allocation/load failure.
+ */
 inline FontCacheEntry*
 GlyphLayoutEngine::FontCacheEntryFor(const ServerFont& font, bool forceVector)
 {
@@ -252,6 +324,29 @@ GlyphLayoutEngine::FontCacheEntryFor(const ServerFont& font, bool forceVector)
 }
 
 
+/**
+ * @brief Walks @a utf8String and feeds each glyph to @a consumer.
+ *
+ * For every Unicode code point found in @a utf8String the engine resolves
+ * a GlyphCache (using the primary FontCacheEntry, then a fallback chain
+ * derived from the Noto family, then the missing-glyph as a last resort)
+ * and invokes @c consumer.ConsumeGlyph()/ConsumeEmptyGlyph(). If
+ * @a _cacheReference is non-NULL its already-locked entry is reused so
+ * callers can run a measurement pass and a render pass back-to-back
+ * without re-locking.
+ *
+ * @param consumer         User-supplied callback receiver.
+ * @param font             ServerFont selecting the primary cache entry.
+ * @param utf8String       NUL- or length-bounded UTF-8 input.
+ * @param length           Maximum bytes to scan from @a utf8String.
+ * @param maxChars         Maximum number of code points to emit.
+ * @param delta            Optional per-character spacing adjustment.
+ * @param spacing          One of the Be spacing modes (B_BITMAP_SPACING etc.).
+ * @param offsets          Optional explicit per-glyph offset array.
+ * @param _cacheReference  Optional pre-locked reference reused across passes.
+ * @return  true on a normal walk-to-completion, false if the cache could
+ *          not be acquired or the consumer returned a hard stop.
+ */
 template<class GlyphConsumer>
 inline bool
 GlyphLayoutEngine::LayoutGlyphs(GlyphConsumer& consumer,
@@ -372,6 +467,14 @@ GlyphLayoutEngine::LayoutGlyphs(GlyphConsumer& consumer,
 }
 
 
+/**
+ * @brief Materializes a glyph for @a charCode, picking up a fallback if needed.
+ *
+ * Tries the primary entry first; if it cannot create the glyph, lazily
+ * populates @a fallbacks and walks them looking for one that can. Falls
+ * back to the missing-glyph symbol when no engine in the chain knows
+ * the code point.
+ */
 inline const GlyphCache*
 GlyphLayoutEngine::_CreateGlyph(FontCacheReference& cacheReference,
 	BObjectList<FontCacheReference, true>& fallbacks,
@@ -404,6 +507,14 @@ GlyphLayoutEngine::_CreateGlyph(FontCacheReference& cacheReference,
 }
 
 
+/**
+ * @brief Builds the fallback FontCacheReference chain for @a font.
+ *
+ * Iterates a fixed list of Noto fallback families in three degradation
+ * passes (exact style, then "Regular", then any style) and adds one
+ * cached reference per resolvable family/style. Lock contention with
+ * gFontManager keeps this sequential.
+ */
 inline void
 GlyphLayoutEngine::PopulateFallbacks(
 	BObjectList<FontCacheReference, true>& fallbacksList,
@@ -472,6 +583,10 @@ GlyphLayoutEngine::PopulateFallbacks(
 }
 
 
+/**
+ * @brief Returns the first fallback in @a fallbacks able to render @a charCode,
+ *        or NULL when none in the chain knows it.
+ */
 inline FontCacheReference*
 GlyphLayoutEngine::GetFallbackReference(
 	BObjectList<FontCacheReference, true>& fallbacks, uint32 charCode)

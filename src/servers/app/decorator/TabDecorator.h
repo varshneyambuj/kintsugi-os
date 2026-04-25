@@ -1,18 +1,31 @@
 /*
- * Copyright 2001-2020 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Ryan Leavengood, leavengood@gmail.com
- *		Philippe Saint-Pierre, stpere@gmail.com
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Jacob Secunda, secundja@gmail.com
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2020, Haiku.
+ * Original authors: Stephan Aßmus, DarkWyrm, Ryan Leavengood,
+ *                   Philippe Saint-Pierre, John Scipione, Ingo Weinhold,
+ *                   Clemens Zeidler, Joseph Groover, Jacob Secunda.
  */
+
+/** @file TabDecorator.h
+    @brief Abstract Decorator subclass that lays out a tabbed title bar and
+           a resizable border frame; concrete subclasses supply the painting. */
+
 #ifndef TAB_DECORATOR_H
 #define TAB_DECORATOR_H
 
@@ -25,6 +38,10 @@
 class Desktop;
 
 
+/** @brief Decorator base class that handles tab-bar layout, multi-tab
+           stacking, border geometry, and resize-knob hit-testing. The actual
+           drawing routines remain pure virtual for subclasses such as
+           DefaultDecorator. */
 class TabDecorator: public Decorator {
 public:
 								TabDecorator(DesktopSettings& settings,

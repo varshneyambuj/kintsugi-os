@@ -1,16 +1,32 @@
 /*
- * Copyright 2005-2006, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * class renderer_region, slightly modified renderer_mclip which directly
- * uses a BRegion for clipping info.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005-2006, Stephan Aßmus; 2008, Andrej Spielmann;
+ * 2015, Julian Harnath.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
+
+/** @file agg_renderer_region.h
+    @brief BRegion-driven AGG base renderer; the multi-clip region equivalent
+           of agg::renderer_mclip backed directly by a Haiku BRegion. */
 
 #ifndef AGG_RENDERER_REGION_INCLUDED
 #define AGG_RENDERER_REGION_INCLUDED
@@ -25,6 +41,15 @@ namespace agg
 {
 
 	//----------------------------------------------------------renderer_region
+	/**
+	 * @brief AGG base renderer that iterates over the rectangles of a BRegion.
+	 *
+	 * Slightly-modified renderer_mclip that consumes a BRegion directly instead
+	 * of an internal rectangle array. Each draw call iterates first_clip_box()/
+	 * next_clip_box() across the region's rectangles, optionally translating
+	 * coordinates by an (offset_x, offset_y) origin so the renderer can be
+	 * shared across multiple BViews with different scroll positions.
+	 */
 	template<class PixelFormat> class renderer_region
 	{
 	public:

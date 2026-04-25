@@ -1,9 +1,41 @@
 /*
- * Copyright 2005-2012, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2012, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ */
+
+
+/**
+ * @file HWInterface.cpp
+ * @brief Shared base implementation for graphics hardware abstractions.
+ *
+ * HWInterface implements all the parts of the abstract graphics interface
+ * that are independent of the actual transport: cursor compositing, drag
+ * bitmap handling, default copy-back-to-front, listener notifications, and
+ * stub overlay support. Concrete subclasses (real accelerants, VESA, virtual
+ * frame buffers, off-screen bitmaps, remote desktop) override the
+ * mode-setting and frame-buffer methods.
  */
 
 
@@ -26,11 +58,17 @@
 using std::nothrow;
 
 
+/**
+ * @brief Default-constructs a listener; nothing to initialise.
+ */
 HWInterfaceListener::HWInterfaceListener()
 {
 }
 
 
+/**
+ * @brief Default destructor; nothing to release.
+ */
 HWInterfaceListener::~HWInterfaceListener()
 {
 }
@@ -39,6 +77,12 @@ HWInterfaceListener::~HWInterfaceListener()
 // #pragma mark - HWInterface
 
 
+/**
+ * @brief Default-constructs the interface with no cursor / drag bitmap.
+ *
+ * Initialises locks, listener list, and cursor state. The actual hardware
+ * resources are deferred to Initialize() in the subclass.
+ */
 HWInterface::HWInterface()
 	:
 	MultiLocker("hw interface lock"),
@@ -57,11 +101,19 @@ HWInterface::HWInterface()
 }
 
 
+/**
+ * @brief Destructor; reference-counted members are released by their smart pointers.
+ */
 HWInterface::~HWInterface()
 {
 }
 
 
+/**
+ * @brief Validates the MultiLocker; subclasses extend this to set up hardware.
+ *
+ * @return The MultiLocker init status.
+ */
 status_t
 HWInterface::Initialize()
 {
@@ -69,6 +121,11 @@ HWInterface::Initialize()
 }
 
 
+/**
+ * @brief Returns a fresh DrawingEngine bound to this interface.
+ *
+ * @return Newly allocated engine, or NULL on allocation failure. Caller owns.
+ */
 DrawingEngine*
 HWInterface::CreateDrawingEngine()
 {
@@ -76,6 +133,11 @@ HWInterface::CreateDrawingEngine()
 }
 
 
+/**
+ * @brief Default implementation; subclasses with their own input return a stream.
+ *
+ * @return Always NULL (use the system default event stream).
+ */
 EventStream*
 HWInterface::CreateEventStream()
 {
@@ -83,6 +145,11 @@ HWInterface::CreateEventStream()
 }
 
 
+/**
+ * @brief Default implementation; subclasses fill in the accelerant path.
+ *
+ * @retval B_ERROR Always.
+ */
 status_t
 HWInterface::GetAccelerantPath(BString &path)
 {
@@ -90,6 +157,11 @@ HWInterface::GetAccelerantPath(BString &path)
 }
 
 
+/**
+ * @brief Default implementation; subclasses fill in the kernel driver path.
+ *
+ * @retval B_ERROR Always.
+ */
 status_t
 HWInterface::GetDriverPath(BString &path)
 {
@@ -97,6 +169,11 @@ HWInterface::GetDriverPath(BString &path)
 }
 
 
+/**
+ * @brief Default implementation; subclasses with EDID parsing return a preferred mode.
+ *
+ * @retval B_NOT_SUPPORTED Always.
+ */
 status_t
 HWInterface::GetPreferredMode(display_mode* mode)
 {
@@ -104,6 +181,11 @@ HWInterface::GetPreferredMode(display_mode* mode)
 }
 
 
+/**
+ * @brief Default implementation; subclasses with EDID parsing fill in monitor info.
+ *
+ * @retval B_NOT_SUPPORTED Always.
+ */
 status_t
 HWInterface::GetMonitorInfo(monitor_info* info)
 {
@@ -114,6 +196,14 @@ HWInterface::GetMonitorInfo(monitor_info* info)
 // #pragma mark -
 
 
+/**
+ * @brief Replaces the cursor sprite, invalidating both the old and new positions.
+ *
+ * Acquires the floating-overlays lock so the cursor change is atomic with
+ * respect to draw operations that hide and restore the cursor.
+ *
+ * @param cursor New cursor sprite (caller owns; reference counted internally).
+ */
 void
 HWInterface::SetCursor(ServerCursor* cursor)
 {
@@ -134,6 +224,11 @@ HWInterface::SetCursor(ServerCursor* cursor)
 }
 
 
+/**
+ * @brief Returns the current cursor sprite (without the drag bitmap composited).
+ *
+ * @return Reference to the current cursor; NULL when none is set.
+ */
 ServerCursorReference
 HWInterface::Cursor() const
 {
@@ -145,6 +240,11 @@ HWInterface::Cursor() const
 }
 
 
+/**
+ * @brief Returns the cursor with the optional drag bitmap composited on top.
+ *
+ * @return Reference to the composed cursor; NULL when none is set.
+ */
 ServerCursorReference
 HWInterface::CursorAndDragBitmap() const
 {
@@ -156,6 +256,15 @@ HWInterface::CursorAndDragBitmap() const
 }
 
 
+/**
+ * @brief Shows or hides the cursor.
+ *
+ * Either draws the cursor and invalidates its frame, or restores the
+ * underlying framebuffer pixels and invalidates the previously occupied
+ * area, depending on @a visible.
+ *
+ * @param visible True to show the cursor, false to hide it.
+ */
 void
 HWInterface::SetCursorVisible(bool visible)
 {
@@ -185,6 +294,11 @@ HWInterface::SetCursorVisible(bool visible)
 }
 
 
+/**
+ * @brief Returns the current cursor visibility.
+ *
+ * @return True when the cursor is visible (not obscured).
+ */
 bool
 HWInterface::IsCursorVisible()
 {
@@ -197,6 +311,12 @@ HWInterface::IsCursorVisible()
 }
 
 
+/**
+ * @brief Hides the cursor until the user moves the pointer (the "obscured" state).
+ *
+ * BeOS-style behaviour: typing hides the cursor; the next mouse motion
+ * brings it back via MoveCursorTo().
+ */
 void
 HWInterface::ObscureCursor()
 {
@@ -211,6 +331,16 @@ HWInterface::ObscureCursor()
 }
 
 
+/**
+ * @brief Repositions the cursor to (@a x, @a y) in logical screen coordinates.
+ *
+ * Unhides the cursor when it was obscured, computes the union of old and
+ * new cursor frames for invalidation efficiency, and re-renders the cursor
+ * sprite when a software cursor is in use.
+ *
+ * @param x Target X coordinate.
+ * @param y Target Y coordinate.
+ */
 void
 HWInterface::MoveCursorTo(float x, float y)
 {
@@ -248,6 +378,9 @@ HWInterface::MoveCursorTo(float x, float y)
 }
 
 
+/**
+ * @brief Returns the current cursor position in logical screen coordinates.
+ */
 BPoint
 HWInterface::CursorPosition()
 {
@@ -260,6 +393,14 @@ HWInterface::CursorPosition()
 }
 
 
+/**
+ * @brief Sets the drag bitmap composited under the cursor during drag-and-drop.
+ *
+ * @param bitmap            Bitmap to display attached to the cursor; pass
+ *                          NULL to clear an existing drag bitmap.
+ * @param offsetFromCursor  Offset from the cursor's hot-spot to the
+ *                          bitmap's top-left, in pixels.
+ */
 void
 HWInterface::SetDragBitmap(const ServerBitmap* bitmap,
 	const BPoint& offsetFromCursor)
@@ -276,6 +417,11 @@ HWInterface::SetDragBitmap(const ServerBitmap* bitmap,
 // #pragma mark -
 
 
+/**
+ * @brief Returns the buffer that DrawingEngines should target.
+ *
+ * @return BackBuffer() when double-buffered, FrontBuffer() otherwise.
+ */
 RenderingBuffer*
 HWInterface::DrawingBuffer() const
 {
@@ -285,8 +431,13 @@ HWInterface::DrawingBuffer() const
 }
 
 
-/*! The object needs to be already locked!
-*/
+/**
+ * @brief Schedules every rectangle in @a region for refresh.
+ *
+ * @param region Region to invalidate; rectangles are processed in order.
+ * @return       B_OK on success, otherwise the first error from Invalidate().
+ * @note  The interface must already be locked.
+ */
 status_t
 HWInterface::InvalidateRegion(const BRegion& region)
 {
@@ -301,8 +452,15 @@ HWInterface::InvalidateRegion(const BRegion& region)
 }
 
 
-/*! The object needs to be already locked!
-*/
+/**
+ * @brief Schedules @a frame for refresh.
+ *
+ * In double-buffered mode the call is forwarded to CopyBackToFront().
+ * Single-buffered mode is a no-op since the front buffer is already updated.
+ *
+ * @param frame Rectangle to refresh.
+ * @note  The interface must already be locked.
+ */
 status_t
 HWInterface::Invalidate(const BRect& frame)
 {
@@ -313,8 +471,19 @@ HWInterface::Invalidate(const BRect& frame)
 }
 
 
-/*! The object must already be locked!
-*/
+/**
+ * @brief Performs the actual back-to-front blit for the given @a frame.
+ *
+ * Clips @a frame against the back buffer bounds, excludes the area
+ * currently covered by the cursor (which is restored separately), copies
+ * the resulting region, and finally redraws the cursor on top.
+ *
+ * @param frame Rectangle to copy.
+ * @retval B_OK         Copy completed.
+ * @retval B_NO_INIT    Either buffer is missing.
+ * @retval B_BAD_VALUE  The clipped @a frame is empty.
+ * @note  The interface must already be locked.
+ */
 status_t
 HWInterface::CopyBackToFront(const BRect& frame)
 {
@@ -352,6 +521,14 @@ HWInterface::CopyBackToFront(const BRect& frame)
 }
 
 
+/**
+ * @brief Default copy implementation: walks @a region and dispatches each rect to _CopyToFront().
+ *
+ * Subclasses with native blitter support override this to use hardware
+ * acceleration; the default uses CPU memcpy via _CopyToFront().
+ *
+ * @param region Region to copy from back buffer to front buffer.
+ */
 void
 HWInterface::_CopyBackToFront(/*const*/ BRegion& region)
 {
@@ -373,6 +550,11 @@ HWInterface::_CopyBackToFront(/*const*/ BRegion& region)
 // #pragma mark -
 
 
+/**
+ * @brief Default overlay channel acquisition; subclasses with overlay support override it.
+ *
+ * @return Always NULL (no overlay channels available).
+ */
 overlay_token
 HWInterface::AcquireOverlayChannel()
 {
@@ -380,12 +562,20 @@ HWInterface::AcquireOverlayChannel()
 }
 
 
+/**
+ * @brief Default overlay channel release; no-op.
+ */
 void
 HWInterface::ReleaseOverlayChannel(overlay_token token)
 {
 }
 
 
+/**
+ * @brief Default overlay restriction query.
+ *
+ * @retval B_NOT_SUPPORTED Always.
+ */
 status_t
 HWInterface::GetOverlayRestrictions(const Overlay* overlay,
 	overlay_restrictions* restrictions)
@@ -394,6 +584,11 @@ HWInterface::GetOverlayRestrictions(const Overlay* overlay,
 }
 
 
+/**
+ * @brief Default overlay capability check.
+ *
+ * @return Always false.
+ */
 bool
 HWInterface::CheckOverlayRestrictions(int32 width, int32 height,
 	color_space colorSpace)
@@ -402,6 +597,11 @@ HWInterface::CheckOverlayRestrictions(int32 width, int32 height,
 }
 
 
+/**
+ * @brief Default overlay buffer allocation.
+ *
+ * @return Always NULL.
+ */
 const overlay_buffer*
 HWInterface::AllocateOverlayBuffer(int32 width, int32 height, color_space space)
 {
@@ -409,18 +609,27 @@ HWInterface::AllocateOverlayBuffer(int32 width, int32 height, color_space space)
 }
 
 
+/**
+ * @brief Default overlay buffer release; no-op.
+ */
 void
 HWInterface::FreeOverlayBuffer(const overlay_buffer* buffer)
 {
 }
 
 
+/**
+ * @brief Default overlay configure; no-op.
+ */
 void
 HWInterface::ConfigureOverlay(Overlay* overlay)
 {
 }
 
 
+/**
+ * @brief Default overlay hide; no-op.
+ */
 void
 HWInterface::HideOverlay(Overlay* overlay)
 {
@@ -430,6 +639,16 @@ HWInterface::HideOverlay(Overlay* overlay)
 // #pragma mark -
 
 
+/**
+ * @brief Hides the cursor / drag bitmap when it intersects @a area, in single-buffered mode.
+ *
+ * Used by DrawingEngine to keep cursor pixels out of an upcoming draw. In
+ * double-buffered mode this is a no-op (the cursor is composited at copy
+ * time).
+ *
+ * @param area Rectangle about to be drawn.
+ * @return     True when the cursor was hidden (caller must call ShowFloatingOverlays()).
+ */
 bool
 HWInterface::HideFloatingOverlays(const BRect& area)
 {
@@ -451,6 +670,11 @@ HWInterface::HideFloatingOverlays(const BRect& area)
 }
 
 
+/**
+ * @brief Hides the cursor unconditionally in single-buffered mode.
+ *
+ * @return True when the cursor was hidden (caller must call ShowFloatingOverlays()).
+ */
 bool
 HWInterface::HideFloatingOverlays()
 {
@@ -464,6 +688,9 @@ HWInterface::HideFloatingOverlays()
 }
 
 
+/**
+ * @brief Restores the cursor previously hidden by HideFloatingOverlays().
+ */
 void
 HWInterface::ShowFloatingOverlays()
 {
@@ -477,6 +704,12 @@ HWInterface::ShowFloatingOverlays()
 // #pragma mark -
 
 
+/**
+ * @brief Adds @a listener to the set notified about framebuffer / mode changes.
+ *
+ * @param listener Listener to add. Duplicates are silently ignored.
+ * @return True when the listener was added, false otherwise.
+ */
 bool
 HWInterface::AddListener(HWInterfaceListener* listener)
 {
@@ -486,6 +719,9 @@ HWInterface::AddListener(HWInterfaceListener* listener)
 }
 
 
+/**
+ * @brief Removes @a listener from the notification set.
+ */
 void
 HWInterface::RemoveListener(HWInterfaceListener* listener)
 {
@@ -496,10 +732,18 @@ HWInterface::RemoveListener(HWInterfaceListener* listener)
 // #pragma mark -
 
 
-/*!	Default implementation, can be used as fallback or for software cursor.
-	\param area is where we potentially draw the cursor, the cursor
-		might be somewhere else, in which case this function does nothing
-*/
+/**
+ * @brief Default software cursor renderer.
+ *
+ * Composes the cursor sprite onto the back buffer at @a area, optionally
+ * saving the underlying pixels into @c fCursorAreaBackup so the area can be
+ * restored when the cursor moves. The blend assumes the back buffer alpha
+ * is 255 and the cursor bitmap is pre-multiplied.
+ *
+ * @param area Area where the cursor may be drawn; the cursor is clipped to
+ *             both this area and the framebuffer bounds.
+ * @note Subclasses with hardware cursor support typically override this.
+ */
 void
 HWInterface::_DrawCursor(IntRect area) const
 {
@@ -615,11 +859,25 @@ HWInterface::_DrawCursor(IntRect area) const
 }
 
 
-/*!	- source is assumed to be already at the right offset
-	- source is assumed to be in B_RGBA32 format
-	- location in front buffer is calculated
-	- conversion from B_RGBA32 to format of front buffer is taken care of
-*/
+/**
+ * @brief Copies a B_RGBA32 source block to the front buffer with color space conversion.
+ *
+ * Handles every front buffer color space the app_server can be configured
+ * to drive: B_RGB32 / B_RGBA32 (raw memcpy), B_RGB24, B_RGB16, B_RGB15 /
+ * B_RGBA15, B_CMAP8 (palette lookup), and B_GRAY8 (including the VGA 16-color
+ * planar fallback). Unsupported front buffer formats log a warning.
+ *
+ * @param src      Pointer to the first row of B_RGBA32 source pixels.
+ * @param srcBPR   Source row stride in bytes.
+ * @param x        Destination left coordinate.
+ * @param y        Destination top coordinate.
+ * @param right    Destination right coordinate (inclusive).
+ * @param bottom   Destination bottom coordinate (inclusive).
+ *
+ * @note The source pointer is expected to already be at the right offset
+ *       inside the source buffer; only the destination offset is computed
+ *       from (@a x, @a y).
+ */
 void
 HWInterface::_CopyToFront(uint8* src, uint32 srcBPR, int32 x, int32 y,
 	int32 right, int32 bottom) const
@@ -825,8 +1083,14 @@ HWInterface::_CopyToFront(uint8* src, uint32 srcBPR, int32 x, int32 y,
 }
 
 
-/*!	The object must be locked
-*/
+/**
+ * @brief Returns the rectangle currently occupied by the visible software cursor.
+ *
+ * @return Cursor frame in framebuffer coordinates, or an invalid rect when
+ *         no cursor is set, the cursor is hidden, or a hardware cursor is
+ *         in use.
+ * @note   The interface must already be locked.
+ */
 IntRect
 HWInterface::_CursorFrame() const
 {
@@ -839,6 +1103,9 @@ HWInterface::_CursorFrame() const
 }
 
 
+/**
+ * @brief Restores the framebuffer pixels saved when the software cursor was drawn.
+ */
 void
 HWInterface::_RestoreCursorArea() const
 {
@@ -852,6 +1119,17 @@ HWInterface::_RestoreCursorArea() const
 }
 
 
+/**
+ * @brief Composes the drag bitmap onto the cursor sprite.
+ *
+ * Builds @c fCursorAndDragBitmap as the union of the cursor and the drag
+ * bitmap, blends them into a single sprite using non-premultiplied alpha,
+ * and finally pre-multiplies the result so subsequent _DrawCursor() calls
+ * can use the cheap pre-multiplied blend.
+ *
+ * @note Currently only supports B_RGB32 / B_RGBA32 drag bitmaps; others log
+ *       an error and are ignored.
+ */
 void
 HWInterface::_AdoptDragBitmap()
 {
@@ -1014,6 +1292,12 @@ HWInterface::_AdoptDragBitmap()
 }
 
 
+/**
+ * @brief Calls FrameBufferChanged() on every registered listener.
+ *
+ * The listener list is snapshotted into a local copy first so that
+ * notifications can re-enter Add/Remove safely.
+ */
 void
 HWInterface::_NotifyFrameBufferChanged()
 {
@@ -1027,6 +1311,9 @@ HWInterface::_NotifyFrameBufferChanged()
 }
 
 
+/**
+ * @brief Calls ScreenChanged() on every registered listener.
+ */
 void
 HWInterface::_NotifyScreenChanged()
 {
@@ -1040,6 +1327,13 @@ HWInterface::_NotifyScreenChanged()
 }
 
 
+/**
+ * @brief Sanity-checks @a mode against the minimum supported screen size.
+ *
+ * @param mode Mode to validate.
+ * @return     True when the mode is at least 320x200 (more checks may follow).
+ * @todo More of those!
+ */
 /*static*/ bool
 HWInterface::_IsValidMode(const display_mode& mode)
 {

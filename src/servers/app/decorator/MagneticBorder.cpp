@@ -1,11 +1,42 @@
 /*
- * Copyright 2010-2011, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
- *		Clemens Zeidler <haiku@clemens-zeidler.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2011, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ *       Clemens Zeidler <haiku@clemens-zeidler.de>
+ */
+
+
+/**
+ * @file MagneticBorder.cpp
+ * @brief Edge-snap helper for window dragging.
+ *
+ * MagneticBorder examines a proposed move delta during a drag and, when the
+ * resulting window frame would land within a small distance of any screen
+ * edge, snaps the frame flush to that edge. Hysteresis based on the time of
+ * the previous snap prevents a window from oscillating between snapped and
+ * free movement when the cursor lingers near an edge.
  */
 
 
@@ -16,6 +47,9 @@
 #include "Screen.h"
 
 
+/**
+ * @brief Constructs a MagneticBorder with no prior snap recorded.
+ */
 MagneticBorder::MagneticBorder()
 	:
 	fLastSnapTime(0)
@@ -24,6 +58,15 @@ MagneticBorder::MagneticBorder()
 }
 
 
+/**
+ * @brief Convenience overload that snaps a window's frame, including its
+ *        decorator footprint, against its current screen.
+ *
+ * @param window The window being dragged.
+ * @param delta  Proposed move delta; modified in place when snapping occurs.
+ * @param now    Current time in microseconds, used to drive snap hysteresis.
+ * @return true if @a delta was altered to snap to a screen edge.
+ */
 bool
 MagneticBorder::AlterDeltaForSnap(Window* window, BPoint& delta, bigtime_t now)
 {
@@ -36,6 +79,23 @@ MagneticBorder::AlterDeltaForSnap(Window* window, BPoint& delta, bigtime_t now)
 }
 
 
+/**
+ * @brief Snaps @a frame flush against the edges of @a screen when the proposed
+ *        move would bring it within the snap threshold.
+ *
+ * The horizontal and vertical axes are evaluated independently. If a snap
+ * fires within the brief snapping window after a previous snap, the call is
+ * suppressed so the user can move the window away from the edge without
+ * fighting the magnetism.
+ *
+ * @param screen Screen whose frame defines the edges to snap against.
+ * @param frame  Window/decorator frame in screen coordinates (not modified).
+ * @param delta  Proposed move delta; modified in place when snapping occurs.
+ * @param now    Current time in microseconds, used to drive snap hysteresis.
+ * @return true if @a delta was altered to snap to a screen edge.
+ *
+ * @todo Use the area not covered by the Deskbar instead of the full screen.
+ */
 bool
 MagneticBorder::AlterDeltaForSnap(const Screen* screen, BRect& frame,
 	BPoint& delta, bigtime_t now)

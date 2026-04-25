@@ -1,11 +1,32 @@
 /*
- * Copyright 2010-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Clemens Zeidler, haiku@clemens-zeidler.de
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2010-2014, Haiku.
+ * Original authors: John Scipione, Clemens Zeidler.
  */
+
+/** @file SATGroup.h
+    @brief Constraint-based grouping of Stack and Tile windows.
+
+    Defines the Tab/Crossing/Corner grid that tiled windows snap to, the
+    WindowArea that one or more windows occupy in the grid, and the SATGroup
+    that ties areas together via a LinearProgramming::LinearSpec solver. */
+
 #ifndef SAT_GROUP_H
 #define SAT_GROUP_H
 
@@ -28,6 +49,13 @@ class WindowArea;
 typedef BObjectList<SATWindow> SATWindowList;
 
 
+/**
+ * @brief One of the four corners of a tab Crossing.
+ *
+ * Records whether the corner is occupied by a WindowArea (kUsed), available
+ * for a new neighbour (kFree), or geometrically unreachable (kNotDockable),
+ * and points back to the WindowArea that owns it when used.
+ */
 class Corner {
 public:
 		enum info_t
@@ -53,6 +81,13 @@ public:
 };
 
 
+/**
+ * @brief Intersection of a vertical and a horizontal Tab.
+ *
+ * Each Crossing carries the four Corners that meet at this point and acts as
+ * the glue between adjacent WindowAreas: an area's four bounding corners are
+ * actually four Corner slots in four distinct Crossings.
+ */
 class Crossing : public BReferenceable {
 public:
 								Crossing(Tab* vertical, Tab* horizontal);
@@ -62,12 +97,16 @@ public:
 			Corner*				GetOppositeCorner(
 									Corner::position_t corner) const;
 
+			/** @brief Returns the Corner located on the upper-left of this Crossing. */
 			Corner*				LeftTopCorner()
 									{ return &fCorners[Corner::kLeftTop]; }
+			/** @brief Returns the Corner located on the upper-right of this Crossing. */
 			Corner*				RightTopCorner()
 									{ return &fCorners[Corner::kRightTop]; }
+			/** @brief Returns the Corner located on the lower-left of this Crossing. */
 			Corner*				LeftBottomCorner()
 									{ return &fCorners[Corner::kLeftBottom]; }
+			/** @brief Returns the Corner located on the lower-right of this Crossing. */
 			Corner*				RightBottomCorner()
 									{ return &fCorners[Corner::kRightBottom]; }
 
@@ -89,10 +128,18 @@ class SATGroup;
 typedef BObjectList<Crossing> CrossingList;
 
 
-// make all coordinates positive needed for the solver
+/** @brief Bias added to every coordinate so the LP solver only sees positive values. */
 const float kMakePositiveOffset = 5000;
 
 
+/**
+ * @brief A horizontal or vertical guideline shared by adjacent windows.
+ *
+ * A Tab wraps one solver Variable whose value is the tab's screen coordinate
+ * (offset by kMakePositiveOffset). Tabs intersect each other through
+ * Crossings, and adjacent WindowAreas pin themselves to the same Tab so the
+ * solver keeps their shared edge aligned.
+ */
 class Tab : public BReferenceable {
 public:
 		enum orientation_t
@@ -108,6 +155,7 @@ public:
 			float				Position() const;
 			void				SetPosition(float position);
 			orientation_t		Orientation() const;
+			/** @brief Returns the LP variable that backs this Tab. */
 			Variable*			Var() {	return fVariable.Get(); }
 
 			//! Caller takes ownership of the constraint.
@@ -135,6 +183,14 @@ private:
 };
 
 
+/**
+ * @brief Rectangular region of the tab grid occupied by one or more windows.
+ *
+ * The four bounding Crossings define the area; the SATWindowList contains the
+ * stacked windows that share it (multiple windows in one area means they are
+ * tab-stacked). The class also owns the size-related solver constraints that
+ * keep the area within the windows' min/max dimensions.
+ */
 class WindowArea : public BReferenceable {
 public:
 								WindowArea(Crossing* leftTop,
@@ -143,6 +199,7 @@ public:
 								~WindowArea();
 
 			bool				Init(SATGroup* group);
+			/** @brief Returns the SATGroup this area belongs to. */
 			SATGroup*			Group() { return fGroup; }
 
 			void				DoGroupLayout();
@@ -155,12 +212,16 @@ public:
 									int32 index);
 			SATWindow*			TopWindow();
 
+			/** @brief Returns the Crossing at the area's upper-left corner. */
 			Crossing*			LeftTopCrossing()
 									{ return fLeftTopCrossing.Get(); }
+			/** @brief Returns the Crossing at the area's upper-right corner. */
 			Crossing*			RightTopCrossing()
 									{ return fRightTopCrossing.Get(); }
+			/** @brief Returns the Crossing at the area's lower-left corner. */
 			Crossing*			LeftBottomCrossing()
 									{ return fLeftBottomCrossing.Get(); }
+			/** @brief Returns the Crossing at the area's lower-right corner. */
 			Crossing*			RightBottomCrossing()
 									{ return fRightBottomCrossing.Get(); }
 
@@ -169,9 +230,13 @@ public:
 			Tab*				TopTab();
 			Tab*				BottomTab();
 
+			/** @brief Returns the LP variable for the area's left edge. */
 			Variable*			LeftVar() { return LeftTab()->Var(); }
+			/** @brief Returns the LP variable for the area's right edge. */
 			Variable*			RightVar() { return RightTab()->Var(); }
+			/** @brief Returns the LP variable for the area's top edge. */
 			Variable*			TopVar() { return TopTab()->Var(); }
+			/** @brief Returns the LP variable for the area's bottom edge. */
 			Variable*			BottomVar() { return BottomTab()->Var(); }
 
 			BRect				Frame();
@@ -237,6 +302,14 @@ class BMessage;
 class StackAndTile;
 
 
+/**
+ * @brief A connected cluster of windows that move and resize together.
+ *
+ * Owns the LinearSpec solver, the lists of horizontal and vertical Tabs, and
+ * the WindowAreas that partition the group's bounding rectangle. Splits
+ * itself when removing a window disconnects the cluster, and can serialize /
+ * restore its layout via BMessage so groups survive across sessions.
+ */
 class SATGroup : public BReferenceable {
 public:
 		friend class Tab;
@@ -246,6 +319,7 @@ public:
 								SATGroup();
 								~SATGroup();
 
+			/** @brief Returns the LP solver shared by every Tab and area in the group. */
 			LinearSpec*			GetLinearSpec() { return fLinearSpec; }
 
 			/*! Create a new WindowArea from the crossing and add the window. */
@@ -264,9 +338,10 @@ public:
 			SATWindow*			ActiveWindow() const;
 			void				SetActiveWindow(SATWindow* window);
 
+			/** @brief Returns the list of WindowAreas that tile this group. */
 			const WindowAreaList&	GetAreaList() { return fWindowAreaList; }
 
-			/*! \return a sorted tab list. */
+			/*! @return a sorted tab list. */
 			const TabList*		HorizontalTabs();
 			const TabList*		VerticalTabs();
 

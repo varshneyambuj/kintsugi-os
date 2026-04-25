@@ -1,11 +1,28 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2009, Haiku.
+ * Original authors: DarkWyrm, Axel Dörfler.
  */
+
+/** @file FontManager.h
+    @brief Abstract base font catalog shared by GlobalFontManager and AppFontManager. */
+
 #ifndef FONT_MANAGER_H
 #define FONT_MANAGER_H
 
@@ -23,10 +40,16 @@ class FontFamily;
 class FontStyle;
 
 
-/*!
-	\class FontManager FontManager.h
-	\brief Base class interface used by GlobalFontManager and AppFontManager
-*/
+/**
+ * @brief Abstract base class managing a sorted catalog of font families and styles.
+ *
+ * Subclasses (GlobalFontManager, AppFontManager) provide a concrete locking
+ * strategy via the pure-virtual Lock()/Unlock()/IsLocked() trio. The base
+ * keeps the family list, the (familyID, styleID) -> FontStyle hash table,
+ * a parallel "delisted" table for styles still referenced after removal,
+ * and a monotonic revision counter that BFont clients poll for change
+ * detection.
+ */
 class FontManager {
 public:
 								FontManager();
@@ -80,6 +103,9 @@ protected:
 	virtual	uint16				_NextID();
 
 private:
+			/**
+			 * @brief Composite key (familyID, styleID) used to index FontStyle.
+			 */
 			struct FontKey {
 				FontKey()
 					: familyID(0xffff), styleID(0xffff) {}
@@ -87,11 +113,13 @@ private:
 				FontKey(uint16 family, uint16 style)
 					: familyID(family), styleID(style) {}
 
+				/** @brief 32-bit hash combining family and style IDs. */
 				uint32 GetHashCode() const
 				{
 					return familyID | (styleID << 16UL);
 				}
 
+				/** @brief Equality on (familyID, styleID) pair. */
 				bool operator==(const FontKey& other) const
 				{
 					return familyID == other.familyID

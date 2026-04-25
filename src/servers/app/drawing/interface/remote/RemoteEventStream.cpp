@@ -1,10 +1,41 @@
 /*
- * Copyright 2009, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
  */
+
+
+/**
+ * @file RemoteEventStream.cpp
+ * @brief Replays RP_* input events arriving from the remote viewer as
+ *        BMessages on the app_server's input path.
+ *
+ * The stream maintains the running mouse position, button mask, and
+ * modifier state because individual RP messages only carry the fields that
+ * have actually changed; everything else is filled in from this cache.
+ */
+
 
 #include "RemoteEventStream.h"
 
@@ -16,6 +47,9 @@
 #include <new>
 
 
+/**
+ * @brief Constructs an empty event queue and notification semaphore.
+ */
 RemoteEventStream::RemoteEventStream()
 	:
 	fEventList(10),
@@ -31,18 +65,41 @@ RemoteEventStream::RemoteEventStream()
 }
 
 
+/**
+ * @brief Releases the notification semaphore; queued events are owned by
+ *        the BObjectList and freed automatically.
+ */
 RemoteEventStream::~RemoteEventStream()
 {
 	delete_sem(fEventNotification);
 }
 
 
+/**
+ * @brief Hook invoked when the screen bounds change.
+ *
+ * The remote stream tracks the viewer's reported geometry implicitly via
+ * incoming events, so this is a no-op.
+ *
+ * @param bounds  New screen bounds (ignored).
+ */
 void
 RemoteEventStream::UpdateScreenBounds(BRect bounds)
 {
 }
 
 
+/**
+ * @brief Blocks until an event is available and returns the oldest one.
+ *
+ * Called by the EventDispatcher loop. When the queue is empty the call
+ * parks on fEventNotification until EventReceived() releases it.
+ *
+ * @param _event  Output, receives the dequeued message; ownership transfers
+ *                to the caller.
+ * @return        true on success, false if the lock could not be reacquired
+ *                after waking.
+ */
 bool
 RemoteEventStream::GetNextEvent(BMessage** _event)
 {
@@ -66,6 +123,13 @@ RemoteEventStream::GetNextEvent(BMessage** _event)
 }
 
 
+/**
+ * @brief Pushes a synthesised event onto the queue (used internally and by
+ *        callers that want to inject synthetic input).
+ *
+ * @param event  Message to enqueue; ownership transfers to the stream.
+ * @return       B_OK on success, B_ERROR if locking or list insertion fails.
+ */
 status_t
 RemoteEventStream::InsertEvent(BMessage* event)
 {
@@ -83,6 +147,11 @@ RemoteEventStream::InsertEvent(BMessage* event)
 }
 
 
+/**
+ * @brief Returns the most recent B_MOUSE_MOVED message without dequeueing.
+ *
+ * @return     Pointer to the cached event, or NULL if none has been seen.
+ */
 BMessage*
 RemoteEventStream::PeekLatestMouseMoved()
 {
@@ -90,6 +159,20 @@ RemoteEventStream::PeekLatestMouseMoved()
 }
 
 
+/**
+ * @brief Decodes one RP_* input message and enqueues the resulting BMessage.
+ *
+ * Recognises mouse motion / buttons / wheel, key down/up, and modifier
+ * changes. Unknown codes are silently ignored. Updates the cached running
+ * mouse position, button mask, and modifier state so that subsequent partial
+ * messages can be filled in.
+ *
+ * @param message  Decoded RemoteMessage with payload positioned at the
+ *                 input-event fields.
+ * @return         true if a message was synthesised and enqueued, false if
+ *                 the code was not an input event or memory allocation
+ *                 failed.
+ */
 bool
 RemoteEventStream::EventReceived(RemoteMessage& message)
 {

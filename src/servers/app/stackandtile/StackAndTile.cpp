@@ -1,10 +1,46 @@
 /*
- * Copyright 2010-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Clemens Zeidler, haiku@clemens-zeidler.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ *       Clemens Zeidler, haiku@clemens-zeidler.de
+ */
+
+
+/**
+ * @file StackAndTile.cpp
+ * @brief DesktopListener that implements the Stack and Tile feature.
+ *
+ * StackAndTile observes desktop-wide events (window add/remove, modifier-key
+ * presses, mouse and key shortcuts, move/resize/look/feel changes, settings)
+ * and dispatches them to per-window SATWindow wrappers and their groups.
+ * Holding the right Option key (or the Option modifier) starts a snapping
+ * session; releasing it commits the gesture or aborts. Arrow / Tab / PgUp /
+ * PgDn shortcuts navigate between window tabs and groups while the modifier
+ * is held. The class also exposes the SAT private message protocol for
+ * archiving and restoring groups.
+ *
+ * @see DesktopListener, SATWindow, SATGroup
  */
 
 
@@ -20,15 +56,24 @@
 #include "Window.h"
 
 
+/** @brief Hardware key code of the right Option key, the bare-press SAT trigger. */
 static const int32 kRightOptionKey	= 0x67;
+/** @brief Hardware key code of Tab, used while SAT is active to walk a stack. */
 static const int32 kTabKey			= 0x26;
+/** @brief Hardware key code of PageUp, used to walk to the previous group. */
 static const int32 kPageUpKey		= 0x21;
+/** @brief Hardware key code of PageDown, used to walk to the next group. */
 static const int32 kPageDownKey		= 0x36;
+/** @brief Hardware key code of LeftArrow, walks to the previous tab in a stack. */
 static const int32 kLeftArrowKey	= 0x61;
+/** @brief Hardware key code of UpArrow, alias of PageUp for previous-group nav. */
 static const int32 kUpArrowKey		= 0x57;
+/** @brief Hardware key code of RightArrow, walks to the next tab in a stack. */
 static const int32 kRightArrowKey	= 0x63;
+/** @brief Hardware key code of DownArrow, alias of PageDown for next-group nav. */
 static const int32 kDownArrowKey	= 0x62;
 
+/** @brief Mask of modifier bits inspected when detecting the Option-only state. */
 static const int32 kModifiers = B_SHIFT_KEY | B_COMMAND_KEY
 	| B_CONTROL_KEY | B_OPTION_KEY | B_MENU_KEY;
 
@@ -39,6 +84,12 @@ using namespace std;
 //	#pragma mark - StackAndTile
 
 
+/**
+ * @brief Constructs an unattached StackAndTile listener.
+ *
+ * The listener becomes useful only after Desktop calls ListenerRegistered()
+ * which records the desktop pointer and walks the existing window list.
+ */
 StackAndTile::StackAndTile()
 	:
 	fDesktop(NULL),
@@ -49,12 +100,18 @@ StackAndTile::StackAndTile()
 }
 
 
+/** @brief Destructor; SAT windows are released by ListenerUnregistered(). */
 StackAndTile::~StackAndTile()
 {
 
 }
 
 
+/**
+ * @brief Returns the magic identifier the desktop uses to find this listener.
+ *
+ * @return The kMagicSATIdentifier constant defined in StackAndTilePrivate.h.
+ */
 int32
 StackAndTile::Identifier()
 {
@@ -62,6 +119,14 @@ StackAndTile::Identifier()
 }
 
 
+/**
+ * @brief DesktopListener hook called when the listener becomes active.
+ *
+ * Records the owning desktop and creates a SATWindow wrapper for every
+ * window that already exists, so the listener starts in a consistent state.
+ *
+ * @param desktop The desktop hosting this listener.
+ */
 void
 StackAndTile::ListenerRegistered(Desktop* desktop)
 {
@@ -74,6 +139,12 @@ StackAndTile::ListenerRegistered(Desktop* desktop)
 }
 
 
+/**
+ * @brief DesktopListener hook called when the listener is being torn down.
+ *
+ * Deletes every SATWindow in the map and clears it so subsequent lookups
+ * return NULL even if the desktop reuses the listener.
+ */
 void
 StackAndTile::ListenerUnregistered()
 {
@@ -86,6 +157,18 @@ StackAndTile::ListenerUnregistered()
 }
 
 
+/**
+ * @brief Routes a SAT private-protocol message to the right handler.
+ *
+ * If @a sender is NULL the message is global (e.g. archive/restore all
+ * groups) and is handled by _HandleMessage(); otherwise the corresponding
+ * SATWindow is asked to handle it.
+ *
+ * @param sender Originating window, or NULL for global messages.
+ * @param link   Reader supplying the payload.
+ * @param reply  Writer for the response.
+ * @return true if the message was understood and a reply was sent.
+ */
 bool
 StackAndTile::HandleMessage(Window* sender, BPrivate::LinkReceiver& link,
 	BPrivate::LinkSender& reply)
@@ -101,6 +184,14 @@ StackAndTile::HandleMessage(Window* sender, BPrivate::LinkReceiver& link,
 }
 
 
+/**
+ * @brief DesktopListener hook called when a new server window appears.
+ *
+ * Allocates a SATWindow wrapper and stores it in the lookup map. Allocation
+ * failures are silently ignored; the window simply becomes invisible to SAT.
+ *
+ * @param window The new server window.
+ */
 void
 StackAndTile::WindowAdded(Window* window)
 {
@@ -113,6 +204,14 @@ StackAndTile::WindowAdded(Window* window)
 }
 
 
+/**
+ * @brief DesktopListener hook called when a server window is being removed.
+ *
+ * Deletes the matching SATWindow (which detaches it from its group) and
+ * erases the map entry.
+ *
+ * @param window The window being removed.
+ */
 void
 StackAndTile::WindowRemoved(Window* window)
 {
@@ -129,6 +228,20 @@ StackAndTile::WindowRemoved(Window* window)
 }
 
 
+/**
+ * @brief Filters key events to drive SAT modifier state and shortcuts.
+ *
+ * Two responsibilities:
+ *  1. Track whether the user is holding the SAT modifier (right Option, or
+ *     the Option-only modifier mask) and start/stop snapping accordingly.
+ *  2. While SAT is active, interpret arrow / Tab / PgUp / PgDn as group and
+ *     stack navigation (cycle tabs, jump to previous/next group).
+ *
+ * @param what      Event kind (B_MODIFIERS_CHANGED, B_KEY_DOWN, ...).
+ * @param key       Hardware key code.
+ * @param modifiers Current modifier bitmask.
+ * @return true if the event was consumed (caller should not propagate it).
+ */
 bool
 StackAndTile::KeyPressed(uint32 what, int32 key, int32 modifiers)
 {
@@ -260,6 +373,19 @@ StackAndTile::KeyPressed(uint32 what, int32 key, int32 modifiers)
 }
 
 
+/**
+ * @brief DesktopListener hook called on every primary mouse-button press.
+ *
+ * Records the click target if it lands on a draggable decorator region (tab,
+ * border, corner) and, when the SAT modifier is already held, triggers the
+ * search for snapping candidates.
+ *
+ * @param window  Window under the cursor (may be unrelated to fCurrentSATWindow).
+ * @param message Original mouse message.
+ * @param where   Click point in screen coordinates.
+ * @note Double clicks and secondary buttons are ignored, as is any click that
+ *       arrives while another button is already being tracked.
+ */
 void
 StackAndTile::MouseDown(Window* window, BMessage* message, const BPoint& where)
 {
@@ -304,6 +430,17 @@ StackAndTile::MouseDown(Window* window, BMessage* message, const BPoint& where)
 }
 
 
+/**
+ * @brief DesktopListener hook called on mouse-button release.
+ *
+ * Commits any in-progress snapping gesture (when the SAT modifier is still
+ * held the StopSAT logic still runs because the modifier may also be
+ * released next) and clears the tracked window.
+ *
+ * @param window  Window the release was delivered to.
+ * @param message Original mouse message.
+ * @param where   Release point in screen coordinates.
+ */
 void
 StackAndTile::MouseUp(Window* window, BMessage* message, const BPoint& where)
 {
@@ -314,6 +451,15 @@ StackAndTile::MouseUp(Window* window, BMessage* message, const BPoint& where)
 }
 
 
+/**
+ * @brief DesktopListener hook called whenever a window is moved.
+ *
+ * While SAT is active and the moved window is the one being dragged, looks
+ * for snapping candidates so the highlight follows the cursor; otherwise
+ * just re-solves the window's group layout.
+ *
+ * @param window The window that just moved.
+ */
 void
 StackAndTile::WindowMoved(Window* window)
 {
@@ -328,6 +474,14 @@ StackAndTile::WindowMoved(Window* window)
 }
 
 
+/**
+ * @brief DesktopListener hook called whenever a window is resized.
+ *
+ * Mirrors WindowMoved() but also informs SATWindow::Resized() so the size
+ * cache stays current with the externally-applied dimensions.
+ *
+ * @param window The window that just resized.
+ */
 void
 StackAndTile::WindowResized(Window* window)
 {
@@ -343,6 +497,15 @@ StackAndTile::WindowResized(Window* window)
 }
 
 
+/**
+ * @brief DesktopListener hook called when a window becomes the focus window.
+ *
+ * Promotes the window's WindowArea to the top layer of its group and
+ * activates the top window of every other area so the entire group surfaces
+ * together.
+ *
+ * @param window The newly-active window.
+ */
 void
 StackAndTile::WindowActivated(Window* window)
 {
@@ -354,6 +517,15 @@ StackAndTile::WindowActivated(Window* window)
 }
 
 
+/**
+ * @brief DesktopListener hook called when a window is sent behind another.
+ *
+ * Sends the top window of every other area in the same group behind
+ * @a behindOf as well, so the cluster keeps its z-order coherent.
+ *
+ * @param window   The window being sent behind.
+ * @param behindOf The window @a window should sit behind.
+ */
 void
 StackAndTile::WindowSentBehind(Window* window, Window* behindOf)
 {
@@ -380,6 +552,16 @@ StackAndTile::WindowSentBehind(Window* window, Window* behindOf)
 }
 
 
+/**
+ * @brief DesktopListener hook propagating workspace changes across a group.
+ *
+ * Whenever a member of a group moves to a different set of workspaces, copy
+ * @a workspaces onto the top window of every other area so the whole group
+ * shows up together on the new workspaces.
+ *
+ * @param window     The window whose workspace mask changed.
+ * @param workspaces New workspace bitmask.
+ */
 void
 StackAndTile::WindowWorkspacesChanged(Window* window, uint32 workspaces)
 {
@@ -406,6 +588,15 @@ StackAndTile::WindowWorkspacesChanged(Window* window, uint32 workspaces)
 }
 
 
+/**
+ * @brief DesktopListener hook called when a window is hidden.
+ *
+ * Hidden-other-than-minimised windows are removed from their group so they
+ * do not constrain the layout of the visible members.
+ *
+ * @param window       The window being hidden.
+ * @param fromMinimize true if the hide was the result of minimisation.
+ */
 void
 StackAndTile::WindowHidden(Window* window, bool fromMinimize)
 {
@@ -422,6 +613,15 @@ StackAndTile::WindowHidden(Window* window, bool fromMinimize)
 }
 
 
+/**
+ * @brief DesktopListener hook propagating minimize state across a group.
+ *
+ * Notifies every other window in the group that it should follow @a minimize
+ * so a tiled cluster minimises and restores as a whole.
+ *
+ * @param window   The window being (un)minimised.
+ * @param minimize true to minimise, false to restore.
+ */
 void
 StackAndTile::WindowMinimized(Window* window, bool minimize)
 {
@@ -445,6 +645,15 @@ StackAndTile::WindowMinimized(Window* window, bool minimize)
 }
 
 
+/**
+ * @brief DesktopListener hook called when a tab is dragged along the title.
+ *
+ * Reserved for future use; currently a no-op.
+ *
+ * @param window     The window whose tab changed location.
+ * @param location   New tab x-position.
+ * @param isShifting Whether the location is still being adjusted.
+ */
 void
 StackAndTile::WindowTabLocationChanged(Window* window, float location,
 	bool isShifting)
@@ -453,6 +662,18 @@ StackAndTile::WindowTabLocationChanged(Window* window, float location,
 }
 
 
+/**
+ * @brief DesktopListener hook called when a window's size limits change.
+ *
+ * Updates the SATWindow's pre-SAT cached limits and triggers a relayout via
+ * WindowMoved() so the constraint solver respects the new bounds.
+ *
+ * @param window    The window whose limits changed.
+ * @param minWidth  New minimum width.
+ * @param maxWidth  New maximum width.
+ * @param minHeight New minimum height.
+ * @param maxHeight New maximum height.
+ */
 void
 StackAndTile::SizeLimitsChanged(Window* window, int32 minWidth, int32 maxWidth,
 	int32 minHeight, int32 maxHeight)
@@ -467,6 +688,15 @@ StackAndTile::SizeLimitsChanged(Window* window, int32 minWidth, int32 maxWidth,
 }
 
 
+/**
+ * @brief DesktopListener hook called when a window's look changes.
+ *
+ * Forwards the new look to SATWindow::WindowLookChanged() which lets each
+ * snapping behaviour decide whether the window may stay in its group.
+ *
+ * @param window The window whose look changed.
+ * @param look   The new look value.
+ */
 void
 StackAndTile::WindowLookChanged(Window* window, window_look look)
 {
@@ -477,6 +707,15 @@ StackAndTile::WindowLookChanged(Window* window, window_look look)
 }
 
 
+/**
+ * @brief DesktopListener hook called when a window's feel changes.
+ *
+ * Only B_NORMAL_WINDOW_FEEL is compatible with multi-window groups; any
+ * other feel evicts the window from a multi-member group.
+ *
+ * @param window The window whose feel changed.
+ * @param feel   The new feel value.
+ */
 void
 StackAndTile::WindowFeelChanged(Window* window, window_feel feel)
 {
@@ -496,6 +735,16 @@ StackAndTile::WindowFeelChanged(Window* window, window_feel feel)
 }
 
 
+/**
+ * @brief DesktopListener hook applying decorator settings to a window.
+ *
+ * Forwards to SATWindow::SetSettings() which extracts the persistent id used
+ * during group restoration.
+ *
+ * @param window   The window receiving the settings.
+ * @param settings Settings archive.
+ * @return true if the settings were applied.
+ */
 bool
 StackAndTile::SetDecoratorSettings(Window* window, const BMessage& settings)
 {
@@ -507,6 +756,14 @@ StackAndTile::SetDecoratorSettings(Window* window, const BMessage& settings)
 }
 
 
+/**
+ * @brief DesktopListener hook reading decorator settings from a window.
+ *
+ * Forwards to SATWindow::GetSettings() which writes the persistent id.
+ *
+ * @param window   The window producing the settings.
+ * @param settings Output archive that receives the data.
+ */
 void
 StackAndTile::GetDecoratorSettings(Window* window, BMessage& settings)
 {
@@ -518,6 +775,15 @@ StackAndTile::GetDecoratorSettings(Window* window, BMessage& settings)
 }
 
 
+/**
+ * @brief Returns the SATWindow wrapper for @a window, or NULL.
+ *
+ * @param window The server window to look up; NULL is accepted and yields
+ *               NULL.
+ * @return The matching SATWindow if known, otherwise NULL.
+ * @todo Fix the race with WindowAdded() noted in the source: this method is
+ *       sometimes called before the wrapper has been registered.
+ */
 SATWindow*
 StackAndTile::GetSATWindow(Window* window)
 {
@@ -543,6 +809,14 @@ StackAndTile::GetSATWindow(Window* window)
 }
 
 
+/**
+ * @brief Looks up a SATWindow by its persistent identifier.
+ *
+ * Used during group restoration to map archived ids back to live windows.
+ *
+ * @param id The 64-bit identifier produced by SATWindow::Id().
+ * @return The matching SATWindow, or NULL if no window carries that id.
+ */
 SATWindow*
 StackAndTile::FindSATWindow(uint64 id)
 {
@@ -560,6 +834,15 @@ StackAndTile::FindSATWindow(uint64 id)
 //	#pragma mark - StackAndTile private methods
 
 
+/**
+ * @brief Begins a snapping session for the currently-tracked window.
+ *
+ * Removes the dragged window from its group (so it can move freely while the
+ * user looks for a target), brings it to the front (helpful in
+ * focus-follows-mouse), and starts the candidate search.
+ *
+ * @note No-op when no window is currently being dragged.
+ */
 void
 StackAndTile::_StartSAT()
 {
@@ -581,6 +864,12 @@ StackAndTile::_StartSAT()
 }
 
 
+/**
+ * @brief Ends a snapping session, committing the gesture if one was found.
+ *
+ * Asks the dragged window to JoinCandidates(); if it succeeded, re-activates
+ * it so the freshly-merged group is in front.
+ */
 void
 StackAndTile::_StopSAT()
 {
@@ -592,6 +881,15 @@ StackAndTile::_StopSAT()
 }
 
 
+/**
+ * @brief Brings @a satWindow's group to the front of the desktop z-order.
+ *
+ * Promotes the window inside its area, records it as the group's active
+ * window, and asks the desktop to activate the top window of every other
+ * area so the whole group surfaces together.
+ *
+ * @param satWindow The window to focus; NULL is accepted and ignored.
+ */
 void
 StackAndTile::_ActivateWindow(SATWindow* satWindow)
 {
@@ -634,6 +932,19 @@ StackAndTile::_ActivateWindow(SATWindow* satWindow)
 }
 
 
+/**
+ * @brief Handles SAT-global protocol messages (archive/restore all groups).
+ *
+ * Recognised opcodes:
+ *  - kSaveAllGroups: walks every group, archives it via
+ *    SATGroup::ArchiveGroup(), and replies with the flattened message.
+ *  - kRestoreGroup: reads a flattened group message and reinstates it via
+ *    SATGroup::RestoreGroup().
+ *
+ * @param link  Reader supplying the opcode and payload.
+ * @param reply Writer for the response.
+ * @return true if the opcode was recognised.
+ */
 bool
 StackAndTile::_HandleMessage(BPrivate::LinkReceiver& link,
 	BPrivate::LinkSender& reply)
@@ -693,6 +1004,15 @@ StackAndTile::_HandleMessage(BPrivate::LinkReceiver& link,
 }
 
 
+/**
+ * @brief Returns @a window's group if it has a multi-window group, else NULL.
+ *
+ * Filters out lone-window groups so navigation logic can treat ungrouped
+ * windows uniformly.
+ *
+ * @param window The candidate SATWindow; NULL yields NULL.
+ * @return A non-empty SATGroup or NULL.
+ */
 SATGroup*
 StackAndTile::_GetSATGroup(SATWindow* window)
 {
@@ -713,6 +1033,15 @@ StackAndTile::_GetSATGroup(SATWindow* window)
 //	#pragma mark - GroupIterator
 
 
+/**
+ * @brief Constructs an iterator that visits every group on @a desktop.
+ *
+ * The iterator immediately rewinds to the front of the desktop's window list
+ * so the first NextGroup() call yields the topmost group.
+ *
+ * @param sat     Owning StackAndTile listener (used to map windows to groups).
+ * @param desktop Desktop whose window order is being walked.
+ */
 GroupIterator::GroupIterator(StackAndTile* sat, Desktop* desktop)
 	:
 	fStackAndTile(sat),
@@ -723,6 +1052,9 @@ GroupIterator::GroupIterator(StackAndTile* sat, Desktop* desktop)
 }
 
 
+/**
+ * @brief Resets iteration so the next NextGroup() returns the topmost group.
+ */
 void
 GroupIterator::RewindToFront()
 {
@@ -730,6 +1062,14 @@ GroupIterator::RewindToFront()
 }
 
 
+/**
+ * @brief Returns the next SATGroup in front-to-back order.
+ *
+ * Skips hidden windows, the Deskbar and Desktop windows, and groups already
+ * yielded so each group is returned exactly once.
+ *
+ * @return The next group, or NULL when the iterator is exhausted.
+ */
 SATGroup*
 GroupIterator::NextGroup()
 {
@@ -760,6 +1100,13 @@ GroupIterator::NextGroup()
 //	#pragma mark - WindowIterator
 
 
+/**
+ * @brief Constructs an iterator that walks every window in @a group.
+ *
+ * @param group             The group to traverse.
+ * @param reverseLayerOrder When true, yields top-most windows first; when
+ *                          false, yields bottom-up.
+ */
 WindowIterator::WindowIterator(SATGroup* group, bool reverseLayerOrder)
 	:
 	fGroup(group),
@@ -772,6 +1119,11 @@ WindowIterator::WindowIterator(SATGroup* group, bool reverseLayerOrder)
 }
 
 
+/**
+ * @brief Resets iteration to the first window of the first WindowArea.
+ *
+ * Forward direction; used by the bottom-up traversal.
+ */
 void
 WindowIterator::Rewind()
 {
@@ -781,6 +1133,15 @@ WindowIterator::Rewind()
 }
 
 
+/**
+ * @brief Returns the next window in the group, in z-order within each area.
+ *
+ * Walks each area's LayerOrder() list bottom-up (or top-down via
+ * _ReverseNextWindow()) and advances to the next area when the current one
+ * is exhausted.
+ *
+ * @return The next SATWindow, or NULL when the iterator is exhausted.
+ */
 SATWindow*
 WindowIterator::NextWindow()
 {
@@ -803,6 +1164,14 @@ WindowIterator::NextWindow()
 //	#pragma mark - WindowIterator private methods
 
 
+/**
+ * @brief Returns the next window when iterating top-down within each area.
+ *
+ * Mirror of NextWindow() walking the LayerOrder() list backwards; advances
+ * to the next area when the current one is exhausted.
+ *
+ * @return The next SATWindow, or NULL when the iterator is exhausted.
+ */
 SATWindow*
 WindowIterator::_ReverseNextWindow()
 {
@@ -819,6 +1188,12 @@ WindowIterator::_ReverseNextWindow()
 }
 
 
+/**
+ * @brief Resets iteration to the last window of the first WindowArea.
+ *
+ * Used by the top-down traversal so the first _ReverseNextWindow() returns
+ * the top-most window of the first area.
+ */
 void
 WindowIterator::_ReverseRewind()
 {

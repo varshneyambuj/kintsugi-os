@@ -1,12 +1,29 @@
 /*
- * Copyright 2005-2016, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Michael Lotz <mmlr@mlotz.ch>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005-2016, Haiku.
+ * Original authors: Stephan Aßmus, Axel Dörfler, Michael Lotz.
  */
+
+/** @file AccelerantHWInterface.h
+    @brief Production HWInterface that drives a graphics card through its
+           accelerant add-on. */
+
 #ifndef ACCELERANT_HW_INTERFACE_H
 #define ACCELERANT_HW_INTERFACE_H
 
@@ -22,6 +39,13 @@ class AccelerantBuffer;
 class RenderingBuffer;
 
 
+/** @brief HWInterface implementation that opens a /dev/graphics device,
+           loads its accelerant add-on (.so), resolves the standard hook
+           table, and drives mode setting, cursor management, hardware
+           acceleration (fill / blit / DMA), DPMS, brightness, and video
+           overlays through it. The actual frame buffer is exposed to the
+           drawing engine via two AccelerantBuffer wrappers (front /
+           off-screen). */
 class AccelerantHWInterface : public HWInterface {
 public:
 								AccelerantHWInterface();

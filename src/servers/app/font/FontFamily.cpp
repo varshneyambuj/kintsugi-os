@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2008, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2008, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
-/**	Classes to represent font styles and families */
+
+/**
+ * @file FontFamily.cpp
+ * @brief Implementation of FontFamily, a sorted collection of FontStyle objects.
+ *
+ * The styles inside a family are kept in a stable, score-sorted order
+ * (regular before bold before italic) so the first-style-of-a-family
+ * lookup hands callers a sensible default.  Aggregate flags (fixed,
+ * tuned, etc.) are derived lazily and invalidated on add/remove via
+ * the @c kInvalidFamilyFlags sentinel.
+ */
 
 
 #include "FontFamily.h"
@@ -15,9 +44,19 @@
 #include <FontPrivate.h>
 
 
+/** @brief Sentinel stored in fFlags when the cached aggregate is stale. */
 const uint32 kInvalidFamilyFlags = ~(uint32)0;
 
 
+/**
+ * @brief Sorting score used to order styles by usefulness.
+ *
+ * Regular faces score highest, bold faces next, italic faces lowest;
+ * the result is fed into compare_font_styles for a stable sort.
+ *
+ * @param style  Style to score.
+ * @return  Numeric score; higher means "show first".
+ */
 static int
 font_score(const FontStyle* style)
 {
@@ -35,6 +74,13 @@ font_score(const FontStyle* style)
 }
 
 
+/**
+ * @brief Comparator used by BinaryInsert to keep styles in score order.
+ *
+ * @param a  First style.
+ * @param b  Second style.
+ * @return  Negative when @a a should come before @a b, positive when after.
+ */
 static int
 compare_font_styles(const FontStyle* a, const FontStyle* b)
 {
@@ -46,10 +92,12 @@ compare_font_styles(const FontStyle* a, const FontStyle* b)
 //	#pragma mark -
 
 
-/*!
-	\brief Constructor
-	\param namestr Name of the family
-*/
+/**
+ * @brief Constructs an empty family with the given display name and ID.
+ *
+ * @param name  Family name; truncated to B_FONT_FAMILY_LENGTH for Be API parity.
+ * @param id    Numeric ID assigned by the FontManager.
+ */
 FontFamily::FontFamily(const char *name, uint16 id)
 	:
 	fName(name),
@@ -62,10 +110,11 @@ FontFamily::FontFamily(const char *name, uint16 id)
 }
 
 
-/*!
-	\brief Returns the name of the family
-	\return The family's name
-*/
+/**
+ * @brief Returns the family's display name.
+ *
+ * @return  Pointer to a NUL-terminated name owned by the family.
+ */
 const char*
 FontFamily::Name() const
 {
@@ -73,10 +122,15 @@ FontFamily::Name() const
 }
 
 
-/*!
-	\brief Adds the style to the family
-	\param style pointer to FontStyle object to be added
-*/
+/**
+ * @brief Inserts @a style into the family in sorted order.
+ *
+ * Refuses duplicates (identified by name) and assigns the new style a
+ * fresh per-family ID. The aggregate flag cache is invalidated.
+ *
+ * @param style  Style to add; must remain owned by the caller / manager.
+ * @return  true on insertion, false on duplicate name or out-of-memory.
+ */
 bool
 FontFamily::AddStyle(FontStyle* style)
 {
@@ -103,11 +157,15 @@ FontFamily::AddStyle(FontStyle* style)
 }
 
 
-/*!
-	\brief Removes a style from the family.
-
-	The font style will not be deleted.
-*/
+/**
+ * @brief Detaches @a style from the family.
+ *
+ * Does not delete the style object; the FontManager remains responsible
+ * for its lifetime. The aggregate flag cache is invalidated.
+ *
+ * @param style  Style to remove.
+ * @return  true when the style was present and removed.
+ */
 bool
 FontFamily::RemoveStyle(FontStyle* style)
 {
@@ -123,10 +181,11 @@ FontFamily::RemoveStyle(FontStyle* style)
 }
 
 
-/*!
-	\brief Returns the number of styles in the family
-	\return The number of styles in the family
-*/
+/**
+ * @brief Returns the number of styles registered under the family.
+ *
+ * @return  Style count; zero for a freshly constructed family.
+ */
 int32
 FontFamily::CountStyles() const
 {
@@ -134,6 +193,12 @@ FontFamily::CountStyles() const
 }
 
 
+/**
+ * @brief Linear lookup by exact style name.
+ *
+ * @param name  Style name to match (e.g. "Bold", "Regular").
+ * @return  Matching FontStyle, or NULL when @a name is NULL or unknown.
+ */
 FontStyle*
 FontFamily::_FindStyle(const char* name) const
 {
@@ -151,11 +216,12 @@ FontFamily::_FindStyle(const char* name) const
 }
 
 
-/*!
-	\brief Determines whether the style belongs to the family
-	\param style Name of the style being checked
-	\return True if it belongs, false if not
-*/
+/**
+ * @brief Returns true when a style with the given name is registered.
+ *
+ * @param styleName  Name to look up.
+ * @return  true when present, false otherwise.
+ */
 bool
 FontFamily::HasStyle(const char *styleName) const
 {
@@ -163,11 +229,12 @@ FontFamily::HasStyle(const char *styleName) const
 }
 
 
-/*!
-	\brief Returns the name of a style in the family
-	\param index list index of the style to be found
-	\return name of the style or NULL if the index is not valid
-*/
+/**
+ * @brief Returns the style at @a index in the sorted style list.
+ *
+ * @param index  Zero-based index in the sorted list.
+ * @return  Style pointer, or NULL when @a index is out of range.
+ */
 FontStyle*
 FontFamily::StyleAt(int32 index) const
 {
@@ -175,13 +242,18 @@ FontFamily::StyleAt(int32 index) const
 }
 
 
-/*!
-	\brief Get the FontStyle object for the name given
-	\param style Name of the style to be obtained
-	\return The FontStyle object or NULL if none was found.
-
-	The object returned belongs to the family and must not be deleted.
-*/
+/**
+ * @brief Locates a style by name, with common alias fallbacks.
+ *
+ * Tries the exact name first, then alternate forms ("Roman" /
+ * "Regular" / "Book") and the Italic <-> Oblique aliasing pair.
+ *
+ * @param name  Style name requested by the caller.
+ * @return  The matching FontStyle, or NULL when no acceptable
+ *          alternative exists.
+ *
+ * @note  The returned style belongs to the family and must not be deleted.
+ */
 FontStyle*
 FontFamily::GetStyle(const char *name) const
 {
@@ -219,6 +291,17 @@ FontFamily::GetStyle(const char *name) const
 }
 
 
+/**
+ * @brief Returns the style whose Face() bits exactly match @a face.
+ *
+ * Only the slant/weight/width bits are considered; other bits are
+ * filtered out before comparison. An empty mask is treated as
+ * @c B_REGULAR_FACE so callers can ask for "the default" cleanly.
+ *
+ * @param face  Desired face mask.
+ * @return  The matching style, or NULL when none of the family's
+ *          styles has the same Face() value.
+ */
 FontStyle*
 FontFamily::GetStyleMatchingFace(uint16 face) const
 {
@@ -241,6 +324,15 @@ FontFamily::GetStyleMatchingFace(uint16 face) const
 }
 
 
+/**
+ * @brief Returns the aggregate flag word, computing it lazily on first use.
+ *
+ * Walks the styles once and ORs in fixed-width, full/half-fixed, and
+ * tuned-strike bits, then caches the result until the next add/remove
+ * resets fFlags to ::kInvalidFamilyFlags.
+ *
+ * @return Composite @c B_*_FACE / @c B_*_FONT flag mask for the family.
+ */
 uint32
 FontFamily::Flags()
 {

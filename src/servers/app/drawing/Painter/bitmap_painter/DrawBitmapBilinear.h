@@ -1,10 +1,29 @@
 /*
- * Copyright 2009, Christian Packmann.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Christian Packmann; 2008, Andrej Spielmann;
+ * 2005-2014, Stephan Aßmus; 2015, Julian Harnath.
  */
+
+/** @file DrawBitmapBilinear.h
+    @brief Bilinear-filtered bitmap blit specialisation with default,
+           low-filter-ratio and i386 SIMD (MMX/SSE) variants. */
+
 #ifndef DRAW_BITMAP_BILINEAR_H
 #define DRAW_BITMAP_BILINEAR_H
 
@@ -26,12 +45,16 @@ extern uint32 gSIMDFlags;
 namespace BitmapPainterPrivate {
 
 
+/** @brief Per-axis filter sample: source @c index plus interpolation
+           weight in [0..255]. */
 struct FilterInfo {
 	uint16 index;	// index into source bitmap row/column
 	uint16 weight;	// weight of the pixel at index [0..255]
 };
 
 
+/** @brief Pre-computed bilinear filter tables for X and Y plus their
+           index offsets when the destination is clipped on the top/left. */
 struct FilterData {
 	FilterInfo* fWeightsX;
 	FilterInfo* fWeightsY;
@@ -40,8 +63,15 @@ struct FilterData {
 };
 
 
+/**
+ * @brief CRTP base for bilinear bitmap-blit variants; iterates the
+ *        AGG clip-box list and dispatches each clipped band to the
+ *        derived class's DrawToClipRect().
+ */
 template<class OptimizedVersion>
 struct DrawBitmapBilinearOptimized {
+	/** @brief Walks every clip box from @a aggInterface and dispatches
+	           each clipped band to the derived DrawToClipRect(). */
 	void Draw(PainterAggInterface& aggInterface, const BRect& destinationRect,
 		agg::rendering_buffer* bitmap, const FilterData& filterData)
 	{
@@ -101,7 +131,11 @@ protected:
 };
 
 
+/** @brief Bilinear interpolation policy for opaque RGB sources; only
+           three channels are sampled. */
 struct ColorTypeRgb {
+	/** @brief Computes a 2x2 bilinear sample from four source pixels for
+	           an RGB destination. */
 	static void
 	Interpolate(uint32* t, const uint8* s, uint32 sourceBytesPerRow,
 		uint16 wLeft, uint16 wTop, uint16 wRight, uint16 wBottom)
@@ -122,6 +156,8 @@ struct ColorTypeRgb {
 		t[2] >>= 16;
 	}
 
+	/** @brief Vertical-only RGB interpolation used at the right edge
+	           where there is no right neighbour. */
 	static void
 	InterpolateLastColumn(uint32* t, const uint8* s, const uint8* sBottom,
 		uint16 wTop, uint16 wBottom)
@@ -131,6 +167,8 @@ struct ColorTypeRgb {
 		t[2] = (s[2] * wTop + sBottom[2] * wBottom) >> 8;
 	}
 
+	/** @brief Horizontal-only RGB interpolation used at the bottom edge
+	           where there is no row below. */
 	static void
 	InterpolateLastRow(uint32* t, const uint8* s, uint16 wLeft,
 		uint16 wRight)
@@ -142,7 +180,11 @@ struct ColorTypeRgb {
 };
 
 
+/** @brief Bilinear interpolation policy for RGBA sources that also
+           samples the alpha channel. */
 struct ColorTypeRgba {
+	/** @brief Computes a 2x2 bilinear sample from four source pixels for
+	           an RGBA destination. */
 	static void
 	Interpolate(uint32* t, const uint8* s, uint32 sourceBytesPerRow,
 		uint16 wLeft, uint16 wTop, uint16 wRight, uint16 wBottom)
@@ -167,6 +209,8 @@ struct ColorTypeRgba {
 		t[3] >>= 16;
 	}
 
+	/** @brief Vertical-only RGBA interpolation used at the right edge
+	           where there is no right neighbour. */
 	static void
 	InterpolateLastColumn(uint32* t, const uint8* s, const uint8* sBottom,
 		uint16 wTop, uint16 wBottom)
@@ -177,6 +221,8 @@ struct ColorTypeRgba {
 		t[3] = (s[3] * wTop + sBottom[3] * wBottom) >> 8;
 	}
 
+	/** @brief Horizontal-only RGBA interpolation used at the bottom edge
+	           where there is no row below. */
 	static void
 	InterpolateLastRow(uint32* t, const uint8* s, uint16 wLeft,
 		uint16 wRight)
@@ -189,7 +235,11 @@ struct ColorTypeRgba {
 };
 
 
+/** @brief Draw-mode policy implementing B_OP_COPY: writes the
+           interpolated RGB values straight to the destination. */
 struct DrawModeCopy {
+	/** @brief Writes an interpolated RGB sample to @a d using
+	           B_OP_COPY semantics. */
 	static void
 	Blend(uint8*& d, uint32* t)
 	{
@@ -201,7 +251,12 @@ struct DrawModeCopy {
 };
 
 
+/** @brief Draw-mode policy implementing B_OP_ALPHA + B_PIXEL_ALPHA +
+           B_ALPHA_OVERLAY: composites the interpolated RGBA sample over
+           the destination using its alpha. */
 struct DrawModeAlphaOverlay {
+	/** @brief Composites an interpolated RGBA sample onto @a d using
+	           pixel-alpha overlay semantics. */
 	static void
 	Blend(uint8*& d, uint32* t)
 	{
@@ -225,10 +280,20 @@ struct DrawModeAlphaOverlay {
 };
 
 
+/**
+ * @brief Default bilinear band renderer parameterised on a ColorType
+ *        sampling policy and a DrawMode blend policy.
+ *
+ * Anticipates that most destination pixels need true bilinear filtering;
+ * only the right-most column and bottom-most row use the cheaper
+ * one-axis interpolators when their weights are 100%.
+ */
 template<class ColorType, class DrawMode>
 struct BilinearDefault :
 	DrawBitmapBilinearOptimized<BilinearDefault<ColorType, DrawMode> > {
 
+	/** @brief Renders one clipped band [@a xIndexL..@a xIndexR] x
+	           [@a y1..@a y2] using full bilinear interpolation. */
 	void DrawToClipRect(int32 xIndexL, int32 xIndexR, int32 y1, int32 y2)
 	{
 		// In this mode we anticipate many pixels wich need filtering,
@@ -316,8 +381,15 @@ struct BilinearDefault :
 };
 
 
+/**
+ * @brief Bilinear band renderer optimised for integer or half-step
+ *        scales (1.5x, 2x, 2.5x, 3x) where many pixels hit a source
+ *        sample exactly and skip filtering entirely.
+ */
 struct BilinearLowFilterRatio :
 	DrawBitmapBilinearOptimized<BilinearLowFilterRatio> {
+	/** @brief Renders one clipped band, taking direct-hit shortcuts when
+	           filter weights are 100%. */
 	void DrawToClipRect(int32 xIndexL, int32 xIndexR, int32 y1, int32 y2)
 	{
 		// In this mode, we anticipate to hit many destination pixels
@@ -407,7 +479,12 @@ struct BilinearLowFilterRatio :
 
 #ifdef __i386__
 
+/** @brief i386 MMX/SSE SIMD bilinear band renderer that delegates the
+           per-row pixel loop to bilinear_scale_xloop_mmxsse(). */
 struct BilinearSimd : DrawBitmapBilinearOptimized<BilinearSimd> {
+	/** @brief Renders one clipped band by calling the MMX/SSE inner
+	           loop once per scanline and handling the right and bottom
+	           edges in scalar code. */
 	void DrawToClipRect(int32 xIndexL, int32 xIndexR, int32 y1, int32 y2)
 	{
 		// Basically the same as the "standard" mode, but we use SIMD
@@ -478,8 +555,16 @@ struct BilinearSimd : DrawBitmapBilinearOptimized<BilinearSimd> {
 #endif	// __i386__
 
 
+/**
+ * @brief Top-level bilinear bitmap blitter parameterised on ColorType /
+ *        DrawMode policies; pre-computes filter weights and selects
+ *        between the default, low-ratio and SIMD variants.
+ */
 template<class ColorType, class DrawMode>
 struct DrawBitmapBilinear {
+	/** @brief Pre-computes per-axis bilinear filter weight tables, picks
+	           the best inner loop variant for the current scale and
+	           CPU SIMD flags, and dispatches the blit. */
 	void
 	Draw(const Painter* painter, PainterAggInterface& aggInterface,
 		agg::rendering_buffer& bitmap, BPoint offset,

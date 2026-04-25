@@ -1,10 +1,44 @@
 /*
- * Copyright 2009-2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2019, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
  */
+
+
+/**
+ * @file RemoteMessage.cpp
+ * @brief Out-of-line encoders / decoders for the RP_* remote-display
+ *        protocol: bitmap, font, draw state, gradient, transform, view
+ *        state, line-array entry, and the frame-header machinery driven
+ *        by NextMessage().
+ *
+ * Encoders all use Add() / _MakeSpace() under the hood; decoders read
+ * directly from the source ring buffer and decrement fDataLeft. The
+ * server-only and client-only variants are guarded by CLIENT_COMPILE
+ * because the bitmap encoding differs between the two sides.
+ */
+
 
 #include "RemoteMessage.h"
 
@@ -38,6 +72,18 @@
 #define TRACE_ERROR(x...)		TRACE_ALWAYS(x)
 
 
+/**
+ * @brief Advances the decoder to the next inbound frame.
+ *
+ * Discards any unconsumed bytes from the previous frame, reads the uint16
+ * opcode and the uint32 length field, validates the length includes the
+ * header, and stores the payload size in fDataLeft so subsequent Read()
+ * calls cannot run past the frame.
+ *
+ * @param code  Output, set to the opcode of the new frame.
+ * @return      B_OK on success, B_ERROR on a malformed length, or the
+ *              negative ring-read error code.
+ */
 status_t
 RemoteMessage::NextMessage(uint16& code)
 {
@@ -78,6 +124,12 @@ RemoteMessage::NextMessage(uint16& code)
 }
 
 
+/**
+ * @brief Discards everything staged since the last Start() / Flush().
+ *
+ * Used when the encoder has buffered some payload but the higher-level
+ * draw operation has been aborted before flushing.
+ */
 void
 RemoteMessage::Cancel()
 {
@@ -87,6 +139,14 @@ RemoteMessage::Cancel()
 
 
 #ifndef CLIENT_COMPILE
+/**
+ * @brief Encodes a ServerBitmap as width / height / stride / colour space /
+ *        flags / payload (server-side encoder).
+ *
+ * @param bitmap   Bitmap to serialise.
+ * @param minimal  When true, omits the colour-space and flags fields for
+ *                 frames that already pin them out-of-band.
+ */
 void
 RemoteMessage::AddBitmap(const ServerBitmap& bitmap, bool minimal)
 {
@@ -111,6 +171,13 @@ RemoteMessage::AddBitmap(const ServerBitmap& bitmap, bool minimal)
 }
 
 
+/**
+ * @brief Encodes the visible state of a ServerFont (direction, encoding,
+ *        flags, spacing, shear, rotation, false-bold width, size, face,
+ *        family-and-style cookie).
+ *
+ * @param font  Font whose state is serialised.
+ */
 void
 RemoteMessage::AddFont(const ServerFont& font)
 {
@@ -127,6 +194,13 @@ RemoteMessage::AddFont(const ServerFont& font)
 }
 
 
+/**
+ * @brief Encodes the drawing parameters of a DrawState (pen, blending,
+ *        pattern, line caps/joins, miter limit, high/low colours).
+ *
+ * @param drawState  State to serialise; subpixel precision and pattern are
+ *                   embedded inline.
+ */
 void
 RemoteMessage::AddDrawState(const DrawState& drawState)
 {
@@ -144,6 +218,11 @@ RemoteMessage::AddDrawState(const DrawState& drawState)
 }
 
 
+/**
+ * @brief Encodes one entry of a BView line array: start, end, colour.
+ *
+ * @param line  Line entry to serialise.
+ */
 void
 RemoteMessage::AddArrayLine(const ViewLineArrayInfo& line)
 {
@@ -153,6 +232,11 @@ RemoteMessage::AddArrayLine(const ViewLineArrayInfo& line)
 }
 
 
+/**
+ * @brief Encodes a ServerCursor as hotspot followed by its bitmap.
+ *
+ * @param cursor  Cursor to serialise.
+ */
 void
 RemoteMessage::AddCursor(const ServerCursor& cursor)
 {
@@ -161,6 +245,11 @@ RemoteMessage::AddCursor(const ServerCursor& cursor)
 }
 
 
+/**
+ * @brief Encodes the 64-bit pattern of a Pattern.
+ *
+ * @param pattern  Pattern to serialise.
+ */
 void
 RemoteMessage::AddPattern(const Pattern& pattern)
 {
@@ -169,6 +258,12 @@ RemoteMessage::AddPattern(const Pattern& pattern)
 
 #else // !CLIENT_COMPILE
 
+/**
+ * @brief Encodes a BBitmap as width / height / stride / colour space /
+ *        flags / payload (client-side encoder).
+ *
+ * @param bitmap  Bitmap to serialise.
+ */
 void
 RemoteMessage::AddBitmap(const BBitmap& bitmap)
 {
@@ -192,6 +287,17 @@ RemoteMessage::AddBitmap(const BBitmap& bitmap)
 #endif // !CLIENT_COMPILE
 
 
+/**
+ * @brief Encodes a BGradient: type tag, type-specific geometry, then a
+ *        sequence of (colour, offset) stops.
+ *
+ * Linear / radial / radial-focus / diamond / conic gradients each
+ * contribute their own geometry payload after the type tag.
+ *
+ * @param gradient  Gradient to serialise.
+ * @note  Silently bails out if a downcast fails; the receiver will then
+ *        observe a truncated frame.
+ */
 void
 RemoteMessage::AddGradient(const BGradient& gradient)
 {
@@ -276,6 +382,14 @@ RemoteMessage::AddGradient(const BGradient& gradient)
 }
 
 
+/**
+ * @brief Encodes a BAffineTransform.
+ *
+ * Identity transforms are encoded as a single bool to save bytes; non-
+ * identity transforms emit all six matrix entries.
+ *
+ * @param transform  Transform to serialise.
+ */
 void
 RemoteMessage::AddTransform(const BAffineTransform& transform)
 {
@@ -294,6 +408,18 @@ RemoteMessage::AddTransform(const BAffineTransform& transform)
 }
 
 
+/**
+ * @brief Reads a length-prefixed string from the inbound ring.
+ *
+ * Allocates one extra byte for a trailing NUL.
+ *
+ * @param _string  Output, receives the malloc'd string; caller frees.
+ * @param _length  Output, populated with the string length in bytes
+ *                 (excluding the appended NUL).
+ * @return         B_OK on success, B_ERROR if the declared length runs
+ *                 past the frame, B_NO_MEMORY on allocation failure, or
+ *                 the negative ring-read error code.
+ */
 status_t
 RemoteMessage::ReadString(char** _string, size_t& _length)
 {
@@ -329,6 +455,23 @@ RemoteMessage::ReadString(char** _string, size_t& _length)
 }
 
 
+/**
+ * @brief Decodes a BBitmap previously encoded by AddBitmap().
+ *
+ * On the server side (CLIENT_COMPILE undefined) the decoded bitmap is
+ * forced to B_BITMAP_NO_SERVER_LINK so it does not try to allocate a
+ * shared area.
+ *
+ * @param _bitmap     Output, receives a heap-allocated BBitmap; caller owns.
+ * @param minimal     true if the encoder emitted the minimal layout (no
+ *                    colour space or flags fields).
+ * @param colorSpace  Colour space to use when @a minimal is true.
+ * @param flags       Bitmap flags to use when @a minimal is true (server
+ *                    side overrides this).
+ * @return            B_OK on success, B_ERROR on inconsistent length,
+ *                    B_NO_MEMORY on allocation failure, or the negative
+ *                    ring-read error code.
+ */
 status_t
 RemoteMessage::ReadBitmap(BBitmap** _bitmap, bool minimal,
 	color_space colorSpace, uint32 flags)
@@ -382,6 +525,15 @@ RemoteMessage::ReadBitmap(BBitmap** _bitmap, bool minimal,
 }
 
 
+/**
+ * @brief Decodes the font state encoded by AddFont() and applies it to
+ *        @a font.
+ *
+ * @param font  Output font; setters are called in the order required to
+ *              avoid clobbering family-and-style.
+ * @return      B_OK on success, otherwise the first underlying read
+ *              error.
+ */
 status_t
 RemoteMessage::ReadFontState(BFont& font)
 {
@@ -418,6 +570,19 @@ RemoteMessage::ReadFontState(BFont& font)
 }
 
 
+/**
+ * @brief Decodes the view-side draw state encoded by AddDrawState() and
+ *        applies it to @a view, returning the embedded pattern via
+ *        @a pattern.
+ *
+ * Subpixel precision is reflected by setting or clearing the
+ * B_SUBPIXEL_PRECISE view flag.
+ *
+ * @param view     View whose state is updated.
+ * @param pattern  Output pattern recovered from the frame.
+ * @return         B_OK on success, otherwise the first underlying read
+ *                 error.
+ */
 status_t
 RemoteMessage::ReadViewState(BView& view, ::pattern& pattern)
 {
@@ -456,6 +621,17 @@ RemoteMessage::ReadViewState(BView& view, ::pattern& pattern)
 }
 
 
+/**
+ * @brief Decodes a BGradient previously encoded by AddGradient().
+ *
+ * Allocates the concrete subtype dictated by the type tag, populates its
+ * geometry, then appends every (colour, offset) stop.
+ *
+ * @param _gradient  Output, receives a heap-allocated BGradient; caller
+ *                   owns.
+ * @return           B_OK on success, B_NO_MEMORY when the subtype could
+ *                   not be allocated, or the first underlying read error.
+ */
 status_t
 RemoteMessage::ReadGradient(BGradient** _gradient)
 {
@@ -556,6 +732,15 @@ RemoteMessage::ReadGradient(BGradient** _gradient)
 }
 
 
+/**
+ * @brief Decodes a BAffineTransform previously encoded by AddTransform().
+ *
+ * Identity-encoded transforms reset @a transform to the identity matrix.
+ *
+ * @param transform  Output transform.
+ * @return           B_OK on success, otherwise the first underlying read
+ *                   error.
+ */
 status_t
 RemoteMessage::ReadTransform(BAffineTransform& transform)
 {
@@ -578,6 +763,15 @@ RemoteMessage::ReadTransform(BAffineTransform& transform)
 }
 
 
+/**
+ * @brief Decodes one BView line-array entry: start, end, colour.
+ *
+ * @param startPoint  Output start point.
+ * @param endPoint    Output end point.
+ * @param color       Output colour.
+ * @return            B_OK on success, otherwise the first underlying read
+ *                    error.
+ */
 status_t
 RemoteMessage::ReadArrayLine(BPoint& startPoint, BPoint& endPoint,
 	rgb_color& color)

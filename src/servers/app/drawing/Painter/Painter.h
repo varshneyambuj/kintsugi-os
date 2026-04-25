@@ -1,13 +1,29 @@
 /*
- * Copyright 2005-2007, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * API to the Anti-Grain Geometry based "Painter" drawing backend. Manages
- * rendering pipe-lines for stroke, fills, bitmap and text rendering.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005-2007, Stephan Aßmus; 2008, Andrej Spielmann;
+ * 2015, Julian Harnath.
  */
+
+/** @file Painter.h
+    @brief Public API of the Anti-Grain Geometry based software rasterizer
+           used by the app_server's DrawingEngine. */
+
 #ifndef PAINTER_H
 #define PAINTER_H
 
@@ -44,10 +60,23 @@ class ServerFont;
 
 
 // Defines for SIMD support.
+/** @brief SIMD capability bit indicating MMX is available on every CPU. */
 #define APPSERVER_SIMD_MMX	(1 << 0)
+/** @brief SIMD capability bit indicating SSE is available on every CPU. */
 #define APPSERVER_SIMD_SSE	(1 << 1)
 
 
+/**
+ * @brief AGG-backed software rasterizer driving the app_server DrawingEngine.
+ *
+ * Wraps the AGG pipeline objects (held in PainterAggInterface) and exposes a
+ * BeOS-style drawing API: lines, polygons, beziers, shapes, rectangles,
+ * round-rects, ellipses, arcs, strings, bitmaps, regions, and gradient fills
+ * for each. Internally each public draw call funnels into the templated
+ * helpers @ref _StrokePath / @ref _FillPath / @ref _RasterizePath which run
+ * the AGG rasterizer with the currently configured pen, transform, clipping
+ * region and alpha mask.
+ */
 class Painter {
 public:
 								Painter();
@@ -63,6 +92,7 @@ public:
 									int32 yOffset = 0);
 
 			void				ConstrainClipping(const BRegion* region);
+	/** @brief Returns the current clipping region (may be NULL when unattached). */
 			const BRegion*		ClippingRegion() const
 									{ return fClippingRegion; }
 
@@ -70,29 +100,36 @@ public:
 			void				SetTransform(BAffineTransform transform,
 									int32 xOffset, int32 yOffset);
 
+	/** @brief Returns true when the active matrix is the identity transform. */
 	inline	bool				IsIdentityTransform() const
 									{ return fIdentityTransform; }
+	/** @brief Returns the current view-space affine transform. */
 			const Transformable& Transform() const
 									{ return fTransform; }
 
 			void				SetHighColor(const rgb_color& color);
+	/** @brief Returns the current high color stored in the PatternHandler. */
 	inline	rgb_color			HighColor() const
 									{ return fPatternHandler.HighColor(); }
 
 			void				SetLowColor(const rgb_color& color);
+	/** @brief Returns the current low color stored in the PatternHandler. */
 	inline	rgb_color			LowColor() const
 									{ return fPatternHandler.LowColor(); }
 
 			void				SetPenSize(float size);
+	/** @brief Returns the current pen size in pixels. */
 	inline	float				PenSize() const
 									{ return fPenSize; }
 			void				SetStrokeMode(cap_mode lineCap,
 									join_mode joinMode, float miterLimit);
 			void				SetFillRule(int32 fillRule);
 			void				SetPattern(const pattern& p);
+	/** @brief Returns the active 8x8 pattern in R5 format. */
 	inline	pattern				Pattern() const
 									{ return *fPatternHandler.GetR5Pattern(); }
 			void				SetDrawingMode(drawing_mode mode);
+	/** @brief Returns the active BeOS drawing_mode (B_OP_COPY, B_OP_OVER, ...). */
 	inline	drawing_mode		DrawingMode() const
 									{ return fDrawingMode; }
 			void				SetBlendingMode(source_alpha srcAlpha,
@@ -100,6 +137,7 @@ public:
 
 			void				SetFont(const ServerFont& font);
 			void				SetFont(const DrawState* state);
+	/** @brief Returns the ServerFont currently used for string rendering. */
 	inline	const ServerFont&	Font() const
 									{ return fTextRenderer.Font(); }
 
@@ -375,6 +413,12 @@ private:
 };
 
 
+/**
+ * @brief Outwardly aligns @a rect, transforms it, then clips to the region.
+ *
+ * @param rect Source rectangle in untransformed coordinates.
+ * @return Clipped axis-aligned rectangle ready to drive a draw call.
+ */
 inline BRect
 Painter::TransformAndClipRect(BRect rect) const
 {
@@ -390,6 +434,12 @@ Painter::TransformAndClipRect(BRect rect) const
 }
 
 
+/**
+ * @brief Outwardly aligns @a rect to integer bounds and clips it.
+ *
+ * @param rect Source rectangle.
+ * @return Clipped, integer-aligned rectangle.
+ */
 inline BRect
 Painter::ClipRect(BRect rect) const
 {
@@ -401,6 +451,12 @@ Painter::ClipRect(BRect rect) const
 }
 
 
+/**
+ * @brief Subpixel-aware rect alignment followed by clipping.
+ *
+ * @param rect Source rectangle.
+ * @return Clipped rectangle aligned per the current subpixel mode.
+ */
 inline BRect
 Painter::AlignAndClipRect(BRect rect) const
 {
@@ -408,6 +464,12 @@ Painter::AlignAndClipRect(BRect rect) const
 }
 
 
+/**
+ * @brief Subpixel-aware align, transform, then clip.
+ *
+ * @param rect Source rectangle in untransformed coordinates.
+ * @return Clipped, transformed rectangle aligned per the subpixel mode.
+ */
 inline BRect
 Painter::TransformAlignAndClipRect(BRect rect) const
 {
@@ -418,6 +480,16 @@ Painter::TransformAlignAndClipRect(BRect rect) const
 }
 
 
+/**
+ * @brief Aligns @a rect to integer pixel boundaries.
+ *
+ * Rounds left/top down. Right/bottom round up when @c fSubpixelPrecise is
+ * set (so the rectangle still covers the full requested area), otherwise
+ * round down to match BeOS pixel-index semantics.
+ *
+ * @param rect Source rectangle.
+ * @return Aligned rectangle.
+ */
 inline BRect
 Painter::AlignRect(BRect rect) const
 {

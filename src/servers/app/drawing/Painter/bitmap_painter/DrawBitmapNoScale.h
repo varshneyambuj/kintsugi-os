@@ -1,10 +1,30 @@
 /*
- * Copyright 2009, Christian Packmann.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Christian Packmann; 2008, Andrej Spielmann;
+ * 2005-2014, Stephan Aßmus; 2015, Julian Harnath.
  */
+
+/** @file DrawBitmapNoScale.h
+    @brief 1:1 unscaled bitmap-blit fast paths for CMAP8 and BGRA32
+           sources under B_OP_COPY, B_OP_OVER, alpha overlay and
+           alpha-mask copy. */
+
 #ifndef DRAW_BITMAP_NO_SCALE_H
 #define DRAW_BITMAP_NO_SCALE_H
 
@@ -14,9 +34,19 @@
 #include "SystemPalette.h"
 
 
+/**
+ * @brief CRTP base for 1:1 bitmap blitters; iterates AGG clip boxes and
+ *        forwards each clipped scanline to BlendType::BlendRow().
+ *
+ * Concrete BlendTypes (CMap8Copy, CMap8Over, Bgr32Copy, Bgr32Over,
+ * Bgr32Alpha, Bgr32CopyMasked) implement BlendRow() with the per-pixel
+ * format and drawing-mode logic.
+ */
 template<class BlendType>
 struct DrawBitmapNoScale {
 public:
+	/** @brief Walks every clip box and dispatches each clipped scanline
+	           band to the derived BlendType's BlendRow() implementation. */
 	void
 	Draw(PainterAggInterface& aggInterface, agg::rendering_buffer& bitmap,
 		uint32 bytesPerSourcePixel, IntPoint offset, BRect destinationRect)
@@ -90,8 +120,12 @@ protected:
 };
 
 
+/** @brief BlendType: CMAP8 -> BGRA32 unconditional copy through the
+           system palette. */
 struct CMap8Copy : public DrawBitmapNoScale<CMap8Copy>
 {
+	/** @brief Translates a row of CMAP8 indices into BGRA32 destination
+	           pixels via @c fColorMap. */
 	void BlendRow(uint8* dst, const uint8* src, int32 numPixels)
 	{
 		uint32* d = (uint32*)dst;
@@ -104,8 +138,12 @@ struct CMap8Copy : public DrawBitmapNoScale<CMap8Copy>
 };
 
 
+/** @brief BlendType: CMAP8 -> BGRA32 with B_OP_OVER semantics; pixels
+           with palette alpha 0 leave the destination untouched. */
 struct CMap8Over : public DrawBitmapNoScale<CMap8Over>
 {
+	/** @brief Translates a row of CMAP8 indices into BGRA32 pixels,
+	           skipping fully transparent palette entries. */
 	void BlendRow(uint8* dst, const uint8* src, int32 numPixels)
 	{
 		uint32* d = (uint32*)dst;
@@ -121,8 +159,10 @@ struct CMap8Over : public DrawBitmapNoScale<CMap8Over>
 };
 
 
+/** @brief BlendType: BGRA32 -> BGRA32 verbatim copy via memcpy. */
 struct Bgr32Copy : public DrawBitmapNoScale<Bgr32Copy>
 {
+	/** @brief Copies @a numPixels source words straight into @a dst. */
 	void BlendRow(uint8* dst, const uint8* src, int32 numPixels)
 	{
 		memcpy(dst, src, numPixels * 4);
@@ -130,8 +170,12 @@ struct Bgr32Copy : public DrawBitmapNoScale<Bgr32Copy>
 };
 
 
+/** @brief BlendType: BGRA32 -> BGRA32 copy that skips
+           B_TRANSPARENT_MAGIC_RGBA32 source pixels. */
 struct Bgr32Over : public DrawBitmapNoScale<Bgr32Over>
 {
+	/** @brief Copies non-transparent-magic source words; transparent
+	           magic pixels leave the destination unchanged. */
 	void BlendRow(uint8* dst, const uint8* src, int32 numPixels)
 	{
 		uint32* d = (uint32*)dst;
@@ -146,8 +190,14 @@ struct Bgr32Over : public DrawBitmapNoScale<Bgr32Over>
 };
 
 
+/** @brief BlendType: BGRA32 -> BGRA32 source-over compositing using each
+           source pixel's alpha; equivalent to B_OP_ALPHA + B_PIXEL_ALPHA
+           + B_ALPHA_OVERLAY at 1:1 scale. */
 struct Bgr32Alpha : public DrawBitmapNoScale<Bgr32Alpha>
 {
+	/** @brief Composites a row of BGRA32 source pixels onto @a dst using
+	           per-pixel source alpha; opaque source pixels are copied
+	           directly. */
 	void BlendRow(uint8* dst, const uint8* src, int32 numPixels)
 	{
 		uint32* d = (uint32*)dst;
@@ -172,8 +222,12 @@ struct Bgr32Alpha : public DrawBitmapNoScale<Bgr32Alpha>
 };
 
 
+/** @brief BlendType: BGRA32 -> BGRA32 copy gated by a non-zero entry in
+           the bound AGG alpha mask scanline. */
 struct Bgr32CopyMasked : public DrawBitmapNoScale<Bgr32CopyMasked>
 {
+	/** @brief Reads the alpha-mask hspan for the current row and copies
+	           source pixels only where the mask is non-zero. */
 	void BlendRow(uint8* dst, const uint8* src, int32 numPixels)
 	{
 		uint8 covers[numPixels];

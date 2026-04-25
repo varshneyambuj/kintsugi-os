@@ -1,17 +1,40 @@
 /*
- * Copyright 2009, Christian Packmann.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Christian Packmann; 2008, Andrej Spielmann;
+ * 2005-2014, Stephan Aßmus; 2015, Julian Harnath.
  */
+
+/** @file DrawBitmapNearestNeighbor.h
+    @brief Nearest-neighbor scaled bitmap-blit specialisation for
+           B_OP_COPY without filtering, transform, or alpha mask. */
+
 #ifndef DRAW_BITMAP_NEAREST_NEIGHBOR_H
 #define DRAW_BITMAP_NEAREST_NEIGHBOR_H
 
 #include "Painter.h"
 
 
+/** @brief Nearest-neighbor scaled bitmap blitter for B_OP_COPY. */
 struct DrawBitmapNearestNeighborCopy {
+	/** @brief Builds per-axis nearest-pixel index tables for the target
+	           rect, walks every AGG clip box, and copies one source
+	           uint32 per destination pixel without filtering. */
 	static void
 	Draw(const Painter* painter, PainterAggInterface& aggInterface,
 		agg::rendering_buffer& bitmap, BPoint offset,

@@ -1,9 +1,40 @@
 /*
- * Copyright 2006-2009, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2009, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ */
+
+
+/**
+ * @file Overlay.cpp
+ * @brief Implementation of the Overlay wrapper around an accelerant overlay channel.
+ *
+ * Each Overlay instance binds a ServerBitmap to a hardware overlay slot
+ * acquired from the HWInterface. The class manages the per-overlay semaphore
+ * used to lock the buffer while the client writes a new frame, computes the
+ * color-key value for the chosen color space, and forwards configure / hide
+ * requests to the accelerant.
  */
 
 
@@ -23,11 +54,17 @@
 #endif
 
 
+/** @brief Maximum time (microseconds) to wait for the overlay lock before assuming a stuck client. */
 const static bigtime_t kOverlayTimeout = 1000000LL;
 	// after 1 second, the team holding the lock will be killed
 
+
+/** @brief RAII helper that acquires a sem_id on construction and releases it on destruction. */
 class SemaphoreLocker {
 public:
+	/** @brief Acquires @a semaphore, retrying through B_INTERRUPTED.
+	 *  @param semaphore Semaphore to lock.
+	 *  @param timeout   Relative timeout passed to acquire_sem_etc(). */
 	SemaphoreLocker(sem_id semaphore, bigtime_t timeout = B_INFINITE_TIMEOUT)
 		:
 		fSemaphore(semaphore)
@@ -38,12 +75,14 @@ public:
 		} while (fStatus == B_INTERRUPTED);
 	}
 
+	/** @brief Releases the semaphore if it was successfully acquired. */
 	~SemaphoreLocker()
 	{
 		if (fStatus == B_OK)
 			release_sem_etc(fSemaphore, 1, B_DO_NOT_RESCHEDULE);
 	}
 
+	/** @brief Returns the result of the acquire call (B_OK / B_TIMED_OUT / ...). */
 	status_t LockStatus()
 	{
 		return fStatus;
@@ -58,6 +97,17 @@ private:
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an overlay over @a bitmap on the supplied hardware interface.
+ *
+ * Creates the per-overlay semaphore, sets a default color-key, and asks the
+ * HWInterface to allocate the back-end overlay buffer with the bitmap's
+ * dimensions and color space.
+ *
+ * @param interface Hardware interface owning the overlay channel.
+ * @param bitmap    Bitmap whose contents will be displayed via the overlay.
+ * @param token     Channel token previously obtained from the HWInterface.
+ */
 Overlay::Overlay(HWInterface& interface, ServerBitmap* bitmap,
 		overlay_token token)
 	:
@@ -83,6 +133,9 @@ Overlay::Overlay(HWInterface& interface, ServerBitmap* bitmap,
 }
 
 
+/**
+ * @brief Releases the overlay channel, frees the buffer, and deletes the semaphore.
+ */
 Overlay::~Overlay()
 {
 	fHWInterface.ReleaseOverlayChannel(fOverlayToken);
@@ -93,6 +146,13 @@ Overlay::~Overlay()
 }
 
 
+/**
+ * @brief Reports whether the overlay was successfully initialised.
+ *
+ * @retval B_OK         Both the semaphore and the overlay buffer are valid.
+ * @retval B_NO_MEMORY  The buffer could not be allocated.
+ * @return Other        Negative semaphore status when create_sem() failed.
+ */
 status_t
 Overlay::InitCheck() const
 {
@@ -106,6 +166,16 @@ Overlay::InitCheck() const
 }
 
 
+/**
+ * @brief Re-allocates the overlay buffer after a previous Suspend().
+ *
+ * Acquires the per-overlay lock (waiting up to @c kOverlayTimeout) so that
+ * no client is mid-write when the buffer is recreated, then asks the
+ * HWInterface for a fresh buffer matching the bitmap's geometry.
+ *
+ * @param bitmap Bitmap describing the new buffer dimensions and color space.
+ * @return       B_OK on success, otherwise the failure status from buffer allocation.
+ */
 status_t
 Overlay::Resume(ServerBitmap* bitmap)
 {
@@ -125,6 +195,13 @@ Overlay::Resume(ServerBitmap* bitmap)
 }
 
 
+/**
+ * @brief Releases the back-end overlay buffer while keeping the channel reservation.
+ *
+ * @param bitmap         Bitmap currently driving the overlay (unused, kept for symmetry with Resume()).
+ * @param needTemporary  Reserved for future allocation of a placeholder buffer.
+ * @return  Always B_OK.
+ */
 status_t
 Overlay::Suspend(ServerBitmap* bitmap, bool needTemporary)
 {
@@ -142,6 +219,9 @@ Overlay::Suspend(ServerBitmap* bitmap, bool needTemporary)
 }
 
 
+/**
+ * @brief Releases the overlay buffer back to the HWInterface and clears the cached pointer.
+ */
 void
 Overlay::_FreeBuffer()
 {
@@ -150,6 +230,13 @@ Overlay::_FreeBuffer()
 }
 
 
+/**
+ * @brief Allocates a new overlay buffer matching @a bitmap's geometry.
+ *
+ * @param bitmap Bitmap whose width, height, and color space define the buffer.
+ * @retval B_OK         Buffer allocated successfully.
+ * @retval B_NO_MEMORY  The HWInterface refused to allocate.
+ */
 status_t
 Overlay::_AllocateBuffer(ServerBitmap* bitmap)
 {
@@ -162,6 +249,12 @@ Overlay::_AllocateBuffer(ServerBitmap* bitmap)
 }
 
 
+/**
+ * @brief Records the client-shared overlay descriptor and publishes the lock and pixel pointer.
+ *
+ * @param clientData Client-visible structure shared with the application; the
+ *                   semaphore and current buffer pointer are stored into it.
+ */
 void
 Overlay::SetClientData(overlay_client_data* clientData)
 {
@@ -171,6 +264,12 @@ Overlay::SetClientData(overlay_client_data* clientData)
 }
 
 
+/**
+ * @brief Translates B_OVERLAY_* user flags into the equivalent overlay window flags.
+ *
+ * @param flags Bitwise combination of B_OVERLAY_FILTER_HORIZONTAL,
+ *              B_OVERLAY_FILTER_VERTICAL, and B_OVERLAY_MIRROR.
+ */
 void
 Overlay::SetFlags(uint32 flags)
 {
@@ -183,6 +282,14 @@ Overlay::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Adopts the channel token previously held by @a other.
+ *
+ * Used during overlay handoff (e.g. when an existing overlay is replaced
+ * without releasing the underlying hardware channel).
+ *
+ * @param other Donor overlay; its token is transferred verbatim.
+ */
 void
 Overlay::TakeOverToken(Overlay* other)
 {
@@ -195,6 +302,10 @@ Overlay::TakeOverToken(Overlay* other)
 }
 
 
+/**
+ * @brief Returns the accelerant overlay buffer descriptor.
+ * @return Pointer to the overlay buffer descriptor, or NULL when not allocated.
+ */
 const overlay_buffer*
 Overlay::OverlayBuffer() const
 {
@@ -202,6 +313,9 @@ Overlay::OverlayBuffer() const
 }
 
 
+/**
+ * @brief Returns the client-shared data structure for this overlay.
+ */
 overlay_client_data*
 Overlay::ClientData() const
 {
@@ -209,6 +323,9 @@ Overlay::ClientData() const
 }
 
 
+/**
+ * @brief Returns the accelerant token for this overlay's channel.
+ */
 overlay_token
 Overlay::OverlayToken() const
 {
@@ -216,6 +333,11 @@ Overlay::OverlayToken() const
 }
 
 
+/**
+ * @brief Hides the overlay; the next call to Configure() makes it visible again.
+ *
+ * @note Has no effect when the channel has already been released.
+ */
 void
 Overlay::Hide()
 {
@@ -227,6 +349,16 @@ Overlay::Hide()
 }
 
 
+/**
+ * @brief Computes color-key values matching the supplied @a colorSpace.
+ *
+ * Adjusts the per-channel mask and value of @c fWindow so that the chosen
+ * color key produces the same RGB color regardless of the framebuffer's bit
+ * depth (B_RGB15 / B_RGB16 / 32-bit).
+ *
+ * @param colorSpace One of the supported screen color spaces.
+ * @note  Has no effect when the overlay is not using B_OVERLAY_COLOR_KEY.
+ */
 void
 Overlay::SetColorSpace(uint32 colorSpace)
 {
@@ -259,6 +391,16 @@ Overlay::SetColorSpace(uint32 colorSpace)
 }
 
 
+/**
+ * @brief Pushes a new (source, destination) rectangle pair to the accelerant.
+ *
+ * Lazily acquires a channel token if this overlay does not own one yet, then
+ * fills the view / window descriptors and asks the HWInterface to commit the
+ * configuration to the hardware.
+ *
+ * @param source      Source rectangle in overlay buffer coordinates.
+ * @param destination Destination rectangle in screen coordinates.
+ */
 void
 Overlay::Configure(const BRect& source, const BRect& destination)
 {

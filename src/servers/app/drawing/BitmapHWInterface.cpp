@@ -1,11 +1,42 @@
 /*
- * Copyright 2002-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ */
+
+
+/**
+ * @file BitmapHWInterface.cpp
+ * @brief HWInterface implementation that fakes a graphics card backed by a ServerBitmap.
+ *
+ * Mode setting, cursor handling, DPMS, and brightness all return
+ * B_UNSUPPORTED. Only frame buffer access is meaningful: the supplied
+ * ServerBitmap is exposed as the front buffer, and a 32-bit BBitmap-backed
+ * back buffer is allocated transparently when the front buffer's color
+ * space is not 32-bit (because Painter currently only renders in 32-bit).
  */
 
 
@@ -22,6 +53,11 @@
 using std::nothrow;
 
 
+/**
+ * @brief Wraps the supplied @a bitmap as the front buffer of the fake HWInterface.
+ *
+ * @param bitmap ServerBitmap to drive; the caller retains ownership.
+ */
 BitmapHWInterface::BitmapHWInterface(ServerBitmap* bitmap)
 	:
 	HWInterface(),
@@ -31,11 +67,25 @@ BitmapHWInterface::BitmapHWInterface(ServerBitmap* bitmap)
 }
 
 
+/**
+ * @brief Destructor; the buffer wrappers are freed by their ObjectDeleters.
+ */
 BitmapHWInterface::~BitmapHWInterface()
 {
 }
 
 
+/**
+ * @brief Initialises the interface, optionally allocating a 32-bit back buffer.
+ *
+ * If the front buffer is not B_RGB32 / B_RGBA32 a 32-bit BBitmap-backed back
+ * buffer is allocated and primed with the front buffer's current contents
+ * so Painter (which only renders to 32-bit targets today) can still draw
+ * into a non-32-bit ServerBitmap.
+ *
+ * @retval B_OK         Initialisation succeeded.
+ * @return Other        Error from HWInterface::Initialize() or BitmapBuffer::InitCheck().
+ */
 status_t
 BitmapHWInterface::Initialize()
 {
@@ -72,6 +122,11 @@ BitmapHWInterface::Initialize()
 }
 
 
+/**
+ * @brief No-op shutdown; resources are released by destructors.
+ *
+ * @return Always B_OK.
+ */
 status_t
 BitmapHWInterface::Shutdown()
 {
@@ -79,6 +134,11 @@ BitmapHWInterface::Shutdown()
 }
 
 
+/**
+ * @brief Mode setting is not meaningful for a bitmap target.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::SetMode(const display_mode& mode)
 {
@@ -86,6 +146,11 @@ BitmapHWInterface::SetMode(const display_mode& mode)
 }
 
 
+/**
+ * @brief Returns a zero-initialised display_mode.
+ *
+ * @param mode Output mode; cleared to all zeros when non-NULL.
+ */
 void
 BitmapHWInterface::GetMode(display_mode* mode)
 {
@@ -94,6 +159,11 @@ BitmapHWInterface::GetMode(display_mode* mode)
 }
 
 
+/**
+ * @brief Bitmap targets have no underlying accelerant.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::GetDeviceInfo(accelerant_device_info* info)
 {
@@ -101,6 +171,11 @@ BitmapHWInterface::GetDeviceInfo(accelerant_device_info* info)
 }
 
 
+/**
+ * @brief Bitmap targets have no display modes to report.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::GetModeList(display_mode** modes, uint32 *count)
 {
@@ -108,6 +183,11 @@ BitmapHWInterface::GetModeList(display_mode** modes, uint32 *count)
 }
 
 
+/**
+ * @brief Bitmap targets have no pixel clock to report.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::GetPixelClockLimits(display_mode* mode, uint32* low,
 	uint32* high)
@@ -116,6 +196,11 @@ BitmapHWInterface::GetPixelClockLimits(display_mode* mode, uint32* low,
 }
 
 
+/**
+ * @brief Bitmap targets have no display timing constraints.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::GetTimingConstraints(display_timing_constraints* constraints)
 {
@@ -123,6 +208,11 @@ BitmapHWInterface::GetTimingConstraints(display_timing_constraints* constraints)
 }
 
 
+/**
+ * @brief Bitmap targets cannot propose modes.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::ProposeMode(display_mode* candidate, const display_mode* low,
 	const display_mode* high)
@@ -131,6 +221,11 @@ BitmapHWInterface::ProposeMode(display_mode* candidate, const display_mode* low,
 }
 
 
+/**
+ * @brief Bitmap targets have no retrace semaphore.
+ *
+ * @return Always -1.
+ */
 sem_id
 BitmapHWInterface::RetraceSemaphore()
 {
@@ -138,6 +233,11 @@ BitmapHWInterface::RetraceSemaphore()
 }
 
 
+/**
+ * @brief Bitmap targets do not retrace.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::WaitForRetrace(bigtime_t timeout)
 {
@@ -145,6 +245,11 @@ BitmapHWInterface::WaitForRetrace(bigtime_t timeout)
 }
 
 
+/**
+ * @brief Bitmap targets do not implement DPMS.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::SetDPMSMode(uint32 state)
 {
@@ -152,6 +257,11 @@ BitmapHWInterface::SetDPMSMode(uint32 state)
 }
 
 
+/**
+ * @brief Bitmap targets have no DPMS state.
+ *
+ * @return Always 0.
+ */
 uint32
 BitmapHWInterface::DPMSMode()
 {
@@ -159,6 +269,11 @@ BitmapHWInterface::DPMSMode()
 }
 
 
+/**
+ * @brief Bitmap targets advertise no DPMS capabilities.
+ *
+ * @return Always 0.
+ */
 uint32
 BitmapHWInterface::DPMSCapabilities()
 {
@@ -166,6 +281,11 @@ BitmapHWInterface::DPMSCapabilities()
 }
 
 
+/**
+ * @brief Bitmap targets do not have a display brightness control.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::SetBrightness(float)
 {
@@ -173,6 +293,11 @@ BitmapHWInterface::SetBrightness(float)
 }
 
 
+/**
+ * @brief Bitmap targets do not have a display brightness control.
+ *
+ * @retval B_UNSUPPORTED Always.
+ */
 status_t
 BitmapHWInterface::GetBrightness(float*)
 {
@@ -180,6 +305,11 @@ BitmapHWInterface::GetBrightness(float*)
 }
 
 
+/**
+ * @brief Returns the BitmapBuffer wrapping the supplied ServerBitmap.
+ *
+ * @return Pointer to the front buffer; lifetime tied to this interface.
+ */
 RenderingBuffer*
 BitmapHWInterface::FrontBuffer() const
 {
@@ -187,6 +317,11 @@ BitmapHWInterface::FrontBuffer() const
 }
 
 
+/**
+ * @brief Returns the optional 32-bit back buffer.
+ *
+ * @return Back buffer pointer when one was allocated, NULL otherwise.
+ */
 RenderingBuffer*
 BitmapHWInterface::BackBuffer() const
 {
@@ -194,6 +329,14 @@ BitmapHWInterface::BackBuffer() const
 }
 
 
+/**
+ * @brief Reports whether the interface ended up double-buffered.
+ *
+ * The interface is double-buffered iff a 32-bit back buffer was allocated
+ * during Initialize() to convert away from a non-32-bit front buffer.
+ *
+ * @return True when a back buffer is in use.
+ */
 bool
 BitmapHWInterface::IsDoubleBuffered() const
 {

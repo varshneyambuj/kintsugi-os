@@ -1,16 +1,45 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Michael Lotz <mmlr@mlotz.ch>
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Michael Lotz <mmlr@mlotz.ch>
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
 
 
-/*!	BView/BDirectWindow/Accelerant combination HWInterface implementation
-*/
+/**
+ * @file DWindowHWInterface.cpp
+ * @brief HWInterface that nests the app_server frame buffer inside a
+ *        BDirectWindow plus a real graphics accelerant.
+ *
+ * Used by "app_server -test" mode: rather than driving the screen directly,
+ * the test server opens an accelerant for a graphics card, hosts a
+ * BDirectWindow on the running desktop, and exposes that window's direct
+ * frame buffer to the drawing engine via DWindowBuffer. Input events arrive
+ * through the embedded DView and are forwarded to the input port using the
+ * same wire format as the real input_server.
+ */
 
 
 #include "DWindowHWInterface.h"
@@ -57,6 +86,8 @@
 #endif
 
 
+/** @brief 16x16 fully transparent cursor shape used to hide the host
+           desktop's pointer while it is over the app_server test window. */
 const unsigned char kEmptyCursor[] = { 16, 1, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -64,6 +95,12 @@ const unsigned char kEmptyCursor[] = { 16, 1, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 
+/**
+ * @brief Thread entry point that runs the embedded BApplication's loop.
+ *
+ * @param cookie  Opaque pointer expected to be a BApplication*.
+ * @return        Always 0; the application is destroyed by its caller.
+ */
 static int32
 run_app_thread(void* cookie)
 {
@@ -78,6 +115,8 @@ run_app_thread(void* cookie)
 //#define INPUTSERVER_TEST_MODE 1
 
 
+/** @brief BView hosted inside the test app_server window that captures
+           input messages and forwards them to the input port. */
 class DView : public BView {
 public:
 								DView(BRect bounds);
@@ -90,6 +129,8 @@ private:
 			port_id				fInputPort;
 };
 
+/** @brief BDirectWindow subclass that owns the embedded DView and lets the
+           HWInterface know when the host moves the window. */
 class DWindow : public BWindow {
 public:
 								DWindow(BRect frame,
@@ -108,6 +149,8 @@ private:
 	DWindowBuffer*				fBuffer;
 };
 
+/** @brief BMessageFilter that intercepts raw input events on the embedded
+           DView and forwards them as input_server-format messages. */
 class DirectMessageFilter : public BMessageFilter {
 public:
 								DirectMessageFilter(DView* view);
@@ -122,6 +165,15 @@ private:
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the input-capture view spanning the window bounds.
+ *
+ * Creates the input port (named SERVER_INPUT_PORT or "ViewInputDevice"
+ * depending on INPUTSERVER_TEST_MODE) and, when input-server emulation is
+ * enabled at compile time, attaches a DirectMessageFilter.
+ *
+ * @param bounds  View bounds in window coordinates.
+ */
 DView::DView(BRect bounds)
 	:
 	BView(bounds, "graphics card view", B_FOLLOW_ALL, 0)
@@ -139,15 +191,27 @@ DView::DView(BRect bounds)
 }
 
 
+/**
+ * @brief Destroys the view; the input port is intentionally left for the
+ *        next launch to reuse.
+ */
 DView::~DView()
 {
 }
 
 
-/*!	This function emulates the Input Server by sending the *exact* same kind of
-	messages to the server's port. Being we're using a regular window, it would
-	make little sense to do anything else.
-*/
+/**
+ * @brief Forwards a window event to the app_server input port verbatim.
+ *
+ * Emulates the input_server by re-flattening the message and writing it to
+ * the captured input port. Fields that would confuse the server's own
+ * message dispatch are stripped before flattening.
+ *
+ * @param message  Message to forward, or NULL to forward the window's
+ *                 current message.
+ * @note  Silently drops the message if no current message exists or if
+ *        flattening fails.
+ */
 void
 DView::ForwardMessage(BMessage* message)
 {
@@ -174,6 +238,12 @@ DView::ForwardMessage(BMessage* message)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a filter that observes every message delivered to the
+ *        view, regardless of source.
+ *
+ * @param view  Target view whose ForwardMessage() will be invoked.
+ */
 DirectMessageFilter::DirectMessageFilter(DView* view)
 	:
 	BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE),
@@ -182,6 +252,18 @@ DirectMessageFilter::DirectMessageFilter(DView* view)
 }
 
 
+/**
+ * @brief Intercepts mouse and keyboard events and ships them through the
+ *        view's input-port forwarder.
+ *
+ * On B_MOUSE_MOVED into the view, also installs an empty cursor so the host
+ * desktop's pointer is hidden while inside the test window.
+ *
+ * @param message  Incoming message.
+ * @param target   Unused output target slot.
+ * @return         B_SKIP_MESSAGE if the message was forwarded, otherwise
+ *                 B_DISPATCH_MESSAGE so the view handles it normally.
+ */
 filter_result
 DirectMessageFilter::Filter(BMessage* message, BHandler** target)
 {
@@ -218,6 +300,18 @@ DirectMessageFilter::Filter(BMessage* message, BHandler** target)
 //	#pragma mark -
 
 
+/**
+ * @brief Builds the test app_server host window with an embedded DView.
+ *
+ * The window is non-zoomable, non-resizable, and non-movable so the
+ * app_server's frame buffer geometry stays fixed for the duration of the
+ * session.
+ *
+ * @param frame      Initial window frame in screen coordinates.
+ * @param interface  Owning HWInterface notified about frame moves.
+ * @param buffer     Buffer that mirrors the direct frame buffer (currently
+ *                   only stored for diagnostic use).
+ */
 DWindow::DWindow(BRect frame, DWindowHWInterface* interface,
 		DWindowBuffer* buffer)
 	:
@@ -234,11 +328,21 @@ DWindow::DWindow(BRect frame, DWindowHWInterface* interface,
 }
 
 
+/**
+ * @brief Destroys the window; the embedded view is owned by the BWindow.
+ */
 DWindow::~DWindow()
 {
 }
 
 
+/**
+ * @brief Asks the app_server's main port to shut down rather than quitting
+ *        this window directly.
+ *
+ * @return     Always false; the window stays alive and is destroyed only
+ *             when the app_server itself tears it down.
+ */
 bool
 DWindow::QuitRequested()
 {
@@ -284,6 +388,12 @@ DWindow::DirectConnected(direct_buffer_info* info)
 */
 
 
+/**
+ * @brief Notifies the HWInterface that the host moved the window so its
+ *        frame buffer offset can be recomputed.
+ *
+ * @param newOffset  New top-left screen position of the window.
+ */
 void
 DWindow::FrameMoved(BPoint newOffset)
 {
@@ -294,8 +404,18 @@ DWindow::FrameMoved(BPoint newOffset)
 //	#pragma mark -
 
 
+/** @brief Default capacity hint used when sizing accelerant parameter
+           buffers (currently unused but retained for parity with other
+           HWInterface backends). */
 const int32 kDefaultParamsCount = 64;
 
+/**
+ * @brief Constructs the interface and prepares accelerant hook slots.
+ *
+ * All accelerant function pointers start out NULL; they are populated by
+ * Initialize() through _OpenAccelerant() and _SetupDefaultHooks(). The
+ * default desired mode is 800x600 B_RGBA32 at offset (50, 50).
+ */
 DWindowHWInterface::DWindowHWInterface()
 	:
 	HWInterface(),
@@ -336,6 +456,9 @@ DWindowHWInterface::DWindowHWInterface()
 }
 
 
+/**
+ * @brief Tears down the host window and the embedded BApplication.
+ */
 DWindowHWInterface::~DWindowHWInterface()
 {
 	if (fWindow) {
@@ -349,6 +472,17 @@ DWindowHWInterface::~DWindowHWInterface()
 }
 
 
+/**
+ * @brief Opens the first available graphics device and clones its accelerant.
+ *
+ * Iterates over /dev/graphics entries (skipping the VESA/framebuffer fallback
+ * unless nothing else opens) and probes each one until both the device and
+ * its accelerant load successfully.
+ *
+ * @return     B_OK on success; the underlying error code otherwise.
+ * @retval B_OK            A device and accelerant were initialised.
+ * @retval B_ENTRY_NOT_FOUND  No usable graphics device found.
+ */
 status_t
 DWindowHWInterface::Initialize()
 {
@@ -375,17 +509,20 @@ DWindowHWInterface::Initialize()
 }
 
 
-/*!	\brief Opens a graphics device for read-write access
-	\param deviceNumber Number identifying which graphics card to open (1 for
-		first card)
-	\return The file descriptor for the opened graphics device
-
-	The deviceNumber is relative to the number of graphics devices that can be
-	successfully opened.  One represents the first card that can be successfully
-	opened (not necessarily the first one listed in the directory).
-	Graphics drivers must be able to be opened more than once, so we really get
-	the first working entry.
-*/
+/**
+ * @brief Opens a graphics device for read-write access.
+ *
+ * The @a deviceNumber is relative to the number of graphics devices that
+ * can be successfully opened. One represents the first card that opens
+ * (not necessarily the first directory entry). Graphics drivers must be
+ * openable more than once, so this iterates until a working entry is found.
+ * Falls back to /dev/graphics/vesa or /dev/graphics/framebuffer when nothing
+ * else is available and @a deviceNumber is 1.
+ *
+ * @param deviceNumber  1-based index of the graphics card to open.
+ * @return              File descriptor on success, or B_ENTRY_NOT_FOUND
+ *                      when no matching device exists.
+ */
 int
 DWindowHWInterface::_OpenGraphicsDevice(int deviceNumber)
 {
@@ -438,6 +575,19 @@ DWindowHWInterface::_OpenGraphicsDevice(int deviceNumber)
 }
 
 
+/**
+ * @brief Loads the accelerant add-on for the given graphics device and
+ *        clones its primary instance.
+ *
+ * Queries the accelerant signature via ioctl, searches the user/system add-on
+ * directories for a matching .so, loads it, looks up B_ACCELERANT_ENTRY_POINT,
+ * clones the accelerant, then resolves the standard hook table via
+ * _SetupDefaultHooks() and refreshes the frame buffer config.
+ *
+ * @param device  File descriptor of the graphics device.
+ * @return        B_OK on success, B_ERROR on any failure (the partially
+ *                loaded image is unloaded before returning).
+ */
 status_t
 DWindowHWInterface::_OpenAccelerant(int device)
 {
@@ -548,6 +698,16 @@ sprintf((char*)cloneInfoData, "graphics/%s", fCardNameInDevFS.String());
 }
 
 
+/**
+ * @brief Resolves the required and optional accelerant hook pointers.
+ *
+ * Required hooks (acquire/release engine, get/set mode, frame buffer config,
+ * pixel-clock limits, mode list) must all resolve or the function fails.
+ * Optional hooks (timing constraints, propose mode, fill/invert/blit,
+ * cursor) are stored when present and left NULL otherwise.
+ *
+ * @return     B_OK when every required hook is present, B_ERROR otherwise.
+ */
 status_t
 DWindowHWInterface::_SetupDefaultHooks()
 {
@@ -596,6 +756,12 @@ DWindowHWInterface::_SetupDefaultHooks()
 }
 
 
+/**
+ * @brief Re-queries the accelerant frame buffer config and rebinds the front
+ *        buffer at the configured (X, Y) offset.
+ *
+ * @return     B_OK on success, B_ERROR if the accelerant call fails.
+ */
 status_t
 DWindowHWInterface::_UpdateFrameBufferConfig()
 {
@@ -612,6 +778,12 @@ DWindowHWInterface::_UpdateFrameBufferConfig()
 }
 
 
+/**
+ * @brief Uninitialises the accelerant, unloads the add-on, and closes the
+ *        graphics device.
+ *
+ * @return     Always B_OK.
+ */
 status_t
 DWindowHWInterface::Shutdown()
 {
@@ -633,6 +805,18 @@ DWindowHWInterface::Shutdown()
 }
 
 
+/**
+ * @brief Switches the test interface to the requested display mode.
+ *
+ * Validates @a mode against the supported list, lazily creates the
+ * BApplication and host DWindow on first call, resizes the existing window
+ * on subsequent calls, then refreshes the frame buffer config.
+ *
+ * @param mode  Desired width/height/colour-space tuple.
+ * @return      B_OK on success, B_BAD_VALUE if @a mode is unsupported,
+ *              B_NO_MEMORY on allocation failure, or any error returned
+ *              from spawning the embedded BApplication thread.
+ */
 status_t
 DWindowHWInterface::SetMode(const display_mode& mode)
 {
@@ -726,6 +910,11 @@ DWindowHWInterface::SetMode(const display_mode& mode)
 }
 
 
+/**
+ * @brief Copies the currently active display mode into @a mode.
+ *
+ * @param mode  Destination; may be NULL, in which case the call is a no-op.
+ */
 void
 DWindowHWInterface::GetMode(display_mode* mode)
 {
@@ -736,6 +925,16 @@ DWindowHWInterface::GetMode(display_mode* mode)
 }
 
 
+/**
+ * @brief Fills out a synthetic accelerant_device_info for the test driver.
+ *
+ * The values are decorative since this interface is purely software-driven
+ * inside a host window.
+ *
+ * @param info  Destination structure; populated only when the read lock can
+ *              be taken.
+ * @return      Always B_OK.
+ */
 status_t
 DWindowHWInterface::GetDeviceInfo(accelerant_device_info* info)
 {
@@ -756,6 +955,16 @@ DWindowHWInterface::GetDeviceInfo(accelerant_device_info* info)
 }
 
 
+/**
+ * @brief Returns the canned list of supported display modes.
+ *
+ * Builds an array of common resolutions in B_RGB32 and returns it. The
+ * caller takes ownership and frees with delete[].
+ *
+ * @param _modes  Output pointer receiving the newly allocated array.
+ * @param _count  Output count of modes in @a _modes.
+ * @return        B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 DWindowHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 {
@@ -812,6 +1021,14 @@ DWindowHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 }
 
 
+/**
+ * @brief Pixel-clock limits are not modelled by this software driver.
+ *
+ * @param mode  Mode in question (ignored).
+ * @param low   Output low limit (ignored).
+ * @param high  Output high limit (ignored).
+ * @return      Always B_ERROR.
+ */
 status_t
 DWindowHWInterface::GetPixelClockLimits(display_mode* mode, uint32* low,
 	uint32* high)
@@ -820,6 +1037,12 @@ DWindowHWInterface::GetPixelClockLimits(display_mode* mode, uint32* low,
 }
 
 
+/**
+ * @brief Timing constraints are not modelled by this software driver.
+ *
+ * @param constraints  Output (ignored).
+ * @return             Always B_ERROR.
+ */
 status_t
 DWindowHWInterface::GetTimingConstraints(
 	display_timing_constraints* constraints)
@@ -828,6 +1051,17 @@ DWindowHWInterface::GetTimingConstraints(
 }
 
 
+/**
+ * @brief Accepts any proposed mode without modification.
+ *
+ * Because the interface does not drive real hardware it can support any
+ * candidate mode within reason.
+ *
+ * @param candidate  Mode the client wants to use (untouched).
+ * @param low        Lower bound (ignored).
+ * @param high       Upper bound (ignored).
+ * @return           Always B_OK.
+ */
 status_t
 DWindowHWInterface::ProposeMode(display_mode* candidate,
 	const display_mode* low, const display_mode* high)
@@ -840,6 +1074,11 @@ DWindowHWInterface::ProposeMode(display_mode* candidate,
 }
 
 
+/**
+ * @brief No retrace semaphore is exposed by the test driver.
+ *
+ * @return     Always -1.
+ */
 sem_id
 DWindowHWInterface::RetraceSemaphore()
 {
@@ -847,6 +1086,12 @@ DWindowHWInterface::RetraceSemaphore()
 }
 
 
+/**
+ * @brief Waits for vertical retrace on the host BScreen.
+ *
+ * @param timeout  Maximum wait in microseconds; defaults to infinite.
+ * @return         The status_t returned by BScreen::WaitForRetrace().
+ */
 status_t
 DWindowHWInterface::WaitForRetrace(bigtime_t timeout)
 {
@@ -856,6 +1101,12 @@ DWindowHWInterface::WaitForRetrace(bigtime_t timeout)
 }
 
 
+/**
+ * @brief Forwards a DPMS state change to the host BScreen.
+ *
+ * @param state  Desired DPMS state.
+ * @return       The status_t returned by BScreen::SetDPMS().
+ */
 status_t
 DWindowHWInterface::SetDPMSMode(uint32 state)
 {
@@ -865,6 +1116,11 @@ DWindowHWInterface::SetDPMSMode(uint32 state)
 }
 
 
+/**
+ * @brief Returns the host BScreen's current DPMS state.
+ *
+ * @return     DPMS state bitmask.
+ */
 uint32
 DWindowHWInterface::DPMSMode()
 {
@@ -874,6 +1130,11 @@ DWindowHWInterface::DPMSMode()
 }
 
 
+/**
+ * @brief Returns the DPMS capability bitmask from the host BScreen.
+ *
+ * @return     Bitmask of supported DPMS modes.
+ */
 uint32
 DWindowHWInterface::DPMSCapabilities()
 {
@@ -883,6 +1144,12 @@ DWindowHWInterface::DPMSCapabilities()
 }
 
 
+/**
+ * @brief Forwards a brightness change to the host BScreen.
+ *
+ * @param brightness  Brightness in [0.0, 1.0].
+ * @return            The status_t returned by BScreen::SetBrightness().
+ */
 status_t
 DWindowHWInterface::SetBrightness(float brightness)
 {
@@ -892,6 +1159,13 @@ DWindowHWInterface::SetBrightness(float brightness)
 }
 
 
+/**
+ * @brief Reads the host BScreen's current brightness.
+ *
+ * @param brightness  Output, populated with the current brightness in
+ *                    [0.0, 1.0].
+ * @return            The status_t returned by BScreen::GetBrightness().
+ */
 status_t
 DWindowHWInterface::GetBrightness(float* brightness)
 {
@@ -901,6 +1175,11 @@ DWindowHWInterface::GetBrightness(float* brightness)
 }
 
 
+/**
+ * @brief Returns the front buffer (the host window's direct frame buffer).
+ *
+ * @return     RenderingBuffer pointing at the live pixels.
+ */
 RenderingBuffer*
 DWindowHWInterface::FrontBuffer() const
 {
@@ -908,6 +1187,12 @@ DWindowHWInterface::FrontBuffer() const
 }
 
 
+/**
+ * @brief Returns the back buffer; same as FrontBuffer() since this driver
+ *        is single-buffered.
+ *
+ * @return     The same RenderingBuffer FrontBuffer() returns.
+ */
 RenderingBuffer*
 DWindowHWInterface::BackBuffer() const
 {
@@ -915,6 +1200,11 @@ DWindowHWInterface::BackBuffer() const
 }
 
 
+/**
+ * @brief Reports that the driver is single-buffered.
+ *
+ * @return     Always false.
+ */
 bool
 DWindowHWInterface::IsDoubleBuffered() const
 {
@@ -922,6 +1212,12 @@ DWindowHWInterface::IsDoubleBuffered() const
 }
 
 
+/**
+ * @brief Invalidates a frame rectangle through the base implementation.
+ *
+ * @param frame  Rectangle to invalidate.
+ * @return       The status_t returned by HWInterface::Invalidate().
+ */
 status_t
 DWindowHWInterface::Invalidate(const BRect& frame)
 {
@@ -929,6 +1225,16 @@ DWindowHWInterface::Invalidate(const BRect& frame)
 }
 
 
+/**
+ * @brief Updates the (X, Y) origin used when binding the front buffer.
+ *
+ * Called by DWindow::FrameMoved() so the buffer follows the host window.
+ *
+ * @param left  New X offset in pixels.
+ * @param top   New Y offset in pixels.
+ * @todo  Trigger DrawingEngine::Update() so the frame buffer change is
+ *        actually picked up by clients.
+ */
 void
 DWindowHWInterface::SetOffset(int32 left, int32 top)
 {

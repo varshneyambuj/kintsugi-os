@@ -1,10 +1,29 @@
 /*
- * Copyright 2005-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005-2009, Haiku.
+ * Original author: Stephan Aßmus.
  */
+
+/** @file ViewHWInterface.h
+    @brief HWInterface implementation that renders into a BView/BWindow for
+           the test/debug app_server. */
+
 #ifndef VIEW_GRAPHICS_CARD_H
 #define VIEW_GRAPHICS_CARD_H
 
@@ -18,6 +37,9 @@ class BBitmapBuffer;
 class CardWindow;
 
 
+/** @brief HWInterface that uses a BBitmap-backed BView inside a regular
+           BWindow as the "screen", allowing app_server to run nested in the
+           host desktop without needing a real graphics device. */
 class ViewHWInterface : public HWInterface {
 public:
 								ViewHWInterface();

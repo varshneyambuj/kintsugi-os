@@ -1,14 +1,41 @@
 /*
- * Copyright 2001-2016, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2016, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
 
-/*!	Manages font families and styles */
+/**
+ * @file FontManager.cpp
+ * @brief Implementation of the abstract FontManager catalog base class.
+ *
+ * Holds the family list, the (familyID, styleID) hash, the parallel
+ * "delisted" hash for styles still referenced after removal, and the
+ * shared FreeType library handle. Subclasses (GlobalFontManager,
+ * AppFontManager) layer locking and discovery on top.
+ */
 
 
 #include "FontManager.h"
@@ -28,9 +55,13 @@
 #endif
 
 
+/** @brief Process-wide FreeType library handle initialized by GlobalFontManager. */
 FT_Library gFreeTypeLibrary;
 
 
+/**
+ * @brief Comparator used by BinaryInsert / BinarySearch over family names.
+ */
 static int
 compare_font_families(const FontFamily* a, const FontFamily* b)
 {
@@ -41,6 +72,9 @@ compare_font_families(const FontFamily* a, const FontFamily* b)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an empty manager with a fresh revision counter.
+ */
 FontManager::FontManager()
 	:
 	fFamilies(20),
@@ -50,17 +84,25 @@ FontManager::FontManager()
 }
 
 
+/**
+ * @brief Destroys the manager and releases all owned fonts.
+ */
 FontManager::~FontManager()
 {
 	_RemoveAllFonts();
 }
 
 
-/*!	\brief Finds and returns the first valid charmap in a font
-
-	\param face Font handle obtained from FT_Load_Face()
-	\return An FT_CharMap or NULL if unsuccessful
-*/
+/**
+ * @brief Returns the first usable Unicode-capable charmap from @a face.
+ *
+ * Prefers Microsoft (platform 3) Symbol or Unicode encodings, then
+ * Apple Unicode (platform 1), then Apple Roman (platform 0); other
+ * platforms are skipped.
+ *
+ * @param face  Font handle obtained from FT_Load_Face().
+ * @return  Pointer to the chosen FT_CharMap, or NULL when none qualifies.
+ */
 FT_CharMap
 FontManager::_GetSupportedCharmap(const FT_Face& face)
 {
@@ -96,9 +138,11 @@ FontManager::_GetSupportedCharmap(const FT_Face& face)
 
 
 
-/*!	\brief Counts the number of font families available
-	\return The number of unique font families currently available
-*/
+/**
+ * @brief Returns the number of font families known to the manager.
+ *
+ * @return Family count.
+ */
 int32
 FontManager::CountFamilies()
 {
@@ -106,10 +150,12 @@ FontManager::CountFamilies()
 }
 
 
-/*!	\brief Counts the number of styles available in a font family
-	\param family Name of the font family to scan
-	\return The number of font styles currently available for the font family
-*/
+/**
+ * @brief Returns the number of styles in the named family.
+ *
+ * @param familyName  Name of the family to scan.
+ * @return  Style count, or 0 when @a familyName is unknown.
+ */
 int32
 FontManager::CountStyles(const char *familyName)
 {
@@ -121,10 +167,12 @@ FontManager::CountStyles(const char *familyName)
 }
 
 
-/*!	\brief Counts the number of styles available in a font family
-	\param family Name of the font family to scan
-	\return The number of font styles currently available for the font family
-*/
+/**
+ * @brief Returns the number of styles in the family identified by @a familyID.
+ *
+ * @param familyID  Numeric family ID.
+ * @return  Style count, or 0 when @a familyID is unknown.
+ */
 int32
 FontManager::CountStyles(uint16 familyID)
 {
@@ -136,6 +184,14 @@ FontManager::CountStyles(uint16 familyID)
 }
 
 
+/**
+ * @brief Returns the family at position @a index in the sorted family list.
+ *
+ * @param index  Zero-based index.
+ * @return Family pointer, or NULL when out of range.
+ *
+ * @note  Caller must hold the manager lock.
+ */
 FontFamily*
 FontManager::FamilyAt(int32 index) const
 {
@@ -145,10 +201,12 @@ FontManager::FamilyAt(int32 index) const
 }
 
 
-/*!	\brief Locates a FontFamily object by name
-	\param name The family to find
-	\return Pointer to the specified family or NULL if not found.
-*/
+/**
+ * @brief Looks up a FontFamily by name.
+ *
+ * @param name  Family name to find; NULL is permitted and returns NULL.
+ * @return Family pointer, or NULL when no matching family exists.
+ */
 FontFamily*
 FontManager::GetFamily(const char* name)
 {
@@ -159,6 +217,15 @@ FontManager::GetFamily(const char* name)
 }
 
 
+/**
+ * @brief Looks up a FontFamily by ID, with a fast-path on (familyID, 0).
+ *
+ * Probes the (familyID, 0) hash slot first since style 0 is the most
+ * common; falls back to a linear search if style 0 has been delisted.
+ *
+ * @param familyID  Numeric family ID.
+ * @return Family pointer, or NULL when @a familyID is unknown.
+ */
 FontFamily*
 FontManager::GetFamily(uint16 familyID) const
 {
@@ -172,6 +239,13 @@ FontManager::GetFamily(uint16 familyID) const
 }
 
 
+/**
+ * @brief Returns style @a index of the named family.
+ *
+ * @param familyName  Family name to look up.
+ * @param index       Zero-based style index.
+ * @return Style pointer, or NULL on lookup failure.
+ */
 FontStyle*
 FontManager::GetStyleByIndex(const char* familyName, int32 index)
 {
@@ -183,6 +257,13 @@ FontManager::GetStyleByIndex(const char* familyName, int32 index)
 }
 
 
+/**
+ * @brief Returns style @a index of the family identified by @a familyID.
+ *
+ * @param familyID  Numeric family ID.
+ * @param index     Zero-based style index.
+ * @return Style pointer, or NULL on lookup failure.
+ */
 FontStyle*
 FontManager::GetStyleByIndex(uint16 familyID, int32 index)
 {
@@ -194,11 +275,18 @@ FontManager::GetStyleByIndex(uint16 familyID, int32 index)
 }
 
 
-/*!	\brief Retrieves the FontStyle object
-	\param family ID for the font's family
-	\param style ID of the font's style
-	\return The FontStyle having those attributes or NULL if not available
-*/
+/**
+ * @brief Looks up a FontStyle by composite key.
+ *
+ * Hits the live style table first, then the delisted table so callers
+ * can still resolve a style that has been removed but is still referenced.
+ *
+ * @param familyID  Numeric family ID.
+ * @param styleID   Numeric style ID.
+ * @return Matching FontStyle, or NULL when neither table holds the key.
+ *
+ * @note  Caller must hold the manager lock.
+ */
 FontStyle*
 FontManager::GetStyle(uint16 familyID, uint16 styleID) const
 {
@@ -213,18 +301,22 @@ FontManager::GetStyle(uint16 familyID, uint16 styleID) const
 }
 
 
-/*!	\brief Retrieves the FontStyle object that comes closest to the one
-		specified.
-
-	\param family The font's family or NULL in which case \a familyID is used
-	\param style The font's style or NULL in which case \a styleID is used
-	\param familyID will only be used if \a family is NULL (or empty)
-	\param styleID will only be used if \a family and \a style are NULL (or empty)
-	\param face is used to specify the style if both \a style is NULL or empty
-		and styleID is 0xffff.
-
-	\return The FontStyle having those attributes or NULL if not available
-*/
+/**
+ * @brief Resolves the closest matching style for a flexible request.
+ *
+ * Looks up the family by name first, otherwise by ID; then resolves the
+ * style by name, otherwise by face mask. When everything but @a styleID
+ * is empty the call collapses to GetStyle(familyID, styleID).
+ *
+ * @param familyName  Family name, or NULL/"" to use @a familyID.
+ * @param styleName   Style name, or NULL/"" to use @a styleID / @a face.
+ * @param familyID    Family ID fallback when @a familyName is empty.
+ * @param styleID     Style ID fallback when both names are empty.
+ * @param face        Face mask used as a last-resort selector.
+ * @return The closest FontStyle, or NULL when no family matches.
+ *
+ * @note  Caller must hold the manager lock.
+ */
 FontStyle*
 FontManager::GetStyle(const char* familyName, const char* styleName,
 	uint16 familyID, uint16 styleID, uint16 face)
@@ -258,9 +350,15 @@ FontManager::GetStyle(const char* familyName, const char* styleName,
 }
 
 
-/*!	\brief If you don't find your preferred font style, but are anxious
-		to have one fitting your needs, you may want to use this method.
-*/
+/**
+ * @brief Cross-family search for the first style whose Face() matches @a face.
+ *
+ * Useful when no family preference exists but the caller wants any
+ * available rendering of, for example, B_BOLD_FACE | B_ITALIC_FACE.
+ *
+ * @param face  Desired face mask.
+ * @return First matching FontStyle, or NULL when none qualifies.
+ */
 FontStyle*
 FontManager::FindStyleMatchingFace(uint16 face) const
 {
@@ -277,10 +375,18 @@ FontManager::FindStyleMatchingFace(uint16 face) const
 }
 
 
-/*!	\brief This call is used by the FontStyle class - and the FontStyle class
-		only - to remove itself from the font manager.
-	At this point, the style is already no longer available to the user.
-*/
+/**
+ * @brief Removes @a style from the family list and the delisted hash.
+ *
+ * Called only by the FontStyle destructor; by the time it runs the
+ * style is already invisible to user code, so we just update the
+ * tables consistently.
+ *
+ * @param style  Style being torn down.
+ *
+ * @note  Caller must hold the manager lock.
+ * @warning Reserved for FontStyle's own use; do not invoke from elsewhere.
+ */
 void
 FontManager::RemoveStyle(FontStyle* style)
 {
@@ -295,6 +401,14 @@ FontManager::RemoveStyle(FontStyle* style)
 }
 
 
+/**
+ * @brief Returns the monotonic catalog revision counter.
+ *
+ * Bumped on every successful add or remove; clients (BFont) poll this
+ * to know when their cached family/style lists are stale.
+ *
+ * @return Current revision number.
+ */
 uint32
 FontManager::Revision()
 {
@@ -302,6 +416,26 @@ FontManager::Revision()
 }
 
 
+/**
+ * @brief Registers a FreeType face under (familyID, styleID).
+ *
+ * Creates a new FontFamily if @a face's family name is unknown, refuses
+ * a re-add of the same family/style (returns @c B_NAME_IN_USE), and
+ * otherwise wraps the face in a FontStyle, links it into the family,
+ * and indexes it in the live style hash.
+ *
+ * @param face      FreeType face; ownership transfers on success and is
+ *                  released by FT_Done_Face on failure paths.
+ * @param nodeRef   node_ref of the on-disk font file.
+ * @param path      File path to the font.
+ * @param familyID  Output: assigned family ID on success.
+ * @param styleID   Output: assigned style ID on success.
+ * @retval B_OK            On success.
+ * @retval B_NAME_IN_USE   The (family, style) pair was already present.
+ * @retval B_NO_MEMORY     Allocation of family or style failed.
+ *
+ * @note  Caller must hold the manager lock.
+ */
 status_t
 FontManager::_AddFont(FT_Face face, node_ref nodeRef, const char* path,
 	uint16& familyID, uint16& styleID)
@@ -350,6 +484,20 @@ FontManager::_AddFont(FT_Face face, node_ref nodeRef, const char* path,
 }
 
 
+/**
+ * @brief Removes a style from the live tables and stashes it as delisted.
+ *
+ * The style continues to exist (kept alive by other references) until
+ * the last holder drops it; an eventual FontStyle destructor then
+ * calls RemoveStyle() to clean up the delisted entry.
+ *
+ * @param familyID  Family ID of the style.
+ * @param styleID   Style ID of the style.
+ * @return  Pointer to the removed style on success, or NULL when the
+ *          (familyID, styleID) pair was unknown.
+ *
+ * @note  Caller must hold the manager lock.
+ */
 FontStyle*
 FontManager::_RemoveFont(uint16 familyID, uint16 styleID)
 {
@@ -370,6 +518,13 @@ FontManager::_RemoveFont(uint16 familyID, uint16 styleID)
 }
 
 
+/**
+ * @brief Detaches every style from its family and clears all tables.
+ *
+ * Used by the destructor (and AppFontManager teardown) to break the
+ * style->family back-references before the families themselves go
+ * away, preventing dangling-pointer callbacks from late destructors.
+ */
 void
 FontManager::_RemoveAllFonts()
 {
@@ -390,6 +545,12 @@ FontManager::_RemoveAllFonts()
 }
 
 
+/**
+ * @brief Binary search of the sorted family list by name.
+ *
+ * @param name  Family name; NULL is permitted and returns NULL.
+ * @return  Family pointer, or NULL when @a name is unknown.
+ */
 FontFamily*
 FontManager::_FindFamily(const char* name) const
 {
@@ -402,6 +563,12 @@ FontManager::_FindFamily(const char* name) const
 }
 
 
+/**
+ * @brief Linear search of the family list by numeric ID.
+ *
+ * @param familyID  Numeric family ID.
+ * @return  Family pointer, or NULL when @a familyID is unknown.
+ */
 FontFamily*
 FontManager::_FindFamily(uint16 familyID) const
 {
@@ -417,6 +584,14 @@ FontManager::_FindFamily(uint16 familyID) const
 }
 
 
+/**
+ * @brief Allocates the next ascending family/style ID.
+ *
+ * Subclasses (e.g. AppFontManager) may override to draw IDs from a
+ * different range so user fonts cannot collide with system fonts.
+ *
+ * @return Freshly allocated 16-bit ID.
+ */
 uint16
 FontManager::_NextID()
 {

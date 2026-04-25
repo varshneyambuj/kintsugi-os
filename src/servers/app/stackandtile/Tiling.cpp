@@ -1,10 +1,45 @@
 /*
- * Copyright 2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Clemens Zeidler <haiku@clemens-zeidler.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Clemens Zeidler <haiku@clemens-zeidler.de>
  */
+
+
+/**
+ * @file Tiling.cpp
+ * @brief Edge-tiling snapping behaviour for Stack and Tile.
+ *
+ * Implements SATTiling, the snapping policy that fits a dragged window into
+ * a free rectangular slot of an existing SATGroup. The algorithm walks every
+ * Crossing in the group, picks the ones whose distance to the drop window's
+ * frame is below kMaxMatchingDistance, then expands a rectangle until it hits
+ * other windows and scores it with _FreeAreaError so the closest size match
+ * wins.
+ *
+ * @see SATGroup, WindowArea, Crossing, SATSnappingBehaviour
+ */
+
 
 #include "Tiling.h"
 
@@ -26,6 +61,13 @@ using namespace std;
 #endif
 
 
+/**
+ * @brief Constructs the tiling behaviour bound to one SATWindow.
+ *
+ * Initialises the cached free-area tabs to NULL via _ResetSearchResults().
+ *
+ * @param window The window this behaviour represents during a SAT drag.
+ */
 SATTiling::SATTiling(SATWindow* window)
 	:
 	fSATWindow(window),
@@ -35,12 +77,24 @@ SATTiling::SATTiling(SATWindow* window)
 }
 
 
+/** @brief Destructor; no resources owned. */
 SATTiling::~SATTiling()
 {
 
 }
 
 
+/**
+ * @brief Looks for a free rectangular slot in @a group sized like this window.
+ *
+ * Resets any previous search, validates that the dragged window and the
+ * target group are tileable, then asks _FindFreeAreaInGroup() to locate a
+ * slot. On success the matched group is highlighted to preview the drop.
+ *
+ * @param group The candidate SATGroup currently being probed.
+ * @return true if a viable slot was found and highlighted.
+ * @note A window cannot tile into its own group; that case returns false.
+ */
 bool
 SATTiling::FindSnappingCandidates(SATGroup* group)
 {
@@ -63,6 +117,16 @@ SATTiling::FindSnappingCandidates(SATGroup* group)
 }
 
 
+/**
+ * @brief Commits the pending tiling gesture by inserting the window.
+ *
+ * Adds fSATWindow to fFreeAreaGroup using the four matched tabs, then
+ * triggers a re-layout on the first window of the new group so the solver
+ * positions every member. The search state is cleared either way.
+ *
+ * @return true if the window was added and the layout was re-solved, false
+ *         if no slot was pending or the insertion failed.
+ */
 bool
 SATTiling::JoinCandidates()
 {
@@ -82,6 +146,14 @@ SATTiling::JoinCandidates()
 }
 
 
+/**
+ * @brief Detaches this window from its group when the look becomes untileable.
+ *
+ * Removes the window from its current SATGroup if the new look (e.g. borderless)
+ * disqualifies it from tiling.
+ *
+ * @param look The new window_look reported by the server window.
+ */
 void
 SATTiling::WindowLookChanged(window_look look)
 {
@@ -93,6 +165,15 @@ SATTiling::WindowLookChanged(window_look look)
 }
 
 
+/**
+ * @brief Returns whether @a window's look permits edge-tiling.
+ *
+ * Accepts document, titled, floating, modal, and bordered looks; everything
+ * else (including borderless) is rejected.
+ *
+ * @param window The candidate window.
+ * @return true when the window can participate in tiling.
+ */
 bool
 SATTiling::_IsTileableWindow(Window* window)
 {
@@ -106,10 +187,19 @@ SATTiling::_IsTileableWindow(Window* window)
 		return true;
 	if (window->Look() == B_BORDERED_WINDOW_LOOK)
 		return true;
-	return false;	
+	return false;
 }
 
 
+/**
+ * @brief Tries every corner orientation when searching @a group for a slot.
+ *
+ * Calls the four-argument overload once per Corner::position_t and returns on
+ * the first success.
+ *
+ * @param group The candidate group.
+ * @return true if any corner orientation produced a usable slot.
+ */
 bool
 SATTiling::_FindFreeAreaInGroup(SATGroup* group)
 {
@@ -126,6 +216,18 @@ SATTiling::_FindFreeAreaInGroup(SATGroup* group)
 }
 
 
+/**
+ * @brief Finds a free area aligned to one specific corner of the drop window.
+ *
+ * Iterates over the group's vertical tabs and their crossings, asking
+ * _InteresstingCrossing() to filter candidates by distance, then
+ * _FindFreeArea() to grow a rectangle from each surviving crossing.
+ *
+ * @param group The candidate group.
+ * @param cor   Which corner of the dragged window is being matched at the
+ *              crossing.
+ * @return true if a slot was found and the fFreeAreaXxx tabs were set.
+ */
 bool
 SATTiling::_FindFreeAreaInGroup(SATGroup* group, Corner::position_t cor)
 {
@@ -151,10 +253,26 @@ SATTiling::_FindFreeAreaInGroup(SATGroup* group, Corner::position_t cor)
 }
 
 
+/** @brief Sentinel returned by distance heuristics when no match is possible. */
 const float kNoMatch = 999.f;
+/** @brief Maximum tolerated distance, in pixels, between window edge and tab. */
 const float kMaxMatchingDistance = 12.f;
 
 
+/**
+ * @brief Tests whether @a crossing is a viable anchor for the given corner.
+ *
+ * Rejects crossings whose opposite corner is already used; otherwise measures
+ * how far the matched window edge sits from the crossing's tabs and how far
+ * the orthogonal coordinate is from the corresponding window border. A
+ * crossing is interesting when at least one direction lies within
+ * kMaxMatchingDistance and is bordered by an existing window.
+ *
+ * @param crossing    The crossing being evaluated.
+ * @param cor         Which corner of the drop window is being matched.
+ * @param windowFrame The drop window's full frame including decorator.
+ * @return true if the crossing is close enough to align the drop window.
+ */
 bool
 SATTiling::_InteresstingCrossing(Crossing* crossing,
 	Corner::position_t cor, BRect& windowFrame)
@@ -234,9 +352,24 @@ SATTiling::_InteresstingCrossing(Crossing* crossing,
 };
 
 
+/** @brief Score returned for slots that fail validation; effectively infinity. */
 const float kBigAreaError = 1E+17;
 
 
+/**
+ * @brief Grows a candidate rectangle from @a crossing and picks the best fit.
+ *
+ * Starting from the anchor corner described by @a corner, walks outward along
+ * the orthogonal tab lists, calling _CheckArea() for each (h, v) end-tab pair.
+ * The combination with the smallest _FreeAreaError() (closest to the drop
+ * window's size) is stored in fFreeAreaLeft/Right/Top/Bottom.
+ *
+ * @param group       The group being searched.
+ * @param crossing    Anchor crossing produced by _InteresstingCrossing().
+ * @param corner      Which corner of the drop window the anchor matches.
+ * @param windowFrame The drop window's full frame.
+ * @return true if any valid slot was found.
+ */
 bool
 SATTiling::_FindFreeArea(SATGroup* group, const Crossing* crossing,
 	Corner::position_t corner, BRect& windowFrame)
@@ -332,6 +465,16 @@ SATTiling::_FindFreeArea(SATGroup* group, const Crossing* crossing,
 }
 
 
+/**
+ * @brief Returns whether any existing window overlaps the candidate rectangle.
+ *
+ * Walks the group's horizontal tabs and their crossings; for every used
+ * upper-left corner, intersects the owning WindowArea's frame with the slot
+ * (inset by 1 px) to allow shared borders.
+ *
+ * @param group The group whose windows are tested.
+ * @return true if at least one window overlaps the slot interior.
+ */
 bool
 SATTiling::_HasOverlapp(SATGroup* group)
 {
@@ -361,6 +504,20 @@ SATTiling::_HasOverlapp(SATGroup* group)
 }
 
 
+/**
+ * @brief Validates the current candidate rectangle and scores it.
+ *
+ * Ensures the slot has a minimum size, contains the anchor corner, and does
+ * not overlap any existing window. On success @a error receives the squared
+ * deviation between the slot's dimensions and the drop window's frame.
+ *
+ * @param group       The group being searched.
+ * @param corner      The anchor corner of the drop window.
+ * @param windowFrame The drop window's full frame.
+ * @param error       Output score; lower is better. Set to kBigAreaError on
+ *                    failure.
+ * @return true if the slot is acceptable.
+ */
 bool
 SATTiling::_CheckArea(SATGroup* group, Corner::position_t corner,
 	BRect& windowFrame, float& error)
@@ -371,7 +528,7 @@ SATTiling::_CheckArea(SATGroup* group, Corner::position_t corner,
 	// check if corner is in the free area
 	if (!_IsCornerInFreeArea(corner, windowFrame))
 		return false;
-	
+
 	error = _FreeAreaError(windowFrame);
 	if (!_HasOverlapp(group))
 		return true;
@@ -379,6 +536,15 @@ SATTiling::_CheckArea(SATGroup* group, Corner::position_t corner,
 }
 
 
+/**
+ * @brief Returns whether the candidate rectangle is large enough to be useful.
+ *
+ * Fully bounded slots (both opposing tabs set) must be at least
+ * 2 * kMaxMatchingDistance wide / tall in the constrained direction.
+ *
+ * @return true if the slot satisfies the minimum size in every constrained
+ *         direction.
+ */
 bool
 SATTiling::_CheckMinFreeAreaSize()
 {
@@ -395,6 +561,15 @@ SATTiling::_CheckMinFreeAreaSize()
 }
 
 
+/**
+ * @brief Squared size mismatch between the slot and @a windowFrame.
+ *
+ * Each unbounded direction (no opposing tab) contributes a large penalty so
+ * the search prefers fully bounded slots.
+ *
+ * @param windowFrame The drop window's full frame.
+ * @return Sum of squared deltas in the bounded directions plus penalties.
+ */
 float
 SATTiling::_FreeAreaError(BRect& windowFrame)
 {
@@ -414,6 +589,17 @@ SATTiling::_FreeAreaError(BRect& windowFrame)
 }
 
 
+/**
+ * @brief Confirms that @a corner of @a frame lies inside the candidate slot.
+ *
+ * Checks that the opposite edges of the slot lie strictly beyond the
+ * matched corner by at least kMaxMatchingDistance, ensuring the drop window
+ * actually fits past the anchor.
+ *
+ * @param corner The anchor corner of the drop window.
+ * @param frame  The drop window's full frame.
+ * @return true if the corner sits inside the slot with enough slack.
+ */
 bool
 SATTiling::_IsCornerInFreeArea(Corner::position_t corner, BRect& frame)
 {
@@ -446,6 +632,15 @@ SATTiling::_IsCornerInFreeArea(Corner::position_t corner, BRect& frame)
 }
 
 
+/**
+ * @brief Returns the rectangle described by the four cached free-area tabs.
+ *
+ * For each side that has no tab assigned, substitutes a very large finite
+ * sentinel (positive or negative) so the rectangle remains valid for
+ * intersection tests.
+ *
+ * @return The slot rectangle in group coordinates.
+ */
 BRect
 SATTiling::_FreeAreaSize()
 {
@@ -459,6 +654,17 @@ SATTiling::_FreeAreaSize()
 }
 
 
+/**
+ * @brief Highlights every neighbour bordering the candidate slot.
+ *
+ * Searches each of the four sides for windows that share a tab with the slot
+ * and asks _SearchHighlightWindow() to highlight their facing border. If at
+ * least one neighbour was found per side, the dragged window's matching
+ * border is highlighted too so the user sees both halves of the join.
+ *
+ * @param group     The candidate group.
+ * @param highlight true to draw the highlight, false to remove it.
+ */
 void
 SATTiling::_HighlightWindows(SATGroup* group, bool highlight)
 {
@@ -494,6 +700,22 @@ SATTiling::_HighlightWindows(SATGroup* group, bool highlight)
 }
 
 
+/**
+ * @brief Walks one slot edge and highlights every WindowArea that touches it.
+ *
+ * Iterates between the two orthogonal tabs that bound the edge, looks up each
+ * crossing on @a tab, and if its @a areaCorner refers to a real WindowArea
+ * highlights that area's facing @a region.
+ *
+ * @param tab           Edge tab of the slot, or NULL for an unbounded edge.
+ * @param firstOrthTab  Tab at one end of the search interval, or NULL.
+ * @param secondOrthTab Tab at the other end, or NULL.
+ * @param orthTabs      Sorted list of orthogonal tabs in the group.
+ * @param areaCorner    Which corner of the crossing identifies the neighbour.
+ * @param region        Decorator region to highlight on each neighbour.
+ * @param highlight     true to highlight, false to clear.
+ * @return true if at least one neighbour was highlighted along the edge.
+ */
 bool
 SATTiling::_SearchHighlightWindow(Tab* tab, Tab* firstOrthTab,
 	Tab* secondOrthTab, const TabList* orthTabs, Corner::position_t areaCorner,
@@ -541,6 +763,13 @@ SATTiling::_SearchHighlightWindow(Tab* tab, Tab* firstOrthTab,
 }
 
 
+/**
+ * @brief Highlights the topmost window of @a area on the requested side.
+ *
+ * @param area      Neighbour WindowArea sharing an edge with the slot.
+ * @param region    Decorator region to highlight on the top window.
+ * @param highlight true to highlight, false to clear.
+ */
 void
 SATTiling::_HighlightWindows(WindowArea* area, Decorator::Region region,
 	bool highlight)
@@ -553,6 +782,12 @@ SATTiling::_HighlightWindows(WindowArea* area, Decorator::Region region,
 }
 
 
+/**
+ * @brief Drops any pending tiling highlight and clears the slot tabs.
+ *
+ * Safe to call repeatedly; if no group is currently highlighted the call is
+ * a no-op.
+ */
 void
 SATTiling::_ResetSearchResults()
 {

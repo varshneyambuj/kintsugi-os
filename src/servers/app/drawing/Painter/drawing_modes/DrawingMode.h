@@ -1,11 +1,29 @@
 /*
- * Copyright 2005, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005, Stephan Aßmus and 2008, Andrej Spielmann.
  * Base class for different drawing modes.
- *
  */
+
+/** @file DrawingMode.h
+    @brief Common typedefs, alpha-blend macros (BLEND, BLEND_FROM, BLEND16,
+           BLEND_COMPOSITE and their SUBPIX variants) and helpers shared by
+           every per-mode DrawingMode*.h header. */
 
 #ifndef DRAWING_MODE_H
 #define DRAWING_MODE_H
@@ -185,6 +203,15 @@ typedef PixelFormat::agg_buffer		agg_buffer;
 	BLEND_COMPOSITE_SUBPIX(d, r, g, b, _a1, _a2, _a3); \
 }
 
+/**
+ * @brief Returns the perceptual brightness of an RGB triple using a
+ *        fixed-point Rec. 601 luma approximation.
+ *
+ * Computes (308 * R + 600 * G + 116 * B) / 1024, which is a fast 8-bit
+ * approximation of the canonical 0.301 R + 0.586 G + 0.113 B luma weights.
+ * Used by B_OP_INVERT and B_OP_SELECT to choose between the high and low
+ * pattern colors.
+ */
 static inline
 uint8
 brightness_for(uint8 red, uint8 green, uint8 blue)

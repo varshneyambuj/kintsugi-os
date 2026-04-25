@@ -1,20 +1,50 @@
 /*
- * Copyright 2001-2020 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Tri-Edge AI
- *		Jacob Secunda, secundja@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020 Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       John Scipione, jscipione@gmail.com
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *       Clemens Zeidler, haiku@clemens-zeidler.de
+ *       Joseph Groover, looncraz@looncraz.net
+ *       Tri-Edge AI
+ *       Jacob Secunda, secundja@gmail.com
  */
 
 
-/*!	Base class for window decorators */
+/**
+ * @file Decorator.cpp
+ * @brief Base class for window decorators in the app_server.
+ *
+ * Provides the per-window state, hit-testing, and footprint machinery that all
+ * concrete decorators (TabDecorator, DefaultDecorator, third-party add-ons)
+ * build on. Subclasses are responsible for the actual painting of frames,
+ * tabs, titles, and buttons; this class manages tab lists, focus, sizes,
+ * region highlights, and coordinate transforms during move and resize.
+ *
+ * @see TabDecorator, DefaultDecorator, DecorManager
+ */
 
 
 #include "Decorator.h"
@@ -28,6 +58,13 @@
 #include "DrawingEngine.h"
 
 
+/**
+ * @brief Constructs an empty tab with neutral defaults.
+ *
+ * Rectangles are zero-area, the look defaults to a titled window, no buttons
+ * are pressed, the tab is unfocused, and all four cached button-bitmap slots
+ * (per state) are cleared.
+ */
 Decorator::Tab::Tab()
 	:
 	tabRect(),
@@ -65,14 +102,18 @@ Decorator::Tab::Tab()
 }
 
 
-/*!	\brief Constructor
-
-	Does general initialization of internal data members and creates a colorset
-	object.
-
-	\param settings DesktopSettings pointer.
-	\param frame Decorator frame rectangle
-*/
+/**
+ * @brief Constructs a Decorator bound to a desktop and an initial client frame.
+ *
+ * Initializes all border, frame, outline, and tab-list state to empty so that
+ * a subclass's _DoLayout() can populate them once a DrawingEngine is attached.
+ * Region highlights are cleared.
+ *
+ * @param settings Snapshot of current desktop settings (consulted by
+ *                 subclasses for fonts and colors).
+ * @param frame    Initial client-area frame in screen coordinates.
+ * @param desktop  Desktop the decorated window lives on.
+ */
 Decorator::Decorator(DesktopSettings& settings, BRect frame,
 					Desktop* desktop)
 	:
@@ -109,15 +150,30 @@ Decorator::Decorator(DesktopSettings& settings, BRect frame,
 }
 
 
-/*!	\brief Destructor
-
-	Frees the color set and the title string
-*/
+/**
+ * @brief Destroys the Decorator. Tabs owned by fTabList are deleted by
+ *        BObjectList.
+ */
 Decorator::~Decorator()
 {
 }
 
 
+/**
+ * @brief Adds a new tab to the decorated window.
+ *
+ * The new tab becomes the top tab and is registered with the subclass via
+ * _AddTab(). On allocation or insertion failure the previous top tab is
+ * restored.
+ *
+ * @param settings     Current desktop settings (for fonts/colors during layout).
+ * @param title        Initial title for the new tab.
+ * @param look         Window look applied to the new tab.
+ * @param flags        Window flags applied to the new tab.
+ * @param index        Insertion index, or -1 to append.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ * @return Pointer to the newly created tab, or NULL on failure.
+ */
 Decorator::Tab*
 Decorator::AddTab(DesktopSettings& settings, const char* title,
 	window_look look, uint32 flags, int32 index, BRegion* updateRegion)
@@ -157,6 +213,16 @@ Decorator::AddTab(DesktopSettings& settings, const char* title,
 }
 
 
+/**
+ * @brief Removes the tab at @a index.
+ *
+ * The removed tab's rectangle is added to @a updateRegion so the desktop can
+ * repaint the area it occupied.
+ *
+ * @param index        Index of the tab to remove.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ * @return true if a tab was removed, false if @a index was out of range.
+ */
 bool
 Decorator::RemoveTab(int32 index, BRegion* updateRegion)
 {
@@ -178,6 +244,19 @@ Decorator::RemoveTab(int32 index, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Reorders a tab within the tab list.
+ *
+ * Asks the subclass (_MoveTab) to update its layout first, then commits the
+ * list reorder. If the list reorder fails the subclass move is rolled back.
+ *
+ * @param from         Source index.
+ * @param to           Destination index.
+ * @param isMoving     true while the user is interactively dragging the tab,
+ *                     false on the final commit.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ * @return true on success, false on subclass refusal or list-move failure.
+ */
 bool
 Decorator::MoveTab(int32 from, int32 to, bool isMoving, BRegion* updateRegion)
 {
@@ -194,6 +273,12 @@ Decorator::MoveTab(int32 from, int32 to, bool isMoving, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Returns the index of the tab whose tab-rectangle contains @a where.
+ *
+ * @param where Hit-test point in screen coordinates.
+ * @return Tab index, or -1 if no tab is hit.
+ */
 int32
 Decorator::TabAt(const BPoint& where) const
 {
@@ -209,6 +294,11 @@ Decorator::TabAt(const BPoint& where) const
 }
 
 
+/**
+ * @brief Selects which tab is currently shown on top of the stack.
+ *
+ * @param tab Tab index; if out of range, fTopTab is set to NULL.
+ */
 void
 Decorator::SetTopTab(int32 tab)
 {
@@ -217,9 +307,15 @@ Decorator::SetTopTab(int32 tab)
 }
 
 
-/*!	\brief Assigns a display driver to the decorator
-	\param driver A valid DrawingEngine object
-*/
+/**
+ * @brief Binds the decorator to the DrawingEngine it should paint into.
+ *
+ * Many subclass layouts depend on string measurement, which requires a live
+ * engine; once attached this method runs both the regular and outline layout
+ * passes.
+ *
+ * @param engine DrawingEngine instance, or NULL to detach.
+ */
 void
 Decorator::SetDrawingEngine(DrawingEngine* engine)
 {
@@ -235,13 +331,19 @@ Decorator::SetDrawingEngine(DrawingEngine* engine)
 }
 
 
-/*!	\brief Sets the decorator's window flags
-
-	While this call will not update the screen, it will affect how future
-	updates work and immediately affects input handling.
-
-	\param flags New value for the flags
-*/
+/**
+ * @brief Updates the window flags for a tab.
+ *
+ * Synchronizes the B_NOT_RESIZABLE / B_NOT_H_RESIZABLE / B_NOT_V_RESIZABLE
+ * flags so subclasses do not need to handle every combination, then forwards
+ * to the subclass _SetFlags() hook.
+ *
+ * @param tab          Tab index whose flags are being updated.
+ * @param flags        New flags value.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ *
+ * @note Does not redraw on its own; the caller is responsible for repainting.
+ */
 void
 Decorator::SetFlags(int32 tab, uint32 flags, BRegion* updateRegion)
 {
@@ -264,8 +366,12 @@ Decorator::SetFlags(int32 tab, uint32 flags, BRegion* updateRegion)
 }
 
 
-/*!	\brief Called whenever the system fonts are changed.
-*/
+/**
+ * @brief Notifies the decorator that the system fonts have changed.
+ *
+ * @param settings     Updated desktop settings.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ */
 void
 Decorator::FontsChanged(DesktopSettings& settings, BRegion* updateRegion)
 {
@@ -276,8 +382,16 @@ Decorator::FontsChanged(DesktopSettings& settings, BRegion* updateRegion)
 }
 
 
-/*!	\brief Called when a system colors change.
-*/
+/**
+ * @brief Notifies the decorator that the system color set has changed.
+ *
+ * Re-runs UpdateColors() and invalidates cached button bitmaps so they are
+ * regenerated with the new palette.
+ *
+ * @param settings     Updated desktop settings.
+ * @param updateRegion Optional dirty region; if non-NULL, the decorator
+ *                     footprint is added to it.
+ */
 void
 Decorator::ColorsChanged(DesktopSettings& settings, BRegion* updateRegion)
 {
@@ -292,9 +406,14 @@ Decorator::ColorsChanged(DesktopSettings& settings, BRegion* updateRegion)
 }
 
 
-/*!	\brief Sets the decorator's window look
-	\param look New value for the look
-*/
+/**
+ * @brief Changes the window look for one tab.
+ *
+ * @param tab          Tab index.
+ * @param settings     Current desktop settings (for font/look changes).
+ * @param look         New window look value.
+ * @param updateRect   Optional dirty region to be extended; may be NULL.
+ */
 void
 Decorator::SetLook(int32 tab, DesktopSettings& settings, window_look look,
 	BRegion* updateRect)
@@ -311,9 +430,12 @@ Decorator::SetLook(int32 tab, DesktopSettings& settings, window_look look,
 }
 
 
-/*!	\brief Returns the decorator's window look
-	\return the decorator's window look
-*/
+/**
+ * @brief Returns the window look for a tab.
+ *
+ * @param tab Tab index.
+ * @return The tab's window_look value.
+ */
 window_look
 Decorator::Look(int32 tab) const
 {
@@ -322,9 +444,12 @@ Decorator::Look(int32 tab) const
 }
 
 
-/*!	\brief Returns the decorator's window flags
-	\return the decorator's window flags
-*/
+/**
+ * @brief Returns the window flags for a tab.
+ *
+ * @param tab Tab index.
+ * @return The tab's flags value.
+ */
 uint32
 Decorator::Flags(int32 tab) const
 {
@@ -333,9 +458,11 @@ Decorator::Flags(int32 tab) const
 }
 
 
-/*!	\brief Returns the decorator's border rectangle
-	\return the decorator's border rectangle
-*/
+/**
+ * @brief Returns the rectangle bounding the entire decorator border.
+ *
+ * @return Border rectangle in screen coordinates.
+ */
 BRect
 Decorator::BorderRect() const
 {
@@ -344,6 +471,11 @@ Decorator::BorderRect() const
 }
 
 
+/**
+ * @brief Returns the rectangle bounding the title bar (the union of all tabs).
+ *
+ * @return Title-bar rectangle in screen coordinates.
+ */
 BRect
 Decorator::TitleBarRect() const
 {
@@ -352,9 +484,13 @@ Decorator::TitleBarRect() const
 }
 
 
-/*!	\brief Returns the decorator's tab rectangle
-	\return the decorator's tab rectangle
-*/
+/**
+ * @brief Returns the rectangle bounding a specific tab.
+ *
+ * @param tab Tab index.
+ * @return Tab rectangle in screen coordinates, or an invalid rect if @a tab
+ *         is out of range.
+ */
 BRect
 Decorator::TabRect(int32 tab) const
 {
@@ -367,6 +503,12 @@ Decorator::TabRect(int32 tab) const
 }
 
 
+/**
+ * @brief Returns the rectangle of @a tab.
+ *
+ * @param tab Tab object whose rectangle is requested.
+ * @return Tab rectangle in screen coordinates.
+ */
 BRect
 Decorator::TabRect(Decorator::Tab* tab) const
 {
@@ -374,14 +516,14 @@ Decorator::TabRect(Decorator::Tab* tab) const
 }
 
 
-/*!	\brief Sets the close button's value.
-
-	Note that this does not update the button's look - it just updates the
-	internal button value
-
-	\param tab The tab index
-	\param pressed Whether the button is down or not
-*/
+/**
+ * @brief Toggles the visual "pressed" state of the close button on a tab.
+ *
+ * Triggers a redraw of the close button when the state changes.
+ *
+ * @param tab     Tab index.
+ * @param pressed true if the close button should appear pressed.
+ */
 void
 Decorator::SetClose(int32 tab, bool pressed)
 {
@@ -398,13 +540,14 @@ Decorator::SetClose(int32 tab, bool pressed)
 }
 
 
-/*!	\brief Sets the minimize button's value.
-
-	Note that this does not update the button's look - it just updates the
-	internal button value
-
-	\param is_down Whether the button is down or not
-*/
+/**
+ * @brief Toggles the visual "pressed" state of the minimize button on a tab.
+ *
+ * Triggers a redraw of the minimize button when the state changes.
+ *
+ * @param tab     Tab index.
+ * @param pressed true if the minimize button should appear pressed.
+ */
 void
 Decorator::SetMinimize(int32 tab, bool pressed)
 {
@@ -420,13 +563,14 @@ Decorator::SetMinimize(int32 tab, bool pressed)
 	}
 }
 
-/*!	\brief Sets the zoom button's value.
-
-	Note that this does not update the button's look - it just updates the
-	internal button value
-
-	\param is_down Whether the button is down or not
-*/
+/**
+ * @brief Toggles the visual "pressed" state of the zoom button on a tab.
+ *
+ * Triggers a redraw of the zoom button when the state changes.
+ *
+ * @param tab     Tab index.
+ * @param pressed true if the zoom button should appear pressed.
+ */
 void
 Decorator::SetZoom(int32 tab, bool pressed)
 {
@@ -443,9 +587,15 @@ Decorator::SetZoom(int32 tab, bool pressed)
 }
 
 
-/*!	\brief Updates the value of the decorator title
-	\param string New title value
-*/
+/**
+ * @brief Updates the title of a tab and asks the subclass to relayout.
+ *
+ * @param tab          Tab index.
+ * @param string       New title (copied).
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ *
+ * @todo Trigger a redraw automatically.
+ */
 void
 Decorator::SetTitle(int32 tab, const char* string, BRegion* updateRegion)
 {
@@ -465,9 +615,12 @@ Decorator::SetTitle(int32 tab, const char* string, BRegion* updateRegion)
 }
 
 
-/*!	\brief Returns the decorator's title
-	\return the decorator's title
-*/
+/**
+ * @brief Returns the title of a tab by index.
+ *
+ * @param tab Tab index.
+ * @return Title text, or "" if @a tab is out of range.
+ */
 const char*
 Decorator::Title(int32 tab) const
 {
@@ -481,6 +634,12 @@ Decorator::Title(int32 tab) const
 }
 
 
+/**
+ * @brief Returns the title of the given tab.
+ *
+ * @param tab Tab object.
+ * @return Title text.
+ */
 const char*
 Decorator::Title(Decorator::Tab* tab) const
 {
@@ -489,6 +648,12 @@ Decorator::Title(Decorator::Tab* tab) const
 }
 
 
+/**
+ * @brief Returns the horizontal pixel offset of a tab inside the title bar.
+ *
+ * @param tab Tab index.
+ * @return Tab offset in pixels, or 0 if @a tab is out of range.
+ */
 float
 Decorator::TabLocation(int32 tab) const
 {
@@ -502,6 +667,19 @@ Decorator::TabLocation(int32 tab) const
 }
 
 
+/**
+ * @brief Sets the horizontal pixel offset of a tab inside the title bar.
+ *
+ * Forwards to the subclass _SetTabLocation() hook and invalidates the cached
+ * footprint when the location actually changes.
+ *
+ * @param tab          Tab index.
+ * @param location     New horizontal offset, in pixels from the left border.
+ * @param isShifting   true while interactively dragging a tab; false on commit.
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ * @return true if the tab location was updated; false if out of bounds or
+ *         the subclass refused.
+ */
 bool
 Decorator::SetTabLocation(int32 tab, float location, bool isShifting,
 	BRegion* updateRegion)
@@ -520,13 +698,17 @@ Decorator::SetTabLocation(int32 tab, float location, bool isShifting,
 
 
 
-/*!	\brief Changes the focus value of the decorator
-
-	While this call will not update the screen, it will affect how future
-	updates work.
-
-	\param active True if active, false if not
-*/
+/**
+ * @brief Updates the focus state of a tab.
+ *
+ * Records the new state and forwards to the subclass _SetFocus() hook so it
+ * can swap focus colors. The decorator does not redraw on its own.
+ *
+ * @param tab    Tab index.
+ * @param active true if the tab now has focus.
+ *
+ * @todo Consider performing the redraw here for symmetry with other setters.
+ */
 void
 Decorator::SetFocus(int32 tab, bool active)
 {
@@ -541,6 +723,13 @@ Decorator::SetFocus(int32 tab, bool active)
 }
 
 
+/**
+ * @brief Returns whether a tab currently holds focus.
+ *
+ * @param tab Tab index.
+ * @return true if the tab is focused; false if @a tab is out of range or not
+ *         focused.
+ */
 bool
 Decorator::IsFocus(int32 tab) const
 {
@@ -554,6 +743,12 @@ Decorator::IsFocus(int32 tab) const
 };
 
 
+/**
+ * @brief Returns whether the given tab is focused.
+ *
+ * @param tab Tab object.
+ * @return true if @a tab has focus.
+ */
 bool
 Decorator::IsFocus(Decorator::Tab* tab) const
 {
@@ -565,8 +760,15 @@ Decorator::IsFocus(Decorator::Tab* tab) const
 //	#pragma mark - virtual methods
 
 
-/*!	\brief Returns a cached footprint if available otherwise recalculate it
-*/
+/**
+ * @brief Returns the screen-space region covered by the decorator.
+ *
+ * The footprint is cached and only recomputed when invalidated. When an
+ * interactive outline-resize is in progress the outline borders are
+ * included in the returned region.
+ *
+ * @return Reference to the cached footprint region.
+ */
 const BRegion&
 Decorator::GetFootprint()
 {
@@ -587,8 +789,11 @@ Decorator::GetFootprint()
 }
 
 
-/*!	\brief Returns our Desktop object pointer
-*/
+/**
+ * @brief Returns the desktop the decorator was created on.
+ *
+ * @return Pointer to the owning Desktop.
+ */
 ::Desktop*
 Decorator::GetDesktop()
 {
@@ -597,28 +802,20 @@ Decorator::GetDesktop()
 }
 
 
-/*!	\brief Performs hit-testing for the decorator.
-
-	The base class provides a basic implementation, recognizing only button and
-	tab hits. Derived classes must override/enhance it to handle borders and
-	corners correctly.
-
-	\param where The point to be tested.
-	\return Either of the following, depending on what was hit:
-		- \c REGION_NONE: None of the decorator regions.
-		- \c REGION_TAB: The window tab (but none of the buttons embedded).
-		- \c REGION_CLOSE_BUTTON: The close button.
-		- \c REGION_ZOOM_BUTTON: The zoom button.
-		- \c REGION_MINIMIZE_BUTTON: The minimize button.
-		- \c REGION_LEFT_BORDER: The left border.
-		- \c REGION_RIGHT_BORDER: The right border.
-		- \c REGION_TOP_BORDER: The top border.
-		- \c REGION_BOTTOM_BORDER: The bottom border.
-		- \c REGION_LEFT_TOP_CORNER: The left-top corner.
-		- \c REGION_LEFT_BOTTOM_CORNER: The left-bottom corner.
-		- \c REGION_RIGHT_TOP_CORNER: The right-top corner.
-		- \c REGION_RIGHT_BOTTOM_CORNER The right-bottom corner.
-*/
+/**
+ * @brief Hit-tests @a where against the decorator regions.
+ *
+ * The base class only resolves hits on tabs and tab buttons. Subclasses such
+ * as TabDecorator override this to additionally identify hits on borders and
+ * resize corners.
+ *
+ * @param where    Point to test, in screen coordinates.
+ * @param tabIndex Out-parameter set to the index of the hit tab, or -1.
+ * @return One of the Region constants:
+ *     - REGION_NONE: no decorator region was hit.
+ *     - REGION_TAB / REGION_CLOSE_BUTTON / REGION_ZOOM_BUTTON: hit on the tab
+ *       or one of its embedded buttons.
+ */
 Decorator::Region
 Decorator::RegionAt(BPoint where, int32& tabIndex) const
 {
@@ -646,15 +843,15 @@ Decorator::RegionAt(BPoint where, int32& tabIndex) const
 }
 
 
-/*!	\brief Moves the decorator frame and all default rectangles
-
-	If a subclass implements this method, be sure to call Decorator::MoveBy
-	to ensure that internal members are also updated. All members of the
-	Decorator class are automatically moved in this method
-
-	\param x X Offset
-	\param y y Offset
-*/
+/**
+ * @brief Moves the decorator frame and all dependent rectangles.
+ *
+ * @param x Horizontal offset, in pixels.
+ * @param y Vertical offset, in pixels.
+ *
+ * @note Subclasses overriding _MoveBy should chain to this implementation so
+ *       all base members are translated.
+ */
 void
 Decorator::MoveBy(float x, float y)
 {
@@ -662,14 +859,14 @@ Decorator::MoveBy(float x, float y)
 }
 
 
-/*!	\brief Moves the decorator frame and all default rectangles
-
-	If a subclass implements this method, be sure to call Decorator::MoveBy
-	to ensure that internal members are also updated. All members of the
-	Decorator class are automatically moved in this method
-
-	\param offset BPoint containing the offsets
-*/
+/**
+ * @brief Moves the decorator frame and all dependent rectangles by @a offset.
+ *
+ * Updates the cached footprint in place when valid, then forwards to the
+ * subclass _MoveBy() and _MoveOutlineBy() hooks.
+ *
+ * @param offset Move offset in pixels.
+ */
 void
 Decorator::MoveBy(BPoint offset)
 {
@@ -683,16 +880,17 @@ Decorator::MoveBy(BPoint offset)
 }
 
 
-/*!	\brief Resizes the decorator frame
-
-	This is a required function for subclasses to implement - the default does
-	nothing. Note that window resize flags should be followed and fFrame should
-	be resized accordingly. It would also be a wise idea to ensure that the
-	window's rectangles are not inverted.
-
-	\param x x offset
-	\param y y offset
-*/
+/**
+ * @brief Resizes the decorator frame.
+ *
+ * Forwards to the BPoint overload. Subclasses must implement _ResizeBy() to
+ * relayout in response to size changes; this base implementation does no
+ * additional bookkeeping beyond invalidating the footprint.
+ *
+ * @param x     Horizontal size delta, in pixels.
+ * @param y     Vertical size delta, in pixels.
+ * @param dirty Region extended with areas that need repainting; may be NULL.
+ */
 void
 Decorator::ResizeBy(float x, float y, BRegion* dirty)
 {
@@ -700,6 +898,15 @@ Decorator::ResizeBy(float x, float y, BRegion* dirty)
 }
 
 
+/**
+ * @brief Resizes the decorator frame by @a offset.
+ *
+ * Calls the subclass _ResizeBy() and _ResizeOutlineBy() hooks and then
+ * invalidates the cached footprint.
+ *
+ * @param offset Size delta, in pixels.
+ * @param dirty  Region extended with areas that need repainting; may be NULL.
+ */
 void
 Decorator::ResizeBy(BPoint offset, BRegion* dirty)
 {
@@ -712,6 +919,12 @@ Decorator::ResizeBy(BPoint offset, BRegion* dirty)
 }
 
 
+/**
+ * @brief Sets the outline-resize delta during interactive border drag.
+ *
+ * @param delta Cumulative outline offset, in pixels.
+ * @param dirty Region extended with the moved outline borders.
+ */
 void
 Decorator::SetOutlinesDelta(BPoint delta, BRegion* dirty)
 {
@@ -720,6 +933,15 @@ Decorator::SetOutlinesDelta(BPoint delta, BRegion* dirty)
 }
 
 
+/**
+ * @brief Extends @a dirty with the rectangle(s) belonging to a logical region.
+ *
+ * Used to mark the smallest meaningful subset of the decorator for repaint
+ * when only a single button or border has changed.
+ *
+ * @param region Logical region whose paint area should be invalidated.
+ * @param dirty  Region to be extended.
+ */
 void
 Decorator::ExtendDirtyRegion(Region region, BRegion& dirty)
 {
@@ -792,17 +1014,21 @@ Decorator::ExtendDirtyRegion(Region region, BRegion& dirty)
 }
 
 
-/*!	\brief Sets a specific highlight for a decorator region.
-
-	Can be overridden by derived classes, but the base class version must be
-	called, if the highlight shall be applied.
-
-	\param region The decorator region.
-	\param highlight The value identifying the kind of highlight.
-	\param dirty The dirty region to be extended, if the highlight changes. Can
-		be \c NULL.
-	\return \c true, if the highlight could be applied.
-*/
+/**
+ * @brief Applies a highlight value to a decorator region.
+ *
+ * Subclasses may override to additionally invalidate cached imagery for the
+ * affected region; the base implementation must still be called.
+ *
+ * @param region    Region whose highlight is being changed.
+ * @param highlight Highlight kind (HIGHLIGHT_NONE, HIGHLIGHT_RESIZE_BORDER,
+ *                  or a user-defined value).
+ * @param dirty     Region to be extended when the highlight changes; may be
+ *                  NULL.
+ * @param tab       Tab index (unused by base implementation).
+ * @return true if the highlight is now applied (including no-op equality);
+ *         false if @a region is invalid.
+ */
 bool
 Decorator::SetRegionHighlight(Region region, uint8 highlight, BRegion* dirty,
 	int32 tab)
@@ -824,6 +1050,17 @@ Decorator::SetRegionHighlight(Region region, uint8 highlight, BRegion* dirty,
 }
 
 
+/**
+ * @brief Restores decorator settings (e.g. tab locations) from a flattened
+ *        BMessage.
+ *
+ * Forwards to the subclass _SetSettings() hook and invalidates the cached
+ * footprint when any setting actually changes.
+ *
+ * @param settings     Flattened settings message produced by GetSettings().
+ * @param updateRegion Optional dirty region to be extended; may be NULL.
+ * @return true if any setting was applied, false otherwise.
+ */
 bool
 Decorator::SetSettings(const BMessage& settings, BRegion* updateRegion)
 {
@@ -837,6 +1074,17 @@ Decorator::SetSettings(const BMessage& settings, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Flattens decorator settings (tab frame, border width, per-tab
+ *        offsets) into @a settings.
+ *
+ * @param settings Out-parameter; receives the flattened settings.
+ * @return true on success, false if the title bar is invalid or a write
+ *         operation failed.
+ *
+ * @todo Restrict the per-tab location entries to the requesting window's
+ *       tab only.
+ */
 bool
 Decorator::GetSettings(BMessage* settings) const
 {
@@ -863,6 +1111,18 @@ Decorator::GetSettings(BMessage* settings) const
 }
 
 
+/**
+ * @brief Constrains the supplied minimum size limits to accommodate the
+ *        decorator chrome.
+ *
+ * The current minimum is widened to fit the smallest tab and tall enough for
+ * the resize knob; maxima are not modified.
+ *
+ * @param minWidth  In/out minimum width of the decorated window.
+ * @param minHeight In/out minimum height of the decorated window.
+ * @param maxWidth  Maximum width (currently not modified by base class).
+ * @param maxHeight Maximum height (currently not modified by base class).
+ */
 void
 Decorator::GetSizeLimits(int32* minWidth, int32* minHeight,
 	int32* maxWidth, int32* maxHeight) const
@@ -884,7 +1144,12 @@ Decorator::GetSizeLimits(int32* minWidth, int32* minHeight,
 }
 
 
-//! draws the tab, title, and buttons
+/**
+ * @brief Draws the tab body, its zoom and minimize buttons, the title text,
+ *        and finally the close button for a single tab.
+ *
+ * @param tabIndex Tab index; calls are silently ignored for invalid indices.
+ */
 void
 Decorator::DrawTab(int32 tabIndex)
 {
@@ -902,7 +1167,11 @@ Decorator::DrawTab(int32 tabIndex)
 }
 
 
-//! draws the title
+/**
+ * @brief Draws only the title text of a tab.
+ *
+ * @param tab Tab index; ignored if out of range.
+ */
 void
 Decorator::DrawTitle(int32 tab)
 {
@@ -915,7 +1184,12 @@ Decorator::DrawTitle(int32 tab)
 }
 
 
-//! Draws the close button
+/**
+ * @brief Draws the close button of a tab in its current pressed/unpressed
+ *        state.
+ *
+ * @param tab Tab index; ignored if out of range.
+ */
 void
 Decorator::DrawClose(int32 tab)
 {
@@ -929,7 +1203,15 @@ Decorator::DrawClose(int32 tab)
 }
 
 
-//! draws the minimize button
+/**
+ * @brief Draws the minimize button of a tab.
+ *
+ * @param tab Tab index; ignored if out of range.
+ *
+ * @note The default decorator delegates this to _DrawTab on the minimize
+ *       rectangle. Subclasses with a real minimize button typically override
+ *       _DrawMinimize().
+ */
 void
 Decorator::DrawMinimize(int32 tab)
 {
@@ -943,7 +1225,12 @@ Decorator::DrawMinimize(int32 tab)
 }
 
 
-//! draws the zoom button
+/**
+ * @brief Draws the zoom button of a tab in its current pressed/unpressed
+ *        state.
+ *
+ * @param tab Tab index; ignored if out of range.
+ */
 void
 Decorator::DrawZoom(int32 tab)
 {
@@ -956,6 +1243,13 @@ Decorator::DrawZoom(int32 tab)
 }
 
 
+/**
+ * @brief Resolves a UI-color identifier to its current rgb value via desktop
+ *        settings.
+ *
+ * @param which The color_which constant to resolve.
+ * @return The corresponding rgb_color from the desktop color set.
+ */
 rgb_color
 Decorator::UIColor(color_which which)
 {
@@ -965,6 +1259,11 @@ Decorator::UIColor(color_which which)
 }
 
 
+/**
+ * @brief Returns the current border width, in pixels.
+ *
+ * @return Border width as set by the most recent layout pass.
+ */
 float
 Decorator::BorderWidth()
 {
@@ -973,6 +1272,12 @@ Decorator::BorderWidth()
 }
 
 
+/**
+ * @brief Returns the height of the title-bar tab, falling back to border
+ *        width when no tab is present.
+ *
+ * @return Tab height in pixels.
+ */
 float
 Decorator::TabHeight()
 {
@@ -988,6 +1293,13 @@ Decorator::TabHeight()
 // #pragma mark - Protected methods
 
 
+/**
+ * @brief Allocates and returns a new Decorator::Tab with default colors.
+ *
+ * Subclasses override this hook to allocate their own enriched tab type.
+ *
+ * @return Pointer to the new tab, or NULL on allocation failure.
+ */
 Decorator::Tab*
 Decorator::_AllocateNewTab()
 {
@@ -1002,6 +1314,12 @@ Decorator::_AllocateNewTab()
 }
 
 
+/**
+ * @brief Draws all tabs into @a rect, painting the focused tab last so it
+ *        appears on top.
+ *
+ * @param rect Clip rectangle for the tab drawing.
+ */
 void
 Decorator::_DrawTabs(BRect rect)
 {
@@ -1020,13 +1338,30 @@ Decorator::_DrawTabs(BRect rect)
 }
 
 
-//! Hook function called when the decorator changes focus
+/**
+ * @brief Hook invoked when a tab's focus state changes.
+ *
+ * Subclasses override this to swap focus colors. The base implementation is
+ * a no-op.
+ *
+ * @param tab Tab whose focus state was just updated.
+ */
 void
 Decorator::_SetFocus(Decorator::Tab* tab)
 {
 }
 
 
+/**
+ * @brief Subclass hook for repositioning a tab during a slide gesture.
+ *
+ * The base class does not implement tab sliding and always returns false.
+ *
+ * @param tab        Tab being moved.
+ * @param location   New horizontal offset.
+ * @param isShifting true while the user is mid-drag.
+ * @return Always false in the base class.
+ */
 bool
 Decorator::_SetTabLocation(Decorator::Tab* tab, float location, bool isShifting,
 	BRegion* /*updateRegion*/)
@@ -1035,6 +1370,12 @@ Decorator::_SetTabLocation(Decorator::Tab* tab, float location, bool isShifting,
 }
 
 
+/**
+ * @brief Returns the tab at @a index without locking.
+ *
+ * @param index Tab index.
+ * @return Tab pointer, or NULL if out of range.
+ */
 Decorator::Tab*
 Decorator::_TabAt(int32 index) const
 {
@@ -1042,6 +1383,16 @@ Decorator::_TabAt(int32 index) const
 }
 
 
+/**
+ * @brief Default implementation of the font-changed hook.
+ *
+ * Adds the old footprint to @a updateRegion, drops cached button bitmaps,
+ * re-runs the subclass _UpdateFont() and layout passes, then adds the new
+ * footprint to @a updateRegion.
+ *
+ * @param settings     Updated desktop settings.
+ * @param updateRegion Optional dirty region; may be NULL.
+ */
 void
 Decorator::_FontsChanged(DesktopSettings& settings, BRegion* updateRegion)
 {
@@ -1061,6 +1412,18 @@ Decorator::_FontsChanged(DesktopSettings& settings, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Default implementation of the look-changed hook.
+ *
+ * Updates the tab's look field, refreshes fonts and re-runs layout. The old
+ * and new footprints are added to @a updateRegion so the desktop can repaint
+ * any newly exposed area.
+ *
+ * @param tab          Tab whose look is being changed.
+ * @param settings     Current desktop settings.
+ * @param look         New window look.
+ * @param updateRegion Optional dirty region; may be NULL.
+ */
 void
 Decorator::_SetLook(Decorator::Tab* tab, DesktopSettings& settings,
 	window_look look, BRegion* updateRegion)
@@ -1083,6 +1446,16 @@ Decorator::_SetLook(Decorator::Tab* tab, DesktopSettings& settings,
 }
 
 
+/**
+ * @brief Default implementation of the flags-changed hook.
+ *
+ * Records the new flags on @a tab and re-runs layout. The old and new
+ * footprints are added to @a updateRegion.
+ *
+ * @param tab          Tab whose flags are being changed.
+ * @param flags        New flags value.
+ * @param updateRegion Optional dirty region; may be NULL.
+ */
 void
 Decorator::_SetFlags(Decorator::Tab* tab, uint32 flags, BRegion* updateRegion)
 {
@@ -1102,6 +1475,15 @@ Decorator::_SetFlags(Decorator::Tab* tab, uint32 flags, BRegion* updateRegion)
 }
 
 
+/**
+ * @brief Default move hook: translates all per-tab rectangles, the title
+ *        bar, frame, resize rect, and border rect by @a offset.
+ *
+ * Subclasses override this hook to additionally translate any rectangles
+ * they introduce (e.g. four-sided border rectangles).
+ *
+ * @param offset Move offset in pixels.
+ */
 void
 Decorator::_MoveBy(BPoint offset)
 {
@@ -1120,6 +1502,12 @@ Decorator::_MoveBy(BPoint offset)
 }
 
 
+/**
+ * @brief Translates all outline rectangles used during interactive border
+ *        resize by @a offset.
+ *
+ * @param offset Move offset in pixels.
+ */
 void
 Decorator::_MoveOutlineBy(BPoint offset)
 {
@@ -1132,6 +1520,13 @@ Decorator::_MoveOutlineBy(BPoint offset)
 }
 
 
+/**
+ * @brief Resizes the outline rectangles (used during outline-resize) by
+ *        @a offset.
+ *
+ * @param offset Size delta in pixels.
+ * @param dirty  Region to be extended; not modified by the base implementation.
+ */
 void
 Decorator::_ResizeOutlineBy(BPoint offset, BRegion* dirty)
 {
@@ -1149,6 +1544,13 @@ Decorator::_ResizeOutlineBy(BPoint offset, BRegion* dirty)
 }
 
 
+/**
+ * @brief Applies a new outline-resize delta and updates @a dirty so that
+ *        both the previous and new outline border positions are repainted.
+ *
+ * @param delta Cumulative outline offset in pixels.
+ * @param dirty Region extended with the union of old and new outline borders.
+ */
 void
 Decorator::_SetOutlinesDelta(BPoint delta, BRegion* dirty)
 {
@@ -1179,6 +1581,16 @@ Decorator::_SetOutlinesDelta(BPoint delta, BRegion* dirty)
 }
 
 
+/**
+ * @brief Subclass hook for restoring decorator settings.
+ *
+ * Base class returns false (no settings consumed); subclasses such as
+ * TabDecorator override this to read tab locations and similar state.
+ *
+ * @param settings     Flattened settings message.
+ * @param updateRegion Optional dirty region; may be NULL.
+ * @return Always false in the base implementation.
+ */
 bool
 Decorator::_SetSettings(const BMessage& settings, BRegion* updateRegion)
 {
@@ -1186,19 +1598,24 @@ Decorator::_SetSettings(const BMessage& settings, BRegion* updateRegion)
 }
 
 
-/*!	\brief Returns the "footprint" of the entire window, including decorator
-
-	This function is required by all subclasses.
-
-	\param region Region to be changed to represent the window's screen
-		footprint
-*/
+/**
+ * @brief Default footprint hook: subclasses override to fill @a region with
+ *        the screen-space area occupied by the decorator.
+ *
+ * @param region Region to be populated.
+ */
 void
 Decorator::_GetFootprint(BRegion *region)
 {
 }
 
 
+/**
+ * @brief Includes the four outline-border rectangles into @a region for use
+ *        during interactive outline resize.
+ *
+ * @param region Region to extend; ignored if NULL.
+ */
 void
 Decorator::_GetOutlineFootprint(BRegion* region)
 {
@@ -1212,6 +1629,9 @@ Decorator::_GetOutlineFootprint(BRegion* region)
 }
 
 
+/**
+ * @brief Marks the cached footprint as stale so it is recomputed on next use.
+ */
 void
 Decorator::_InvalidateFootprint()
 {
@@ -1219,6 +1639,10 @@ Decorator::_InvalidateFootprint()
 }
 
 
+/**
+ * @brief Drops every cached close, minimize, and zoom button bitmap so they
+ *        are re-rendered with the current colors and font.
+ */
 void
 Decorator::_InvalidateBitmaps()
 {

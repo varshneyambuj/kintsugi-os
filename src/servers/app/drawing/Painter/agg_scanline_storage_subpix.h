@@ -1,14 +1,32 @@
 /*
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Class scanline_storage_subpix, a slightly modified version of
- * scanline_storage customized to store 3 covers per pixel
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2008, Andrej Spielmann.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
+
+/** @file agg_scanline_storage_subpix.h
+    @brief Subpixel scanline storage and serialized adaptors: 3-cover-per-pixel
+           variant of agg::scanline_storage used to cache subpixel rasterizer
+           output and replay it later. */
 
 #ifndef AGG_SCANLINE_STORAGE_SUBPIX_INCLUDED
 #define AGG_SCANLINE_STORAGE_SUBPIX_INCLUDED
@@ -23,6 +41,13 @@
 namespace agg
 {
 	//--------------------------------------------scanline_storage_subpix
+	/**
+	 * @brief In-memory storage for scanlines produced by a subpixel rasterizer.
+	 *
+	 * Mirrors agg::scanline_storage but lays out three covers (R, G, B) per
+	 * logical pixel so subpixel anti-aliased output can be cached and replayed
+	 * through any scanline-consuming renderer.
+	 */
 	template<class T> class scanline_storage_subpix
 	{
 	public:
@@ -396,6 +421,13 @@ namespace agg
 
 
 	//--------------------------------------serialized_scanlines_adaptor_subpix
+	/**
+	 * @brief Adaptor that re-reads serialized subpixel scanlines from a byte buffer.
+	 *
+	 * Pairs with scanline_storage_subpix::serialize() and exposes the same
+	 * sweep_scanline interface so a serialized blob can be replayed through
+	 * any AGG scanline renderer.
+	 */
 	template<class T> class serialized_scanlines_adaptor_subpix
 	{
 	public:

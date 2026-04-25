@@ -1,10 +1,43 @@
 /*
- * Copyright 2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Clemens Zeidler <haiku@clemens-zeidler.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Clemens Zeidler <haiku@clemens-zeidler.de>
  */
+
+
+/**
+ * @file Stacking.cpp
+ * @brief Tab-stacking gesture and stacking-protocol message handler.
+ *
+ * Implements the snapping behaviour that lets the user drop one window's tab
+ * onto another's to merge them into a single stacked WindowStack, plus the
+ * StackingEventHandler which serves the BPrivate stacking API messages
+ * (add/remove/count/query stack members) sent by the BWindow client.
+ *
+ * @see SATWindow, SATGroup, WindowArea
+ */
+
 
 #include "Stacking.h"
 
@@ -29,6 +62,24 @@
 using namespace BPrivate;
 
 
+/**
+ * @brief Dispatches a single stacking-protocol message to the matching action.
+ *
+ * Reads the opcode and any payload from @a link, applies the operation to the
+ * sender's WindowArea / SATGroup, and writes a status reply (and any required
+ * payload) back through @a reply. Recognised opcodes include adding or
+ * removing a window from a stack, counting stack members, and looking up a
+ * stack entry by index or by client port.
+ *
+ * @param sender The SATWindow that received the message; its WindowArea is
+ *               the target stack.
+ * @param link   Reader supplying the remaining message payload.
+ * @param reply  Writer used to send back B_OK plus per-opcode results, or an
+ *               error code on failure.
+ * @return true if the opcode was recognised (a reply has been sent or the
+ *         caller should treat the connection as still healthy), false on a
+ *         protocol or read error.
+ */
 bool
 StackingEventHandler::HandleMessage(SATWindow* sender,
 	BPrivate::LinkReceiver& link, BPrivate::LinkSender& reply)
@@ -206,6 +257,14 @@ StackingEventHandler::HandleMessage(SATWindow* sender,
 }
 
 
+/**
+ * @brief Constructs the stacking behaviour bound to one SATWindow.
+ *
+ * The window starts with no pending stacking parent; FindSnappingCandidates()
+ * will populate fStackingParent only while a drag matches a target tab.
+ *
+ * @param window The window this behaviour represents during a SAT drag.
+ */
 SATStacking::SATStacking(SATWindow* window)
 	:
 	fSATWindow(window),
@@ -215,12 +274,27 @@ SATStacking::SATStacking(SATWindow* window)
 }
 
 
+/** @brief Destructor; no resources owned. */
 SATStacking::~SATStacking()
 {
 
 }
 
 
+/**
+ * @brief Searches @a group for a tab whose rectangle is under the mouse.
+ *
+ * Walks every window in the group and tests whether the cursor sits inside
+ * its current decorator tab. If so, the candidate is remembered as the
+ * stacking parent and both the parent and this window's tabs are highlighted
+ * to preview the upcoming merge.
+ *
+ * @param group The candidate SATGroup currently being probed.
+ * @return true if a stacking parent has been found and highlighted, false
+ *         otherwise.
+ * @note Both windows must satisfy _IsStackableWindow() (titled or document
+ *       look). Any earlier highlight from a previous call is cleared first.
+ */
 bool
 SATStacking::FindSnappingCandidates(SATGroup* group)
 {
@@ -264,6 +338,15 @@ SATStacking::FindSnappingCandidates(SATGroup* group)
 }
 
 
+/**
+ * @brief Commits the pending stacking gesture by merging the two windows.
+ *
+ * Stacks fSATWindow into the parent's WindowArea, clearing the search state
+ * regardless of outcome.
+ *
+ * @return true if the stacking parent accepted the new tab, false if there
+ *         was no candidate or the merge failed.
+ */
 bool
 SATStacking::JoinCandidates()
 {
@@ -277,6 +360,14 @@ SATStacking::JoinCandidates()
 }
 
 
+/**
+ * @brief Re-runs the layout when this window's area loses a member.
+ *
+ * If any windows remain in @a area, asks the first one to re-solve the group
+ * geometry so the remaining tabs reflow.
+ *
+ * @param area The WindowArea this window has just been removed from.
+ */
 void
 SATStacking::RemovedFromArea(WindowArea* area)
 {
@@ -286,6 +377,16 @@ SATStacking::RemovedFromArea(WindowArea* area)
 }
 
 
+/**
+ * @brief Detaches this window from its stack if its look is no longer stackable.
+ *
+ * Called from SATWindow::WindowLookChanged(); when the window switches to a
+ * look that cannot be tab-stacked (e.g. floating or modal) and is currently
+ * part of a multi-window stack, removes it so the rest of the stack stays
+ * consistent.
+ *
+ * @param look The new window_look reported by the server window.
+ */
 void
 SATStacking::WindowLookChanged(window_look look)
 {
@@ -301,6 +402,15 @@ SATStacking::WindowLookChanged(window_look look)
 }
 
 
+/**
+ * @brief Returns whether @a window's look permits tab-stacking.
+ *
+ * Only document-style and titled windows can host or join a stack; every
+ * other window_look is rejected.
+ *
+ * @param window The candidate window.
+ * @return true for B_DOCUMENT_WINDOW_LOOK and B_TITLED_WINDOW_LOOK.
+ */
 bool
 SATStacking::_IsStackableWindow(Window* window)
 {
@@ -312,6 +422,12 @@ SATStacking::_IsStackableWindow(Window* window)
 }
 
 
+/**
+ * @brief Clears any pending stacking parent and removes its tab highlight.
+ *
+ * Safe to call when no candidate has been recorded; in that case it is a
+ * no-op.
+ */
 void
 SATStacking::_ClearSearchResult()
 {
@@ -323,6 +439,13 @@ SATStacking::_ClearSearchResult()
 }
 
 
+/**
+ * @brief Toggles the SAT highlight on the parent and the dragged window's tabs.
+ *
+ * @param highlight true to draw the highlight, false to remove it.
+ * @note Bails out early when the dragged window is no longer attached to a
+ *       desktop.
+ */
 void
 SATStacking::_HighlightWindows(bool highlight)
 {

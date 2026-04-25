@@ -96,7 +96,7 @@ Workspace::Private::RestoreConfiguration(const BMessage& settings)
 }
 
 
-/*!	\brief Store the workspace configuration in a message
+/*!	@brief Store the workspace configuration in a message
 */
 /** @brief Serialises the workspace configuration into a BMessage.
  *

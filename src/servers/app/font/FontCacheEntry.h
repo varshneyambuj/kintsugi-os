@@ -1,27 +1,34 @@
 /*
- * Copyright 2007-2009, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Maxim Shemanarev <mcseemagg@yahoo.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2007-2009, Haiku.
+ * Original authors: Maxim Shemanarev, Stephan Aßmus, Andrej Spielmann.
+ *
+ * Portions derived from Anti-Grain Geometry, version 2.4,
+ * Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com).
+ * Permission to copy, use, modify, sell and distribute this software is
+ * granted provided this copyright notice appears in all copies. This
+ * software is provided "as is" without express or implied warranty, and
+ * with no claim as to its suitability for any purpose.
  */
 
-//----------------------------------------------------------------------------
-// Anti-Grain Geometry - Version 2.4
-// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
-//
-// Permission to copy, use, modify, sell and distribute this software
-// is granted provided this copyright notice appears in all copies.
-// This software is provided "as is" without express or implied
-// warranty, and with no claim as to its suitability for any purpose.
-//
-//----------------------------------------------------------------------------
-// Contact: mcseem@antigrain.com
-//			mcseemagg@yahoo.com
-//			http://www.antigrain.com
-//----------------------------------------------------------------------------
+/** @file FontCacheEntry.h
+    @brief Per-(font, size, hinting) glyph cache built on top of FontEngine. */
 
 #ifndef FONT_CACHE_ENTRY_H
 #define FONT_CACHE_ENTRY_H
@@ -41,6 +48,14 @@
 #include "Transformable.h"
 
 
+/**
+ * @brief Single rasterized glyph held in a FontCacheEntry.
+ *
+ * Stores the serialized scanline (or path) data produced by FontEngine,
+ * along with the metrics needed to lay out the glyph during text rendering.
+ * @c hash_link participates in the open-addressing hash table inside the
+ * GlyphCachePool.
+ */
 struct GlyphCache {
 	GlyphCache(uint32 glyphIndex, uint32 dataSize, glyph_data_type dataType,
 			const agg::rect_i& bounds, float advanceX, float advanceY,
@@ -84,6 +99,15 @@ struct GlyphCache {
 
 class FontCache;
 
+/**
+ * @brief Cached, locked rasterizer state for one font configuration.
+ *
+ * A FontCacheEntry owns one FontEngine plus a hash table of GlyphCache
+ * records. The entry is reference-counted, MultiLocker-protected, and
+ * keyed inside FontCache by a signature derived from the ServerFont and
+ * the rendering mode (mono/gray8/subpixel/outline). Typedefs at the top
+ * of the class expose AGG adapter types used by the rasterizer pipeline.
+ */
 class FontCacheEntry : public MultiLocker, public BReferenceable {
  public:
 	typedef FontEngine::PathAdapter					GlyphPathAdapter;
@@ -131,8 +155,10 @@ class FontCacheEntry : public MultiLocker, public BReferenceable {
 
 	// private to FontCache class:
 			void				UpdateUsage();
+			/** @brief Wall-clock timestamp of the most recent UpdateUsage() call. */
 			bigtime_t			LastUsed() const
 									{ return fLastUsedTime; }
+			/** @brief Total number of times this entry has been recycled into use. */
 			uint64				UsedCount() const
 									{ return fUseCounter; }
 
@@ -155,4 +181,3 @@ class FontCacheEntry : public MultiLocker, public BReferenceable {
 };
 
 #endif // FONT_CACHE_ENTRY_H
-

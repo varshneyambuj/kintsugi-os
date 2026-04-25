@@ -39,7 +39,7 @@
     @brief Server-side counterpart to BApplication; manages per-application state and resources. */
 
 /*!	\class ServerApp ServerApp.h
-	\brief Counterpart to BApplication within the app_server
+	@brief Counterpart to BApplication within the app_server
 */
 
 

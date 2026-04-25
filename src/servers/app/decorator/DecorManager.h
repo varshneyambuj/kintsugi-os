@@ -1,12 +1,28 @@
 /*
- * Copyright (c) 2001-2005, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Author:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Clemens Zeidler <haiku@clemens-zeidler.de>
- *		Joseph Groover <looncraz@satx.rr.com>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2005, Haiku.
+ * Original authors: DarkWyrm, Clemens Zeidler, Joseph Groover.
  */
+
+/** @file DecorManager.h
+    @brief Loader and registry for window decorator add-ons used by the desktop. */
+
 #ifndef DECOR_MANAGER_H
 #define DECOR_MANAGER_H
 
@@ -33,6 +49,8 @@ typedef BObjectList<DesktopListener> DesktopListenerList;
 // special name to test for use of non-fs-tied default decorator
 // this just keeps things clean and simple is all
 
+/** @brief Wraps a loaded decorator add-on image and produces Decorator and
+           WindowBehaviour instances on demand. */
 class DecorAddOn {
 public:
 								DecorAddOn(image_id id, const char* name);
@@ -40,6 +58,8 @@ public:
 
 	virtual status_t			InitCheck() const;
 
+			/** @brief Returns the loaded add-on image identifier, or -1 for
+			           the built-in default decorator. */
 			image_id			ImageID() const { return fImageID; }
 
 			Decorator*			AllocateDecorator(Desktop* desktop,
@@ -63,6 +83,9 @@ private:
 };
 
 
+/** @brief Process-wide manager that owns the active decorator add-on, supports
+           live preview of alternative decorators on a single window, and
+           persists the user's decorator selection across sessions. */
 class DecorManager {
 public:
 								DecorManager();

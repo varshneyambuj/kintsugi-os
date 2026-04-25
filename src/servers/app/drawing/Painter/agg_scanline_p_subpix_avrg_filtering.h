@@ -1,16 +1,32 @@
 /*
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2008, Stephan Aßmus <superstippi@gmx.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Class scanline_p8_subpix_avrg_filtering, a slightly modified version of
- * scanline_p8 customized to store 3 covers per pixel and to implement
- * average-based color filtering
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2008, Andrej Spielmann; 2008, Stephan Aßmus.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
+
+/** @file agg_scanline_p_subpix_avrg_filtering.h
+    @brief Packed subpixel scanline that fades subpixel covers toward grayscale
+           averages to suppress color fringes; selected when
+           AVERAGE_BASED_SUBPIXEL_FILTERING is defined. */
 
 #ifndef AGG_SCANLINE_P_SUBPIX_AVRG_FILTERING_INCLUDED
 #define AGG_SCANLINE_P_SUBPIX_AVRG_FILTERING_INCLUDED
@@ -18,14 +34,22 @@
 #include "GlobalSubpixelSettings.h"
 
 namespace agg
-{	
+{
 	//========================================scanline_p8_subpix_avrg_filtering
-	// 
-	// This is a general purpose scaline container which supports the interface 
+	//
+	// This is a general purpose scaline container which supports the interface
 	// used in the rasterizer::render(). See description of scanline_u8
 	// for details.
-	// 
+	//
 	//------------------------------------------------------------------------
+	/**
+	 * @brief Packed subpixel scanline with average-based color-fringe filtering.
+	 *
+	 * Identical span layout to scanline_p8_subpix but, in add_cell(), blends
+	 * each subpixel cover toward the grayscale average of the three covers
+	 * using gSubpixelAverageWeight. Trades a bit of subpixel sharpness for
+	 * reduced color fringes on diagonal edges.
+	 */
 	class scanline_p8_subpix_avrg_filtering
 	{
 	public:

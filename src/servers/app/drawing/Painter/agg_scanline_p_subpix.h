@@ -1,15 +1,32 @@
 /*
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Class scanline_p8_subpix_avrg_filtering, a slightly modified version of
- * scanline_p8 customized to store 3 covers per pixel
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2008, Andrej Spielmann.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
- 
+
+/** @file agg_scanline_p_subpix.h
+    @brief Packed subpixel scanline (3 covers per pixel), the LCD-rendering
+           counterpart of agg::scanline_p8. */
+
 #ifndef AGG_SCANLINE_P_SUBPIX_INCLUDED
 #define AGG_SCANLINE_P_SUBPIX_INCLUDED
 
@@ -19,12 +36,19 @@ namespace agg
 {
 
 	//======================================================scanline_p8_subpix
-	// 
-	// This is a general purpose scaline container which supports the interface 
+	//
+	// This is a general purpose scaline container which supports the interface
 	// used in the rasterizer::render(). See description of scanline_u8
 	// for details.
-	// 
+	//
 	//------------------------------------------------------------------------
+	/**
+	 * @brief Packed scanline storing three covers per pixel for subpixel AA.
+	 *
+	 * Compresses runs of identical covers into solid spans and stores three
+	 * cover bytes per pixel for AA spans. Same span layout as scanline_p8
+	 * but tripled horizontally to drive subpixel rendering.
+	 */
 	class scanline_p8_subpix
 	{
 	public:

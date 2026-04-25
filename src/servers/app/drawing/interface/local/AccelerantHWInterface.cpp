@@ -1,17 +1,58 @@
 /*
- * Copyright 2001-2016 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Michael Lotz, mmlr@mlotz.ch
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2016, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Michael Lotz, mmlr@mlotz.ch
+ *       John Scipione, jscipione@gmail.com
  */
 
 
-//!	Accelerant based HWInterface implementation
+/**
+ * @file AccelerantHWInterface.cpp
+ * @brief Production HWInterface that drives a graphics card through its
+ *        accelerant add-on.
+ *
+ * Initialize() walks /dev/graphics, opens the first device that has a
+ * usable accelerant, dlopens the matching .so, clones it for this user,
+ * and resolves the standard hook table (acquire/release engine, mode
+ * count / list, frame-buffer config, set/get display mode, pixel-clock
+ * limits, plus the optional cursor / DPMS / brightness / overlay hooks).
+ *
+ * SetMode() loads or refreshes the supported mode list, picks a real
+ * device mode that matches the requested width/height/colour-space, and
+ * uses the optional fill-rect / blit accelerator paths when present;
+ * otherwise it falls back to the software base implementation. The
+ * frame buffer is exposed through two AccelerantBuffer instances: the
+ * front buffer is the visible region, the back buffer is either the
+ * card-provided off-screen region or a malloced shadow when the card
+ * does not provide one.
+ *
+ * The cursor implementation prefers the hardware-cursor hook, then the
+ * shape hook, then the software cursor compositor in the base class.
+ */
 
 
 #include "AccelerantHWInterface.h"
@@ -62,9 +103,21 @@ using std::nothrow;
 #endif
 
 
+/** @brief Default capacity used when sizing the fill-rect / blit
+           parameter buffers handed to the accelerant. */
 const int32 kDefaultParamsCount = 64;
 
 
+/**
+ * @brief Compares two display_mode structures byte-for-byte.
+ *
+ * Used by the mode-list helpers; treats the structs as opaque blobs so
+ * any newly added field is automatically considered.
+ *
+ * @param a  First mode.
+ * @param b  Second mode.
+ * @return   true when the two structs are bitwise equal.
+ */
 bool
 operator==(const display_mode& a, const display_mode& b)
 {
@@ -72,6 +125,12 @@ operator==(const display_mode& a, const display_mode& b)
 }
 
 
+/**
+ * @brief Checks the safemode flag that forces the fall-back display mode.
+ *
+ * @return     true when the kernel safemode option
+ *             B_SAFEMODE_FAIL_SAFE_VIDEO_MODE is set to a positive value.
+ */
 bool
 use_fail_safe_video_mode()
 {
@@ -96,6 +155,15 @@ use_fail_safe_video_mode()
 //	#pragma mark - AccelerantHWInterface
 
 
+/**
+ * @brief Constructs the interface with empty hook tables and a default
+ *        display mode.
+ *
+ * All accelerant hook pointers start NULL; they are populated by
+ * Initialize() through _OpenAccelerant() and _SetupDefaultHooks(). The
+ * front buffer wrapper is allocated up front; the back buffer is created
+ * (or aliased to the card's off-screen region) by SetMode().
+ */
 AccelerantHWInterface::AccelerantHWInterface()
 	:
 	HWInterface(),
@@ -167,6 +235,12 @@ AccelerantHWInterface::AccelerantHWInterface()
 }
 
 
+/**
+ * @brief Releases the per-call parameter buffers and the cached mode list.
+ *
+ * The accelerant itself is unhooked by Shutdown(); the destructor only
+ * cleans up the heap arrays.
+ */
 AccelerantHWInterface::~AccelerantHWInterface()
 {
 	delete[] fRectParams;
@@ -176,10 +250,18 @@ AccelerantHWInterface::~AccelerantHWInterface()
 }
 
 
-/*!	Opens the first available graphics device and initializes it.
-
-	\return B_OK on success or an appropriate error message on failure.
-*/
+/**
+ * @brief Opens the first available graphics device and initialises it.
+ *
+ * Iterates over /dev/graphics entries and tries to clone the matching
+ * accelerant for each one until a working pair is found.
+ *
+ * @return     B_OK on success or an appropriate error code on failure.
+ * @retval B_OK             A graphics device and accelerant are ready.
+ * @retval B_NO_MEMORY      The fill-rect / blit parameter buffers could
+ *                          not be allocated.
+ * @retval B_ENTRY_NOT_FOUND  No suitable graphics device exists.
+ */
 status_t
 AccelerantHWInterface::Initialize()
 {
@@ -209,11 +291,19 @@ AccelerantHWInterface::Initialize()
 }
 
 
-/*!	Proceeds with a recursive scan, avoiding vesa and framebuffer devices.
-
-
-	\return Whether a device path matching the \a deviceNumber is found.
-*/
+/**
+ * @brief Walks @a directory recursively, skipping VESA / framebuffer
+ *        fall-back nodes, until it finds the @a deviceNumber-th regular
+ *        entry.
+ *
+ * @param directory     Filesystem directory to walk (initially
+ *                      "/dev/graphics/").
+ * @param deviceNumber  Zero-based index of the target device.
+ * @param count         In/out counter of regular entries already seen.
+ * @param _path         Output, filled with the resolved path on hit.
+ * @return              true when a matching entry is written into
+ *                      @a _path.
+ */
 bool
 AccelerantHWInterface::_RecursiveScan(const char* directory, int deviceNumber, int &count,
 	char *_path)
@@ -245,20 +335,20 @@ AccelerantHWInterface::_RecursiveScan(const char* directory, int deviceNumber, i
 }
 
 
-/*!	Opens a graphics device for read-write access.
-
-	The \a deviceNumber is relative to the number of graphics devices that can
-	be opened. One represents the first card that can be opened (not necessarily
-	the first one listed in the directory).
-
-	Graphics drivers must be able to be opened more than once, so we really get
-	the first working entry.
-
-	\param deviceNumber Number identifying which graphics card to open
-	       (1 for first card).
-
-	\return The file descriptor of the opened graphics device.
-*/
+/**
+ * @brief Opens a graphics device for read-write access.
+ *
+ * The @a deviceNumber is relative to the number of graphics devices that
+ * open successfully (not the directory order). Graphics drivers must be
+ * openable more than once, so the function ignores devices that fail to
+ * open. Falls back to /dev/graphics/vesa or /dev/graphics/framebuffer
+ * when no real card is found.
+ *
+ * @param deviceNumber  Number identifying which graphics card to open
+ *                      (1 for the first card).
+ * @return              File descriptor on success, B_ENTRY_NOT_FOUND if
+ *                      no usable device exists.
+ */
 int
 AccelerantHWInterface::_OpenGraphicsDevice(int deviceNumber)
 {
@@ -288,6 +378,18 @@ AccelerantHWInterface::_OpenGraphicsDevice(int deviceNumber)
 }
 
 
+/**
+ * @brief Loads the accelerant add-on for @a device and initialises it.
+ *
+ * Queries the accelerant signature via ioctl, finds a matching add-on
+ * under any add-on directory, loads it, looks up B_ACCELERANT_ENTRY_POINT,
+ * runs B_INIT_ACCELERANT, then resolves the standard hook table via
+ * _SetupDefaultHooks(). On failure the partially loaded image is
+ * unloaded.
+ *
+ * @param device  File descriptor of the graphics device.
+ * @return        B_OK on success, B_ERROR on any failure.
+ */
 status_t
 AccelerantHWInterface::_OpenAccelerant(int device)
 {
@@ -359,6 +461,18 @@ AccelerantHWInterface::_OpenAccelerant(int device)
 }
 
 
+/**
+ * @brief Resolves the required and optional accelerant hook pointers.
+ *
+ * Required hooks (mode count / list, frame-buffer config, set/get
+ * display mode, pixel-clock limits) must all resolve or the function
+ * fails. Optional hooks (timing constraints, propose mode, monitor info,
+ * EDID, cursor, DPMS, brightness, overlay) are stored when present and
+ * left NULL otherwise.
+ *
+ * @return     B_OK when every required hook is present, B_ERROR
+ *             otherwise.
+ */
 status_t
 AccelerantHWInterface::_SetupDefaultHooks()
 {
@@ -413,6 +527,13 @@ AccelerantHWInterface::_SetupDefaultHooks()
 }
 
 
+/**
+ * @brief Re-resolves the overlay hook table after a mode change.
+ *
+ * Some accelerants change which overlay hooks are valid depending on the
+ * current display mode, so the table is refreshed every time the mode
+ * is set.
+ */
 void
 AccelerantHWInterface::_UpdateHooksAfterModeChange()
 {
@@ -437,6 +558,13 @@ AccelerantHWInterface::_UpdateHooksAfterModeChange()
 }
 
 
+/**
+ * @brief Uninitialises the accelerant, unloads its add-on, and closes
+ *        the graphics device.
+ *
+ * @return     Always B_OK; partial failures are absorbed and logged via
+ *             the accelerant's own UninitAccelerant().
+ */
 status_t
 AccelerantHWInterface::Shutdown()
 {
@@ -463,9 +591,23 @@ AccelerantHWInterface::Shutdown()
 }
 
 
-/*!	Finds the mode in the mode list that is closest to the mode specified.
-	As long as the mode list is not empty, this method will always succeed.
-*/
+/**
+ * @brief Finds the mode in the mode list closest to @a compareMode.
+ *
+ * Scores each candidate by a weighted blend of resolution, total pixel
+ * count, pixel clock, aspect ratio, and colour space distance, and
+ * returns the lowest-scoring entry.
+ *
+ * @param compareMode         Reference mode the caller wants to match.
+ * @param compareAspectRatio  Reference aspect ratio (0 disables the
+ *                            aspect-ratio term).
+ * @param modeFound           Output, populated with the closest mode.
+ * @param _diff               Optional output, set to the score of the
+ *                            chosen mode.
+ * @return                    B_OK on success, B_ERROR if the mode list
+ *                            is empty.
+ * @todo  Revisit the weighting heuristic.
+ */
 status_t
 AccelerantHWInterface::_FindBestMode(const display_mode& compareMode,
 	float compareAspectRatio, display_mode& modeFound, int32 *_diff) const
@@ -509,15 +651,18 @@ AccelerantHWInterface::_FindBestMode(const display_mode& compareMode,
 }
 
 
-/*!	This method is used for the initial mode set only - because that one
-	should really not fail.
-
-	Basically we try to set all modes as found in the mode list the driver
-	returned, but we start with the one that best fits the originally
-	desired mode.
-
-	The mode list must have been retrieved already.
-*/
+/**
+ * @brief Picks any mode the driver accepts, starting from the best match
+ *        and walking the list until something works.
+ *
+ * Used only by the initial mode set, which must not fail. The mode list
+ * must already have been populated.
+ *
+ * @param newMode  In: the desired mode (used for the closest-match search).
+ *                 Out: the mode the driver actually accepted.
+ * @return         B_OK if a mode was set, B_ERROR if every mode in the
+ *                 list was rejected.
+ */
 status_t
 AccelerantHWInterface::_SetFallbackMode(display_mode& newMode) const
 {
@@ -544,6 +689,23 @@ AccelerantHWInterface::_SetFallbackMode(display_mode& newMode) const
 }
 
 
+/**
+ * @brief Switches the card to the requested display mode.
+ *
+ * Asks the driver to set @a mode directly; if it rejects and this is the
+ * initial mode switch (or the safemode flag forces it), tries the
+ * fall-back path. Refreshes the front-buffer descriptor and the kernel
+ * KDL frame buffer, re-resolves the overlay hooks, and reallocates the
+ * software back buffer if its dimensions no longer match. CMAP8 / GRAY8
+ * modes also reload the system / grayscale palette.
+ *
+ * @param mode  Desired mode.
+ * @return      B_OK on success, B_BAD_VALUE for invalid input,
+ *              B_NO_INIT when the front buffer wrapper is missing,
+ *              B_NO_MEMORY on back-buffer allocation failure, or the
+ *              error returned by the driver.
+ * @todo  Roll back partial changes on failure.
+ */
 status_t
 AccelerantHWInterface::SetMode(const display_mode& mode)
 {
@@ -671,6 +833,12 @@ AccelerantHWInterface::SetMode(const display_mode& mode)
 }
 
 
+/**
+ * @brief Copies the currently active display mode into @a mode.
+ *
+ * @param mode  Destination; may be NULL, in which case the call is a
+ *              no-op.
+ */
 void
 AccelerantHWInterface::GetMode(display_mode* mode)
 {
@@ -681,6 +849,12 @@ AccelerantHWInterface::GetMode(display_mode* mode)
 }
 
 
+/**
+ * @brief Refreshes the cached mode list from the accelerant.
+ *
+ * @return     B_OK on success, B_ERROR if the count hook returned <= 0,
+ *             B_NO_MEMORY on allocation failure.
+ */
 status_t
 AccelerantHWInterface::_UpdateModeList()
 {
@@ -702,6 +876,12 @@ AccelerantHWInterface::_UpdateModeList()
 }
 
 
+/**
+ * @brief Re-queries the accelerant frame buffer config and forwards it
+ *        to the front-buffer wrapper.
+ *
+ * @return     B_OK on success, B_ERROR if the accelerant call failed.
+ */
 status_t
 AccelerantHWInterface::_UpdateFrameBufferConfig()
 {
@@ -716,6 +896,13 @@ AccelerantHWInterface::_UpdateFrameBufferConfig()
 }
 
 
+/**
+ * @brief Reports the accelerant's device-info block.
+ *
+ * @param info  Output, populated by the accelerant.
+ * @return      B_OK on success, B_UNSUPPORTED if the hook is missing,
+ *              or whatever the accelerant returns.
+ */
 status_t
 AccelerantHWInterface::GetDeviceInfo(accelerant_device_info* info)
 {
@@ -731,6 +918,17 @@ AccelerantHWInterface::GetDeviceInfo(accelerant_device_info* info)
 }
 
 
+/**
+ * @brief Returns a copy of the cached mode list.
+ *
+ * Refreshes the cache from the accelerant if it has not been built yet.
+ *
+ * @param _modes  Output, newly-allocated array; caller frees with delete[].
+ * @param _count  Output, number of modes copied into @a _modes.
+ * @return        B_OK on success, B_BAD_VALUE for NULL outputs,
+ *                B_NO_MEMORY on allocation failure, otherwise the error
+ *                returned by the accelerant.
+ */
 status_t
 AccelerantHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 {
@@ -758,6 +956,15 @@ AccelerantHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 }
 
 
+/**
+ * @brief Forwards a pixel-clock-limits query to the accelerant.
+ *
+ * @param mode   Mode whose limits are queried.
+ * @param _low   Output low limit.
+ * @param _high  Output high limit.
+ * @return       B_OK on success, B_BAD_VALUE for NULL inputs, otherwise
+ *               whatever the accelerant returns.
+ */
 status_t
 AccelerantHWInterface::GetPixelClockLimits(display_mode *mode, uint32* _low,
 	uint32* _high)
@@ -770,6 +977,15 @@ AccelerantHWInterface::GetPixelClockLimits(display_mode *mode, uint32* _low,
 }
 
 
+/**
+ * @brief Forwards a timing-constraints query to the accelerant when the
+ *        hook is available.
+ *
+ * @param constraints  Output structure.
+ * @return             B_OK on success, B_BAD_VALUE if @a constraints is
+ *                     NULL, B_UNSUPPORTED when the hook is missing, or
+ *                     the accelerant's error.
+ */
 status_t
 AccelerantHWInterface::GetTimingConstraints(
 	display_timing_constraints* constraints)
@@ -786,6 +1002,18 @@ AccelerantHWInterface::GetTimingConstraints(
 }
 
 
+/**
+ * @brief Asks the accelerant whether @a candidate is acceptable within
+ *        the given [low, high] range, possibly adjusting it.
+ *
+ * @param candidate  In/out candidate mode; the accelerant may rewrite it
+ *                   to a nearby legal mode.
+ * @param _low       Lower bound.
+ * @param _high      Upper bound.
+ * @return           B_OK if the candidate (possibly adjusted) is legal,
+ *                   B_BAD_VALUE for NULL inputs, B_UNSUPPORTED when the
+ *                   hook is missing, otherwise the accelerant's error.
+ */
 status_t
 AccelerantHWInterface::ProposeMode(display_mode* candidate,
 	const display_mode* _low, const display_mode* _high)
@@ -807,6 +1035,19 @@ AccelerantHWInterface::ProposeMode(display_mode* candidate,
 }
 
 
+/**
+ * @brief Asks the accelerant (or, failing that, the EDID block) for the
+ *        monitor's preferred mode.
+ *
+ * Walks the EDID detailed timing descriptors, builds a candidate
+ * display_mode from each, and uses _FindBestMode() to project the
+ * preferred timing onto an actually supported mode. The mode with the
+ * lowest score wins.
+ *
+ * @param preferredMode  Output, populated with the preferred mode.
+ * @return               B_OK on success, B_NOT_SUPPORTED if neither hook
+ *                       can answer, otherwise the underlying error.
+ */
 status_t
 AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 {
@@ -892,6 +1133,17 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 }
 
 
+/**
+ * @brief Returns metadata about the connected monitor.
+ *
+ * Prefers the accelerant's monitor-info hook; falls back to parsing the
+ * EDID block when the hook is unavailable, populating @a info with the
+ * vendor / product / size / frequency-range fields.
+ *
+ * @param info  Output structure.
+ * @return      B_OK on success, B_NOT_SUPPORTED when neither path works,
+ *              otherwise the accelerant's error.
+ */
 status_t
 AccelerantHWInterface::GetMonitorInfo(monitor_info* info)
 {
@@ -971,6 +1223,12 @@ AccelerantHWInterface::GetMonitorInfo(monitor_info* info)
 }
 
 
+/**
+ * @brief Lazily resolves and caches the accelerant's retrace semaphore.
+ *
+ * @return     The semaphore id, B_UNSUPPORTED when the hook is missing,
+ *             or whatever the accelerant returns.
+ */
 sem_id
 AccelerantHWInterface::RetraceSemaphore()
 {
@@ -991,6 +1249,14 @@ AccelerantHWInterface::RetraceSemaphore()
 }
 
 
+/**
+ * @brief Blocks until the next vertical retrace, or @a timeout expires.
+ *
+ * @param timeout  Maximum wait in microseconds; defaults to infinite.
+ * @return         B_OK on retrace, the semaphore error from
+ *                 RetraceSemaphore() if the hook is missing, otherwise
+ *                 the result of acquire_sem_etc().
+ */
 status_t
 AccelerantHWInterface::WaitForRetrace(bigtime_t timeout)
 {
@@ -1002,6 +1268,13 @@ AccelerantHWInterface::WaitForRetrace(bigtime_t timeout)
 }
 
 
+/**
+ * @brief Sets the DPMS power state via the accelerant.
+ *
+ * @param state  Target DPMS state.
+ * @return       Accelerant result, or B_UNSUPPORTED when the hook is
+ *               missing.
+ */
 status_t
 AccelerantHWInterface::SetDPMSMode(uint32 state)
 {
@@ -1014,6 +1287,12 @@ AccelerantHWInterface::SetDPMSMode(uint32 state)
 }
 
 
+/**
+ * @brief Returns the current DPMS state from the accelerant.
+ *
+ * @return     DPMS state bitmask, or B_UNSUPPORTED when the hook is
+ *             missing.
+ */
 uint32
 AccelerantHWInterface::DPMSMode()
 {
@@ -1026,6 +1305,12 @@ AccelerantHWInterface::DPMSMode()
 }
 
 
+/**
+ * @brief Returns the DPMS capability bitmask from the accelerant.
+ *
+ * @return     Bitmask of supported DPMS modes, or B_UNSUPPORTED when the
+ *             hook is missing.
+ */
 uint32
 AccelerantHWInterface::DPMSCapabilities()
 {
@@ -1038,6 +1323,13 @@ AccelerantHWInterface::DPMSCapabilities()
 }
 
 
+/**
+ * @brief Forwards a brightness change to the accelerant.
+ *
+ * @param brightness  Target brightness in [0.0, 1.0].
+ * @return            Accelerant result, or B_UNSUPPORTED when the hook
+ *                    is missing.
+ */
 status_t
 AccelerantHWInterface::SetBrightness(float brightness)
 {
@@ -1050,6 +1342,14 @@ AccelerantHWInterface::SetBrightness(float brightness)
 }
 
 
+/**
+ * @brief Reads the current brightness from the accelerant.
+ *
+ * @param brightness  Output, populated with the current brightness in
+ *                    [0.0, 1.0].
+ * @return            Accelerant result, or B_UNSUPPORTED when the hook
+ *                    is missing.
+ */
 status_t
 AccelerantHWInterface::GetBrightness(float* brightness)
 {
@@ -1062,6 +1362,12 @@ AccelerantHWInterface::GetBrightness(float* brightness)
 }
 
 
+/**
+ * @brief Returns the on-disk path of the loaded accelerant add-on.
+ *
+ * @param string  Output path.
+ * @return        Result of get_image_info() for the accelerant image.
+ */
 status_t
 AccelerantHWInterface::GetAccelerantPath(BString& string)
 {
@@ -1073,6 +1379,16 @@ AccelerantHWInterface::GetAccelerantPath(BString& string)
 }
 
 
+/**
+ * @brief Returns the on-disk path of the underlying graphics driver.
+ *
+ * Uses the accelerant's clone-info hook, which by convention returns the
+ * driver path used to clone it.
+ *
+ * @param string  Output path.
+ * @return        B_OK on success, B_NOT_SUPPORTED when the hook is
+ *                missing.
+ */
 status_t
 AccelerantHWInterface::GetDriverPath(BString& string)
 {
@@ -1096,6 +1412,15 @@ AccelerantHWInterface::GetDriverPath(BString& string)
 // #pragma mark - overlays
 
 
+/**
+ * @brief Allocates an overlay channel from the accelerant.
+ *
+ * @return     Opaque overlay token, or NULL if either the allocate or
+ *             release hook is missing.
+ * @note  The return is valid for the lifetime of the call to
+ *        ConfigureOverlay() and must be paired with
+ *        ReleaseOverlayChannel().
+ */
 overlay_token
 AccelerantHWInterface::AcquireOverlayChannel()
 {
@@ -1112,6 +1437,12 @@ AccelerantHWInterface::AcquireOverlayChannel()
 }
 
 
+/**
+ * @brief Releases an overlay channel previously returned by
+ *        AcquireOverlayChannel().
+ *
+ * @param token  Token to release; NULL is silently ignored.
+ */
 void
 AccelerantHWInterface::ReleaseOverlayChannel(overlay_token token)
 {
@@ -1122,6 +1453,16 @@ AccelerantHWInterface::ReleaseOverlayChannel(overlay_token token)
 }
 
 
+/**
+ * @brief Translates the accelerant's overlay constraints into the public
+ *        overlay_restrictions layout.
+ *
+ * @param overlay       Overlay whose restrictions are queried.
+ * @param restrictions  Output, populated on success.
+ * @return              B_OK on success, B_BAD_VALUE for NULL inputs,
+ *                      B_NOT_SUPPORTED when the constraints hook is
+ *                      missing, otherwise the accelerant's error.
+ */
 status_t
 AccelerantHWInterface::GetOverlayRestrictions(const Overlay* overlay,
 	overlay_restrictions* restrictions)
@@ -1150,6 +1491,19 @@ AccelerantHWInterface::GetOverlayRestrictions(const Overlay* overlay,
 }
 
 
+/**
+ * @brief Quickly checks whether an overlay with the given dimensions and
+ *        colour space is plausible.
+ *
+ * Only validates static information (size limits and the supported-spaces
+ * list); the actual buffer allocation may still fail.
+ *
+ * @param width       Overlay width in pixels.
+ * @param height      Overlay height in pixels.
+ * @param colorSpace  Desired colour space.
+ * @return            true when @a colorSpace appears in the supported
+ *                    list and the dimensions are within the 16-bit limit.
+ */
 bool
 AccelerantHWInterface::CheckOverlayRestrictions(int32 width, int32 height,
 	color_space colorSpace)
@@ -1180,6 +1534,15 @@ AccelerantHWInterface::CheckOverlayRestrictions(int32 width, int32 height,
 }
 
 
+/**
+ * @brief Allocates an overlay buffer through the accelerant.
+ *
+ * @param width   Buffer width in pixels.
+ * @param height  Buffer height in pixels.
+ * @param space   Colour space.
+ * @return        Pointer to the accelerant-managed buffer, or NULL when
+ *                the hook is missing or the allocation fails.
+ */
 const overlay_buffer*
 AccelerantHWInterface::AllocateOverlayBuffer(int32 width, int32 height,
 	color_space space)
@@ -1191,6 +1554,12 @@ AccelerantHWInterface::AllocateOverlayBuffer(int32 width, int32 height,
 }
 
 
+/**
+ * @brief Releases an overlay buffer previously returned by
+ *        AllocateOverlayBuffer().
+ *
+ * @param buffer  Buffer to release; NULL is silently ignored.
+ */
 void
 AccelerantHWInterface::FreeOverlayBuffer(const overlay_buffer* buffer)
 {
@@ -1201,6 +1570,13 @@ AccelerantHWInterface::FreeOverlayBuffer(const overlay_buffer* buffer)
 }
 
 
+/**
+ * @brief Pushes overlay configuration (window/view position, colour space)
+ *        to the accelerant so the overlay starts (or keeps) being shown.
+ *
+ * @param overlay  Overlay descriptor.
+ * @todo  Detect and skip redundant SetColorSpace() outside mode changes.
+ */
 void
 AccelerantHWInterface::ConfigureOverlay(Overlay* overlay)
 {
@@ -1212,6 +1588,12 @@ AccelerantHWInterface::ConfigureOverlay(Overlay* overlay)
 }
 
 
+/**
+ * @brief Tells the accelerant to stop displaying @a overlay by passing
+ *        NULL window / view rectangles.
+ *
+ * @param overlay  Overlay descriptor.
+ */
 void
 AccelerantHWInterface::HideOverlay(Overlay* overlay)
 {
@@ -1223,6 +1605,17 @@ AccelerantHWInterface::HideOverlay(Overlay* overlay)
 // #pragma mark - cursor
 
 
+/**
+ * @brief Installs @a cursor either as a hardware cursor or, when no
+ *        accelerant cursor hooks are available, as a software cursor.
+ *
+ * Tries the bitmap-cursor hook first, then the legacy 16x16 monochrome
+ * shape hook (translating BCursor's mask layout into the bitmap the
+ * accelerant expects), and finally falls back to the software cursor in
+ * the base class.
+ *
+ * @param cursor  Cursor to install; ownership is taken by the base class.
+ */
 void
 AccelerantHWInterface::SetCursor(ServerCursor* cursor)
 {
@@ -1311,6 +1704,12 @@ AccelerantHWInterface::SetCursor(ServerCursor* cursor)
 }
 
 
+/**
+ * @brief Toggles cursor visibility, preferring the hardware path when
+ *        the accelerant supports it.
+ *
+ * @param visible  true to show the cursor, false to hide it.
+ */
 void
 AccelerantHWInterface::SetCursorVisible(bool visible)
 {
@@ -1327,6 +1726,15 @@ AccelerantHWInterface::SetCursorVisible(bool visible)
 }
 
 
+/**
+ * @brief Moves the cursor, preferring the hardware path when available.
+ *
+ * Falls back to the software cursor (and disables further hardware use)
+ * if the accelerant does not provide a move hook.
+ *
+ * @param x  Target X in screen pixels.
+ * @param y  Target Y in screen pixels.
+ */
 void
 AccelerantHWInterface::MoveCursorTo(float x, float y)
 {
@@ -1349,6 +1757,11 @@ AccelerantHWInterface::MoveCursorTo(float x, float y)
 // #pragma mark - buffer access
 
 
+/**
+ * @brief Returns the RenderingBuffer for the visible frame buffer.
+ *
+ * @return     Pointer to the front buffer wrapper.
+ */
 RenderingBuffer*
 AccelerantHWInterface::FrontBuffer() const
 {
@@ -1356,6 +1769,11 @@ AccelerantHWInterface::FrontBuffer() const
 }
 
 
+/**
+ * @brief Returns the back buffer (typically a malloced shadow).
+ *
+ * @return     Pointer to the back buffer, or NULL if running unbuffered.
+ */
 RenderingBuffer*
 AccelerantHWInterface::BackBuffer() const
 {
@@ -1363,6 +1781,11 @@ AccelerantHWInterface::BackBuffer() const
 }
 
 
+/**
+ * @brief Reports whether the interface currently has a back buffer.
+ *
+ * @return     true when a back buffer exists.
+ */
 bool
 AccelerantHWInterface::IsDoubleBuffered() const
 {
@@ -1370,6 +1793,12 @@ AccelerantHWInterface::IsDoubleBuffered() const
 }
 
 
+/**
+ * @brief Copies the dirty region from the back buffer to the front
+ *        buffer using the base implementation.
+ *
+ * @param region  Region to copy in screen coordinates.
+ */
 void
 AccelerantHWInterface::_CopyBackToFront(/*const*/ BRegion& region)
 {
@@ -1380,6 +1809,12 @@ AccelerantHWInterface::_CopyBackToFront(/*const*/ BRegion& region)
 // #pragma mark -
 
 
+/**
+ * @brief Software-cursor draw hook; only runs when the hardware cursor
+ *        is not in use.
+ *
+ * @param area  Area being repainted.
+ */
 void
 AccelerantHWInterface::_DrawCursor(IntRect area) const
 {
@@ -1388,6 +1823,15 @@ AccelerantHWInterface::_DrawCursor(IntRect area) const
 }
 
 
+/**
+ * @brief Materialises a BRegion into the accelerant's fill_rect_params
+ *        array, growing the cache as needed.
+ *
+ * @param region  Source region.
+ * @param count   In/out: capacity hint on entry, number of valid entries
+ *                on exit (may be clamped down on allocation failure).
+ * @todo  The cache mutation below is not currently locked.
+ */
 void
 AccelerantHWInterface::_RegionToRectParams(/*const*/ BRegion* region,
 	uint32* count) const
@@ -1418,6 +1862,16 @@ AccelerantHWInterface::_RegionToRectParams(/*const*/ BRegion* region,
 }
 
 
+/**
+ * @brief Packs an rgb_color into the native pixel format of the active
+ *        display mode.
+ *
+ * @param color  Source colour.
+ * @return       Packed pixel value, or 0 when the colour space is not
+ *               recognised.
+ * @note  Assumes all targets share the same endianness; not strictly
+ *        correct on big-endian hardware.
+ */
 uint32
 AccelerantHWInterface::_NativeColor(const rgb_color& color) const
 {
@@ -1450,6 +1904,11 @@ AccelerantHWInterface::_NativeColor(const rgb_color& color) const
 }
 
 
+/**
+ * @brief Pushes the system 8-bit colour palette to the accelerant.
+ *
+ * Used after switching to B_CMAP8.
+ */
 void
 AccelerantHWInterface::_SetSystemPalette()
 {
@@ -1473,6 +1932,13 @@ AccelerantHWInterface::_SetSystemPalette()
 }
 
 
+/**
+ * @brief Pushes a grayscale 8-bit palette to the accelerant.
+ *
+ * In planar VGA 16-colour mode (detected when Width() exceeds
+ * BytesPerRow()) the palette repeats 16 grey levels through the index
+ * range; otherwise it programs a straight 0..255 ramp.
+ */
 void
 AccelerantHWInterface::_SetGrayscalePalette()
 {

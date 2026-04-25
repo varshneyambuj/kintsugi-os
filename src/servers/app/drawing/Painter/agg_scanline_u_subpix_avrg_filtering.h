@@ -1,16 +1,31 @@
 /*
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2008, Stephan Aßmus <superstippi@gmx.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Class scanline_u8_subpix_avrg_filtering, a slightly modified version of
- * scanline_u8 customized to store 3 covers per pixel and to implement
- * average-based color filtering
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2008, Andrej Spielmann; 2008, Stephan Aßmus.
+ *
+ * Also incorporates work from the Anti-Grain Geometry library, used under
+ * its permissive (MIT-style) license:
+ *   Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
  */
+
+/** @file agg_scanline_u_subpix_avrg_filtering.h
+    @brief Unpacked subpixel scanline with average-based filtering used to
+           suppress color fringes when AVERAGE_BASED_SUBPIXEL_FILTERING is on. */
 
 #ifndef AGG_SCANLINE_U_SUBPIX_AVRG_FILTERING_INCLUDED
 #define AGG_SCANLINE_U_SUBPIX_AVRG_FILTERING_INCLUDED
@@ -21,6 +36,14 @@ namespace agg
 {
 	//=======================================scanline_u8_subpix_avrg_filtering
 	//------------------------------------------------------------------------
+	/**
+	 * @brief Unpacked subpixel scanline with average-based color-fringe filtering.
+	 *
+	 * Same layout as scanline_u8_subpix (three covers per pixel) but, in
+	 * add_cell(), blends each cover toward the average of the three using
+	 * gSubpixelAverageWeight, reducing color fringes at the cost of some
+	 * subpixel sharpness.
+	 */
 	class scanline_u8_subpix_avrg_filtering
 	{
 	public:

@@ -1,19 +1,31 @@
 /*
- * Copyright 2001-2020 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Ryan Leavengood, leavengood@gmail.com
- *		Philippe Saint-Pierre, stpere@gmail.com
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Tri-Edge AI
- *		Jacob Secunda, secundja@gmail.com
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2020, Haiku.
+ * Original authors: Stephan Aßmus, DarkWyrm, Ryan Leavengood,
+ *                   Philippe Saint-Pierre, John Scipione, Ingo Weinhold,
+ *                   Clemens Zeidler, Joseph Groover, Tri-Edge AI,
+ *                   Jacob Secunda.
  */
+
+/** @file DefaultDecorator.h
+    @brief Default ("yellow tab") window decorator: tab gradient, close/zoom buttons, resize knob. */
+
 #ifndef DEFAULT_DECORATOR_H
 #define DEFAULT_DECORATOR_H
 
@@ -25,6 +37,9 @@ class Desktop;
 class ServerBitmap;
 
 
+/** @brief Concrete TabDecorator subclass providing the default app_server
+           window appearance: gradient tab, beveled border frame, blended
+           close/zoom buttons, and the document-look resize knob. */
 class DefaultDecorator: public TabDecorator {
 public:
 								DefaultDecorator(DesktopSettings& settings,

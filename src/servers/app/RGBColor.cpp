@@ -36,34 +36,34 @@
 
 
 /*!
-	\brief An approximation of 31/255, which is needed for converting from 32-bit
+	@brief An approximation of 31/255, which is needed for converting from 32-bit
 		colors to 16-bit and 15-bit.
 */
 #define RATIO_8_TO_5_BIT .121568627451
 
 /*!
-	\brief An approximation of 63/255, which is needed for converting from 32-bit
+	@brief An approximation of 63/255, which is needed for converting from 32-bit
 		colors to 16-bit.
 */
 #define RATIO_8_TO_6_BIT .247058823529
 
 /*!
-	\brief An approximation of 255/31, which is needed for converting from 16-bit
+	@brief An approximation of 255/31, which is needed for converting from 16-bit
 		and 15-bit colors to 32-bit.
 */
 #define RATIO_5_TO_8_BIT 8.22580645161
 
 /*!
-	\brief An approximation of 255/63, which is needed for converting from 16-bit
+	@brief An approximation of 255/63, which is needed for converting from 16-bit
 		colors to 32-bit.
 */
 #define RATIO_6_TO_8_BIT 4.04761904762
 
 #if 0
 /*!
-	\brief Function for easy conversion of 16-bit colors to 32-bit
-	\param col Pointer to an rgb_color.
-	\param color RGB16 color
+	@brief Function for easy conversion of 16-bit colors to 32-bit
+	@param col Pointer to an rgb_color.
+	@param color RGB16 color
 
 	This function will do nothing if passed a NULL 32-bit color.
 */
@@ -193,8 +193,8 @@ RGBColor::RGBColor(const rgb_color &color)
 
 #if 0
 /*!
-	\brief Create an RGBColor from a 16-bit RGBA color
-	\param color color to initialize from
+	@brief Create an RGBColor from a 16-bit RGBA color
+	@param color color to initialize from
 */
 RGBColor::RGBColor(uint16 color)
 {
@@ -317,8 +317,8 @@ RGBColor::SetColor(int r, int g, int b, int a)
 
 #if 0
 /*!
-	\brief Set the object to specified value
-	\param col16 color to copy
+	@brief Set the object to specified value
+	@param col16 color to copy
 */
 void
 RGBColor::SetColor(uint16 col16)

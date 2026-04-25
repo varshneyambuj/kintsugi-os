@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2008, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2008, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
-/**	Classes to represent font styles and families */
+
+/**
+ * @file FontStyle.cpp
+ * @brief Implementation of FontStyle, the per-style descriptor over an FT_Face.
+ *
+ * Each FontStyle owns the FT_Face for one installed font file and
+ * exposes the metrics and flags the higher-level app_server code needs
+ * (height, fixed-width detection, file path, face mask). The class also
+ * detects "full and half" CJK widths by scanning the basic-Latin range
+ * after the FreeType-reported fixed-width flag is found false.
+ */
 
 
 #include "FontFamily.h"
@@ -19,15 +48,23 @@
 #include <Entry.h>
 
 
+/** @brief Process-wide lock guarding mutating access (e.g. UpdateFace) to FontStyle. */
 static BLocker sFontLock("font lock");
 
 
-/*!
-	\brief Constructor
-	\param filepath path to a font file
-	\param face FreeType handle for the font file after it is loaded - it will
-		   be kept open until the FontStyle is destroyed
-*/
+/**
+ * @brief Constructs a FontStyle taking ownership of @a face.
+ *
+ * Computes scalable or bitmap-strike-derived height metrics, derives the
+ * Be face mask from the style name, and (for non-fixed-width faces) walks
+ * the printable ASCII range to detect "full and half" CJK widths.
+ *
+ * @param nodeRef      node_ref of the font file on disk.
+ * @param path         File path to the font.
+ * @param face         FreeType face handle; ownership transfers to this style
+ *                     and is kept open until destruction.
+ * @param fontManager  Owning FontManager used by RemoveStyle in the dtor.
+ */
 FontStyle::FontStyle(node_ref& nodeRef, const char* path, FT_Face face,
 	FontManager* fontManager)
 	:
@@ -93,6 +130,13 @@ FontStyle::FontStyle(node_ref& nodeRef, const char* path, FT_Face face,
 }
 
 
+/**
+ * @brief Destroys the style, removes it from its FontManager, and frees its face.
+ *
+ * If the style is still attached to a family the manager's catalog is
+ * updated under its lock first; the FT_Face is then released, followed
+ * by any in-memory font data the style was owning.
+ */
 FontStyle::~FontStyle()
 {
 	// make sure the font server is ours
@@ -108,6 +152,11 @@ FontStyle::~FontStyle()
 }
 
 
+/**
+ * @brief Acquires the static font lock, blocking until available.
+ *
+ * @return  true once the lock has been acquired.
+ */
 bool
 FontStyle::Lock()
 {
@@ -115,6 +164,9 @@ FontStyle::Lock()
 }
 
 
+/**
+ * @brief Releases the static font lock previously acquired with Lock().
+ */
 void
 FontStyle::Unlock()
 {
@@ -122,6 +174,15 @@ FontStyle::Unlock()
 }
 
 
+/**
+ * @brief Computes the font height for a given em size.
+ *
+ * Scales the cached @c fHeight ratios (ascender, descender, leading) by
+ * @a size so callers get pixel values directly.
+ *
+ * @param size    Em size in pixels.
+ * @param height  Output structure populated with ascent/descent/leading.
+ */
 void
 FontStyle::GetHeight(float size, font_height& height) const
 {
@@ -131,10 +192,11 @@ FontStyle::GetHeight(float size, font_height& height) const
 }
 
 
-/*!
-	\brief Returns the path to the style's font file
-	\return The style's font file path
-*/
+/**
+ * @brief Returns the on-disk path to the style's font file.
+ *
+ * @return  Pointer to a NUL-terminated path; valid for the style's lifetime.
+ */
 const char*
 FontStyle::Path() const
 {
@@ -142,10 +204,15 @@ FontStyle::Path() const
 }
 
 
-/*!
-	\brief Updates the path of the font style in case the style
-		has been moved around.
-*/
+/**
+ * @brief Refreshes the cached path after the style's directory has moved.
+ *
+ * Reconstructs an entry_ref from the new parent node_ref plus the
+ * current leaf name, so subsequent Path() queries return the new
+ * location.
+ *
+ * @param parentNodeRef  node_ref of the directory the style now lives in.
+ */
 void
 FontStyle::UpdatePath(const node_ref& parentNodeRef)
 {
@@ -158,10 +225,15 @@ FontStyle::UpdatePath(const node_ref& parentNodeRef)
 }
 
 
-/*!
-	\brief Unlike BFont::Flags() this returns the extra flags field as used
-		in the private part of BFont.
-*/
+/**
+ * @brief Returns the private BFont flag word for this style.
+ *
+ * Encodes writing direction and a few capability bits (fixed width,
+ * full/half fixed, presence of tuned bitmap strikes, presence of
+ * kerning) the BFont private API exposes to clients.
+ *
+ * @return  Flag word using the @c B_PRIVATE_FONT_* and @c B_*_FACE bits.
+ */
 uint32
 FontStyle::Flags() const
 {
@@ -180,16 +252,20 @@ FontStyle::Flags() const
 }
 
 
-/*!
-	\brief Updates the given face to match the one from this style
-
-	The specified font face often doesn't match the exact face of
-	a style. This method will preserve the attributes of the face
-	that this style does not alter, and will only update the
-	attributes that matter to this style.
-	The font renderer could then emulate the other face attributes
-	taking this style as a base.
-*/
+/**
+ * @brief Merges this style's face bits over the request's other attributes.
+ *
+ * Strips the slant/weight/width bits this style controls from @a face
+ * and replaces them with the style's own Face() bits, so the renderer
+ * can emulate any attributes the style itself does not provide on top
+ * of the actual style.
+ *
+ * @param face  Caller-supplied face mask.
+ * @return  Composite face mask describing the style plus the caller's
+ *          unaltered attributes.
+ *
+ * @todo  Improve coverage of additional face attributes.
+ */
 uint16
 FontStyle::PreservedFace(uint16 face) const
 {
@@ -202,6 +278,19 @@ FontStyle::PreservedFace(uint16 face) const
 }
 
 
+/**
+ * @brief Replaces the underlying FreeType face with @a face.
+ *
+ * Used when a font file on disk is rewritten; the new face must keep
+ * the same style name or the call is rejected so cached signatures and
+ * client-side lookups stay valid.
+ *
+ * @param face  New FreeType face; ownership transfers on success.
+ * @return  B_OK on success, B_BAD_VALUE when style name diverges, or
+ *          B_ERROR if FontStyle::Lock() was not held.
+ *
+ * @note Caller must hold FontStyle::Lock().
+ */
 status_t
 FontStyle::UpdateFace(FT_Face face)
 {
@@ -224,6 +313,15 @@ FontStyle::UpdateFace(FT_Face face)
 }
 
 
+/**
+ * @brief Re-parents this style under @a family with the given per-family ID.
+ *
+ * Removes the style from its previous family if any, sets the new
+ * parent reference, and stores the per-family numeric ID.
+ *
+ * @param family  New owning family, or NULL to detach.
+ * @param id      Style ID assigned by the family.
+ */
 void
 FontStyle::_SetFontFamily(FontFamily* family, uint16 id)
 {
@@ -235,6 +333,18 @@ FontStyle::_SetFontFamily(FontFamily* family, uint16 id)
 }
 
 
+/**
+ * @brief Heuristically derives the Be face mask from a style name.
+ *
+ * Scans @a name case-insensitively for substrings such as "Bold",
+ * "Italic", "Oblique", "Condensed", "Light", "Thin", "Heavy", and
+ * "Black", combining matches into a B_*_FACE bit mask.
+ *
+ * @param name  Style name as reported by FreeType.
+ * @return  Face mask; B_REGULAR_FACE when no keyword matched.
+ *
+ * @note The detection is lexical and may misfire on stylized names.
+ */
 uint16
 FontStyle::_TranslateStyleToFace(const char* name) const
 {
@@ -269,6 +379,18 @@ FontStyle::_TranslateStyleToFace(const char* name) const
 }
 
 
+/**
+ * @brief Adopts an in-memory font data buffer for this style.
+ *
+ * Frees any previously held buffer to avoid leaks, then takes
+ * ownership of @a location which must have been allocated with malloc()
+ * since SetFontData() and the destructor use free().
+ *
+ * @param location  Pointer to font bytes; ownership transfers.
+ * @param size      Length of the buffer in bytes.
+ *
+ * @warning The buffer must be malloc-allocated; it is released with free().
+ */
 void
 FontStyle::SetFontData(FT_Byte* location, uint32 size)
 {

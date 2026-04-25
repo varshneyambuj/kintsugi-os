@@ -94,8 +94,8 @@ public:
 	virtual	port_id				MessagePort() const { return fMessagePort; }
 
 	/*!
-		\brief Determines whether the application is the active one
-		\return true if active, false if not.
+		@brief Determines whether the application is the active one
+		@return true if active, false if not.
 	*/
 	/** @brief Returns whether this application is currently the active one.
 	 *  @return true if active. */

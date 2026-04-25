@@ -1,27 +1,58 @@
 /*
- * Copyright 2007-2009, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Maxim Shemanarev <mcseemagg@yahoo.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2009, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Maxim Shemanarev <mcseemagg@yahoo.com>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ *
+ *   Portions derived from Anti-Grain Geometry, version 2.4,
+ *   Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com).
+ *   Permission to copy, use, modify, sell and distribute this software is
+ *   granted provided this copyright notice appears in all copies. This
+ *   software is provided "as is" without express or implied warranty,
+ *   and with no claim as to its suitability for any purpose.
+ *
+ *   Contact: mcseem@antigrain.com
+ *            mcseemagg@yahoo.com
+ *            http://www.antigrain.com
  */
 
-//----------------------------------------------------------------------------
-// Anti-Grain Geometry - Version 2.4
-// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
-//
-// Permission to copy, use, modify, sell and distribute this software
-// is granted provided this copyright notice appears in all copies.
-// This software is provided "as is" without express or implied
-// warranty, and with no claim as to its suitability for any purpose.
-//
-//----------------------------------------------------------------------------
-// Contact: mcseem@antigrain.com
-//			mcseemagg@yahoo.com
-//			http://www.antigrain.com
-//----------------------------------------------------------------------------
+
+/**
+ * @file FontCacheEntry.cpp
+ * @brief Implementation of FontCacheEntry, the per-font glyph cache.
+ *
+ * A FontCacheEntry pairs one FontEngine (an FT_Face plus its rasterizer
+ * configuration) with an open hash table of GlyphCache records keyed by
+ * Unicode glyph code. The pool implementation lives in this file as a
+ * private nested class so the hash table definition can stay self
+ * contained. Special-casing for whitespace and zero-width control code
+ * points avoids generating "tofu" glyphs for characters that should be
+ * invisible.
+ *
+ * @see FontEngine, FontCache
+ */
 
 
 #include "FontCacheEntry.h"
@@ -39,41 +70,59 @@
 #include "GlobalSubpixelSettings.h"
 
 
+/** @brief Static lock protecting concurrent UpdateUsage() callers. */
 BLocker FontCacheEntry::sUsageUpdateLock("FontCacheEntry usage lock");
 
 
+/**
+ * @brief Open-addressed hash table of GlyphCache records owned by an entry.
+ *
+ * Defined as a nested class before any inline use so gcc2 in debug
+ * builds can resolve the type. Wraps a BOpenHashTable with the
+ * GlyphHashTableDefinition policy below; ownership of every glyph is
+ * transferred to the pool which deletes them in its destructor.
+ */
 class FontCacheEntry::GlyphCachePool {
 	// This class needs to be defined before any inline functions, as otherwise
 	// gcc2 will barf in debug mode.
+	/**
+	 * @brief Hash policy mapping glyph code -> GlyphCache for the open hash table.
+	 */
 	struct GlyphHashTableDefinition {
 		typedef uint32		KeyType;
 		typedef	GlyphCache	ValueType;
 
+		/** @brief Identity hash on the glyph index. */
 		size_t HashKey(uint32 key) const
 		{
 			return key;
 		}
 
+		/** @brief Hash for an existing GlyphCache value. */
 		size_t Hash(GlyphCache* value) const
 		{
 			return value->glyph_index;
 		}
 
+		/** @brief Equality between a glyph index key and a GlyphCache value. */
 		bool Compare(uint32 key, GlyphCache* value) const
 		{
 			return value->glyph_index == key;
 		}
 
+		/** @brief Returns the next-pointer storage used by the hash chain. */
 		GlyphCache*& GetLink(GlyphCache* value) const
 		{
 			return value->hash_link;
 		}
 	};
 public:
+	/** @brief Constructs an empty pool; Init() must be called before use. */
 	GlyphCachePool()
 	{
 	}
 
+	/** @brief Destroys every glyph held by the table. */
 	~GlyphCachePool()
 	{
 		GlyphCache* glyph = fGlyphTable.Clear(true);
@@ -84,16 +133,27 @@ public:
 		}
 	}
 
+	/** @brief Initializes the underlying open hash table. */
 	status_t Init()
 	{
 		return fGlyphTable.Init();
 	}
 
+	/** @brief Looks up a glyph by code; returns NULL when absent. */
 	const GlyphCache* FindGlyph(uint32 glyphIndex) const
 	{
 		return fGlyphTable.Lookup(glyphIndex);
 	}
 
+	/**
+	 * @brief Allocates and inserts a new GlyphCache for @a glyphIndex.
+	 *
+	 * @return The freshly inserted glyph, or NULL when one already
+	 *         exists for the same key or allocation failed.
+	 *
+	 * @todo The hash table grows without bounds; older entries are not
+	 *       evicted yet.
+	 */
 	GlyphCache* CacheGlyph(uint32 glyphIndex,
 		uint32 dataSize, glyph_data_type dataType, const agg::rect_i& bounds,
 		float advanceX, float advanceY, float preciseAdvanceX,
@@ -129,6 +189,9 @@ private:
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an unused entry with a fresh, empty glyph pool.
+ */
 FontCacheEntry::FontCacheEntry()
 	:
 	MultiLocker("FontCacheEntry lock"),
@@ -140,12 +203,29 @@ FontCacheEntry::FontCacheEntry()
 }
 
 
+/**
+ * @brief Destroys the entry; the ObjectDeleter releases the glyph pool.
+ */
 FontCacheEntry::~FontCacheEntry()
 {
 //printf("~FontCacheEntry()\n");
 }
 
 
+/**
+ * @brief Initializes the engine and glyph pool for @a font.
+ *
+ * Resolves the rendering type from the font's flags (subpixel, gray8,
+ * mono, or vector) and asks the FontEngine to load the face either from
+ * the on-disk path or from an in-memory blob. Failure leaves the entry
+ * in an unusable state.
+ *
+ * @param font         Source ServerFont; supplies path, size, hinting.
+ * @param forceVector  Force outline rasterization regardless of size.
+ * @return  true on full success, false when the glyph pool is missing,
+ *          the FreeType face cannot be loaded, or the hash table cannot
+ *          be allocated.
+ */
 bool
 FontCacheEntry::Init(const ServerFont& font, bool forceVector)
 {
@@ -182,6 +262,14 @@ FontCacheEntry::Init(const ServerFont& font, bool forceVector)
 }
 
 
+/**
+ * @brief Reports whether every code point in @a utf8String is already cached.
+ *
+ * @param utf8String  UTF-8 input bytes.
+ * @param length      Maximum number of bytes to inspect.
+ * @return  true when all decoded code points have a matching GlyphCache,
+ *          false on the first miss.
+ */
 bool
 FontCacheEntry::HasGlyphs(const char* utf8String, ssize_t length) const
 {
@@ -197,6 +285,13 @@ FontCacheEntry::HasGlyphs(const char* utf8String, ssize_t length) const
 }
 
 
+/**
+ * @brief Returns true when @a glyphCode should render as the space glyph.
+ *
+ * Covers the Unicode @c White_Space property: control characters,
+ * no-break space variants, ogham space, en/em quad family, line/paragraph
+ * separators, and the ideographic space.
+ */
 inline bool
 render_as_space(uint32 glyphCode)
 {
@@ -224,6 +319,14 @@ render_as_space(uint32 glyphCode)
 }
 
 
+/**
+ * @brief Returns true when @a glyphCode should render as zero-width / invisible.
+ *
+ * Covers Unicode @c Default_Ignorable_Code_Point (soft hyphen, zero-width
+ * spaces, format controls, variation selectors) plus reserved
+ * non-characters; the catch-all path keeps "tofu" boxes from leaking
+ * through for code points that have no visible representation.
+ */
 inline bool
 render_as_zero_width(uint32 glyphCode)
 {
@@ -275,6 +378,11 @@ render_as_zero_width(uint32 glyphCode)
 }
 
 
+/**
+ * @brief Returns the cached glyph for @a glyphCode, or NULL on miss.
+ *
+ * @note Only requires the entry's read lock; never mutates the cache.
+ */
 const GlyphCache*
 FontCacheEntry::CachedGlyph(uint32 glyphCode)
 {
@@ -283,6 +391,14 @@ FontCacheEntry::CachedGlyph(uint32 glyphCode)
 }
 
 
+/**
+ * @brief Reports whether the underlying engine knows how to draw @a glyphCode.
+ *
+ * Bypasses both the local cache and the fallback chain because it is
+ * itself used to decide whether a fallback is needed.
+ *
+ * @return  true if FreeType maps @a glyphCode to a non-zero glyph index.
+ */
 bool
 FontCacheEntry::CanCreateGlyph(uint32 glyphCode)
 {
@@ -293,6 +409,23 @@ FontCacheEntry::CanCreateGlyph(uint32 glyphCode)
 }
 
 
+/**
+ * @brief Rasterizes (or fetches) the glyph for @a glyphCode and caches it.
+ *
+ * If the local FT_Face has no glyph for the code point and a
+ * @a fallbackEntry is supplied, the fallback's engine is used to
+ * rasterize the glyph; the bytes are still stored in the local pool so
+ * subsequent lookups by glyph code hit. Whitespace is normalized to the
+ * regular space glyph and zero-width controls cache an empty record.
+ *
+ * @param glyphCode      Unicode code point to render.
+ * @param fallbackEntry  Optional companion entry consulted on miss.
+ * @return  Pointer into the local glyph pool, or NULL on rasterization
+ *          failure.
+ *
+ * @note Both this and the fallback FontCacheEntry are expected to be
+ *       write-locked.
+ */
 const GlyphCache*
 FontCacheEntry::CreateGlyph(uint32 glyphCode, FontCacheEntry* fallbackEntry)
 {
@@ -348,6 +481,22 @@ FontCacheEntry::CreateGlyph(uint32 glyphCode, FontCacheEntry* fallbackEntry)
 }
 
 
+/**
+ * @brief Initializes the AGG adaptors that consume @a glyph's serialized data.
+ *
+ * Selects the right adapter for the glyph's storage format (mono/gray8/
+ * subpixel/outline) and configures it with the glyph origin and an
+ * optional outline scale. A null @a glyph is silently ignored so the
+ * caller can pass through cache misses.
+ *
+ * @param glyph          The glyph to render, or NULL for a no-op.
+ * @param x              Pen x position in pixels.
+ * @param y              Pen y position in pixels.
+ * @param monoAdapter    Output adapter populated for 1-bit glyphs.
+ * @param gray8Adapter   Output adapter populated for 8-bit AA glyphs.
+ * @param pathAdapter    Output adapter populated for vector glyphs.
+ * @param scale          Per-glyph scale applied to outline mode only.
+ */
 void
 FontCacheEntry::InitAdaptors(const GlyphCache* glyph,
 	double x, double y, GlyphMonoAdapter& monoAdapter,
@@ -380,6 +529,18 @@ FontCacheEntry::InitAdaptors(const GlyphCache* glyph,
 }
 
 
+/**
+ * @brief Adds the kerning offset between two consecutive glyphs to (*x, *y).
+ *
+ * Forwards to FontEngine::GetKerning(); returns false (and leaves the
+ * outputs untouched) when the face has no kerning data.
+ *
+ * @param glyphCode1  First glyph in the pair.
+ * @param glyphCode2  Second glyph in the pair.
+ * @param x           In-out pen x; updated by the kerning delta on success.
+ * @param y           In-out pen y; updated by the kerning delta on success.
+ * @return  true when a kerning value was applied, false otherwise.
+ */
 bool
 FontCacheEntry::GetKerning(uint32 glyphCode1, uint32 glyphCode2,
 	double* x, double* y)
@@ -388,6 +549,21 @@ FontCacheEntry::GetKerning(uint32 glyphCode1, uint32 glyphCode2,
 }
 
 
+/**
+ * @brief Builds a stable signature string identifying this font + render mode.
+ *
+ * The signature combines family/style ID, manager pointer, encoding,
+ * face mask, rendering type, size, hinting, and the global subpixel
+ * filter weight, so two ServerFonts that would produce identical glyphs
+ * map to the same FontCache slot.
+ *
+ * @param signature      Output buffer; must be at least @a signatureSize bytes.
+ * @param signatureSize  Capacity of @a signature.
+ * @param font           Source ServerFont.
+ * @param forceVector    Forces vector glyph storage in the signature.
+ *
+ * @todo  Read more rendering knobs (encoding, etc.) from the ServerFont.
+ */
 /*static*/ void
 FontCacheEntry::GenerateSignature(char* signature, size_t signatureSize,
 	const ServerFont& font, bool forceVector)
@@ -405,6 +581,13 @@ FontCacheEntry::GenerateSignature(char* signature, size_t signatureSize,
 }
 
 
+/**
+ * @brief Stamps the entry with the current time and bumps its use counter.
+ *
+ * Called by FontCache::Recycle() to feed the LRU heuristic. Uses a
+ * single static lock for all entries to keep the semaphore footprint
+ * bounded; the critical section is intentionally tiny.
+ */
 void
 FontCacheEntry::UpdateUsage()
 {
@@ -420,6 +603,18 @@ FontCacheEntry::UpdateUsage()
 }
 
 
+/**
+ * @brief Selects the rasterizer mode for a given ServerFont configuration.
+ *
+ * Defaults to subpixel or gray8 depending on the global subpixel
+ * antialiasing setting, then falls back to vector outlines whenever the
+ * raster path cannot represent the request: rotated/sheared text, false
+ * bold, antialiasing disabled, very large sizes, or hinting off.
+ *
+ * @param font         The ServerFont in question.
+ * @param forceVector  Caller-imposed override forcing outline rendering.
+ * @return  The chosen ::glyph_rendering value.
+ */
 /*static*/ glyph_rendering
 FontCacheEntry::_RenderTypeFor(const ServerFont& font, bool forceVector)
 {

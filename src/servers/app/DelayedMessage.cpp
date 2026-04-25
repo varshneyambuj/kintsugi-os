@@ -66,7 +66,7 @@ typedef BObjectList<Attachment, true> AttachmentList;
 
 
 /*!	\class ScheduledMessage
-	\brief Responsible for sending of delayed message.
+	@brief Responsible for sending of delayed message.
 */
 class ScheduledMessage {
 public:
@@ -89,7 +89,7 @@ public:
 
 
 /*!	\class DelayedMessageSender DelayedMessageSender.h
-	\brief Responsible for scheduling and sending of delayed messages
+	@brief Responsible for scheduling and sending of delayed messages
 */
 class DelayedMessageSender {
 public:
@@ -127,7 +127,7 @@ DelayedMessageSender gDelayedMessageSender;
 
 
 /*!	\class DelayedMessageData DelayedMessageSender.h
-	\brief Owns DelayedMessage data, allocates memory and copies data only
+	@brief Owns DelayedMessage data, allocates memory and copies data only
 			when needed,
 */
 class DelayedMessageData {

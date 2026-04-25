@@ -1,15 +1,46 @@
 /*
- * Copyright 2009, Christian Packmann.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
- * Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Christian Packmann.
+ *   Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
+ *   Copyright 2005-2014, Stephan Aßmus <superstippi@gmx.de>.
+ *   Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
 
 
-/*!	API to the Anti-Grain Geometry based "Painter" drawing backend. Manages
-	rendering pipe-lines for stroke, fills, bitmap and text rendering.
-*/
+/**
+ * @file Painter.cpp
+ * @brief Anti-Grain Geometry based software rasterizer for the app_server.
+ *
+ * Implements the Painter class, the workhorse 2D rasterizer that turns
+ * BView draw commands (lines, polygons, bezier curves, shapes, rects,
+ * round-rects, ellipses, arcs, strings, bitmaps and gradients) into pixel
+ * writes on a destination buffer. It composes AGG rasterizers, scanlines
+ * and renderers via PainterAggInterface, applies the active drawing mode,
+ * pen size, pattern, clipping region and affine transform, and dispatches
+ * text rendering through AGGTextRenderer and bitmap rendering through
+ * BitmapPainter.
+ *
+ * @see PainterAggInterface, AGGTextRenderer, BitmapPainter, DrawingEngine
+ */
 
 
 #include "Painter.h"
@@ -108,12 +139,19 @@ using std::nothrow;
 
 static uint32 detect_simd();
 
+/** @brief Cached SIMD capability flags shared across the app_server. */
 uint32 gSIMDFlags = detect_simd();
 
 
-/*!	Detect SIMD flags for use in AppServer. Checks all CPUs in the system
-	and chooses the minimum supported set of instructions.
-*/
+/**
+ * @brief Probes every CPU for SIMD support and returns the common subset.
+ *
+ * Walks each CPU reported by the kernel, reads its CPUID feature bits and
+ * intersects the per-CPU SIMD flag sets so the returned value only includes
+ * instruction sets that work on every core. Non-x86 builds always return 0.
+ *
+ * @return Bitmask of APPSERVER_SIMD_* flags supported by every CPU.
+ */
 static uint32
 detect_simd()
 {
@@ -178,8 +216,22 @@ detect_simd()
 // Gradients and strings don't use patterns, but we want the special handling
 // we have for solid patterns in certain modes to get the expected results for
 // border antialiasing.
+/**
+ * @brief Scoped switch to B_SOLID_HIGH pattern with automatic restore.
+ *
+ * Used by gradient and string draw paths so they benefit from the optimized
+ * solid-pattern code paths in the drawing modes (which would otherwise miss
+ * the AA border tweaks). The previous pattern is restored when the guard
+ * goes out of scope.
+ */
 class SolidPatternGuard {
 public:
+	/**
+	 * @brief Stores the current pattern and forces it to B_SOLID_HIGH.
+	 *
+	 * @param painter Painter whose pattern is temporarily replaced; must
+	 *        outlive the guard.
+	 */
 	SolidPatternGuard(Painter* painter)
 		:
 		fPainter(painter),
@@ -188,6 +240,7 @@ public:
 		fPainter->SetPattern(B_SOLID_HIGH);
 	}
 
+	/** @brief Restores the original pattern on the guarded Painter. */
 	~SolidPatternGuard()
 	{
 		fPainter->SetPattern(fPattern);
@@ -202,6 +255,15 @@ private:
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a Painter in a detached, identity-state configuration.
+ *
+ * Initializes pen size, drawing mode (B_OP_COPY), alpha blending defaults,
+ * line cap/join modes, the PatternHandler, the AGGTextRenderer (wired to
+ * the AGG renderers), and the AGG pipeline aggregate (PainterAggInterface).
+ * No buffer is attached and no clipping region is set; AttachToBuffer()
+ * and ConstrainClipping() must be called before drawing.
+ */
 Painter::Painter()
 	:
 	fSubpixelPrecise(false),
@@ -232,7 +294,7 @@ Painter::Painter()
 }
 
 
-// destructor
+/** @brief Destructor; pipeline objects clean up themselves. */
 Painter::~Painter()
 {
 }
@@ -241,7 +303,17 @@ Painter::~Painter()
 // #pragma mark -
 
 
-// AttachToBuffer
+/**
+ * @brief Attaches this Painter to a destination rendering buffer.
+ *
+ * Validates that @a buffer is initialized and uses a 32-bit color space
+ * (B_RGBA32 or B_RGB32), points the AGG rendering buffer at its bits, and
+ * marks the Painter as attached. Clipping becomes valid only when a region
+ * has also been set via ConstrainClipping(). Buffers in unsupported color
+ * spaces are silently rejected.
+ *
+ * @param buffer Destination rendering buffer.
+ */
 void
 Painter::AttachToBuffer(RenderingBuffer* buffer)
 {
@@ -268,7 +340,12 @@ Painter::AttachToBuffer(RenderingBuffer* buffer)
 }
 
 
-// DetachFromBuffer
+/**
+ * @brief Detaches this Painter from its current buffer.
+ *
+ * After this call further drawing is suppressed until AttachToBuffer() is
+ * invoked again.
+ */
 void
 Painter::DetachFromBuffer()
 {
@@ -278,7 +355,11 @@ Painter::DetachFromBuffer()
 }
 
 
-// Bounds
+/**
+ * @brief Returns the destination buffer's pixel-area bounds.
+ *
+ * @return BRect of (0, 0, width-1, height-1) for the attached buffer.
+ */
 BRect
 Painter::Bounds() const
 {
@@ -289,7 +370,21 @@ Painter::Bounds() const
 // #pragma mark -
 
 
-// SetDrawState
+/**
+ * @brief Adopts every drawing attribute from a DrawState.
+ *
+ * Copies the combined transform, pen size, font, subpixel precision flag,
+ * alpha mask, drawing mode and pattern, line cap/join modes, miter limit,
+ * fill rule, and high/low colors from @a state. The DrawState's private
+ * clipping region is intentionally ignored — it is applied elsewhere by
+ * the DrawingEngine.
+ *
+ * @param state   Source DrawState to copy attributes from.
+ * @param xOffset Horizontal pattern/transform origin offset.
+ * @param yOffset Vertical pattern/transform origin offset.
+ * @note Used when switching the active view in ServerWindow or after a
+ *       decorator has clobbered the pipeline state.
+ */
 void
 Painter::SetDrawState(const DrawState* state, int32 xOffset, int32 yOffset)
 {
@@ -352,7 +447,16 @@ Painter::SetDrawState(const DrawState* state, int32 xOffset, int32 yOffset)
 // #pragma mark - state
 
 
-// ConstrainClipping
+/**
+ * @brief Sets the clipping region applied to every subsequent draw call.
+ *
+ * Stores @a region, propagates it to the AGG base renderer and the AA and
+ * subpixel rasterizer clip boxes, and updates the validity flag used by
+ * the CHECK_CLIPPING guards.
+ *
+ * @param region Clipping region; the Painter does not take ownership and
+ *        the caller must keep it alive while drawing.
+ */
 void
 Painter::ConstrainClipping(const BRegion* region)
 {
@@ -368,6 +472,18 @@ Painter::ConstrainClipping(const BRegion* region)
 }
 
 
+/**
+ * @brief Sets the view-space affine transform.
+ *
+ * Builds the internal Transformable as translate(-offset) * @a transform *
+ * translate(+offset) so the user-supplied transform pivots around the
+ * view's logical origin. The identity flag short-circuits transform-aware
+ * fast paths in the geometry helpers.
+ *
+ * @param transform Source BAffineTransform.
+ * @param xOffset   Horizontal origin offset to apply before/after.
+ * @param yOffset   Vertical origin offset to apply before/after.
+ */
 void
 Painter::SetTransform(BAffineTransform transform, int32 xOffset, int32 yOffset)
 {
@@ -383,7 +499,15 @@ Painter::SetTransform(BAffineTransform transform, int32 xOffset, int32 yOffset)
 }
 
 
-// SetHighColor
+/**
+ * @brief Sets the high color used by B_SOLID_HIGH patterns.
+ *
+ * Skips work when the new color matches the current one. When the active
+ * pattern is B_SOLID_HIGH, the AGG renderers are also reseeded with the
+ * new color so the optimized solid drawing modes pick it up.
+ *
+ * @param color New high color.
+ */
 void
 Painter::SetHighColor(const rgb_color& color)
 {
@@ -395,7 +519,11 @@ Painter::SetHighColor(const rgb_color& color)
 }
 
 
-// SetLowColor
+/**
+ * @brief Sets the low color used by B_SOLID_LOW patterns.
+ *
+ * @param color New low color.
+ */
 void
 Painter::SetLowColor(const rgb_color& color)
 {
@@ -405,7 +533,14 @@ Painter::SetLowColor(const rgb_color& color)
 }
 
 
-// SetDrawingMode
+/**
+ * @brief Selects the active BeOS drawing mode (B_OP_COPY, B_OP_OVER, etc.).
+ *
+ * Forwards to _UpdateDrawingMode() to refresh the PixelFormat-managed
+ * drawing-mode dispatch table.
+ *
+ * @param mode New drawing mode.
+ */
 void
 Painter::SetDrawingMode(drawing_mode mode)
 {
@@ -416,7 +551,15 @@ Painter::SetDrawingMode(drawing_mode mode)
 }
 
 
-// SetBlendingMode
+/**
+ * @brief Selects the alpha-source and alpha-function used by B_OP_ALPHA.
+ *
+ * Triggers a drawing-mode refresh only when the active mode is B_OP_ALPHA,
+ * because the alpha pair has no effect outside it.
+ *
+ * @param srcAlpha  Source alpha selector (B_PIXEL_ALPHA or B_CONSTANT_ALPHA).
+ * @param alphaFunc Alpha blending function (B_ALPHA_OVERLAY, B_ALPHA_COMPOSITE).
+ */
 void
 Painter::SetBlendingMode(source_alpha srcAlpha, alpha_function alphaFunc)
 {
@@ -429,7 +572,11 @@ Painter::SetBlendingMode(source_alpha srcAlpha, alpha_function alphaFunc)
 }
 
 
-// SetPenSize
+/**
+ * @brief Sets the stroke pen size in pixels.
+ *
+ * @param size New pen size.
+ */
 void
 Painter::SetPenSize(float size)
 {
@@ -437,7 +584,13 @@ Painter::SetPenSize(float size)
 }
 
 
-// SetStrokeMode
+/**
+ * @brief Sets line cap, line join, and miter limit for stroked geometry.
+ *
+ * @param lineCap    Cap style for line ends.
+ * @param joinMode   Join style at corners.
+ * @param miterLimit Maximum miter length before falling back to a bevel.
+ */
 void
 Painter::SetStrokeMode(cap_mode lineCap, join_mode joinMode, float miterLimit)
 {
@@ -447,6 +600,11 @@ Painter::SetStrokeMode(cap_mode lineCap, join_mode joinMode, float miterLimit)
 }
 
 
+/**
+ * @brief Sets the polygon fill rule on both AA and subpixel rasterizers.
+ *
+ * @param fillRule B_EVEN_ODD or B_NONZERO.
+ */
 void
 Painter::SetFillRule(int32 fillRule)
 {
@@ -458,7 +616,15 @@ Painter::SetFillRule(int32 fillRule)
 }
 
 
-// SetPattern
+/**
+ * @brief Sets the active 8x8 stipple pattern.
+ *
+ * Updates the drawing-mode dispatch (since the pixel format takes a fast
+ * path for solid patterns) and reseeds the AGG renderer color when the
+ * pattern collapses to B_SOLID_HIGH or B_SOLID_LOW.
+ *
+ * @param p New pattern.
+ */
 void
 Painter::SetPattern(const pattern& p)
 {
@@ -478,7 +644,11 @@ Painter::SetPattern(const pattern& p)
 }
 
 
-// SetFont
+/**
+ * @brief Sets the font and AA flag from a ServerFont.
+ *
+ * @param font Source ServerFont.
+ */
 void
 Painter::SetFont(const ServerFont& font)
 {
@@ -487,7 +657,11 @@ Painter::SetFont(const ServerFont& font)
 }
 
 
-// SetFont
+/**
+ * @brief Sets the font from a DrawState, honoring forced font aliasing.
+ *
+ * @param state Source DrawState (must be non-NULL).
+ */
 void
 Painter::SetFont(const DrawState* state)
 {
@@ -500,7 +674,18 @@ Painter::SetFont(const DrawState* state)
 // #pragma mark - drawing
 
 
-// StrokeLine
+/**
+ * @brief Strokes a single line from @a a to @a b with the current pen.
+ *
+ * Tries the optimized solid-color StraightLine() fast path first (1px pen,
+ * identity transform, B_OP_COPY/B_OP_OVER, no alpha mask). Falls back to a
+ * full path stroke for thick or transformed lines, with a special-case for
+ * single-pixel "dots" when @a a equals @a b. Single-pixel non-subpixel lines
+ * use B_SQUARE_CAP so endpoints are inclusive (R5 compatibility).
+ *
+ * @param a Start point.
+ * @param b End point.
+ */
 void
 Painter::StrokeLine(BPoint a, BPoint b)
 {
@@ -566,7 +751,16 @@ Painter::StrokeLine(BPoint a, BPoint b)
 }
 
 
-// StrokeLine
+/**
+ * @brief Strokes a line with a gradient stroke.
+ *
+ * Same shape logic as the solid-color overload but always rasterizes
+ * through the gradient pipeline.
+ *
+ * @param a        Start point.
+ * @param b        End point.
+ * @param gradient Gradient to apply along the stroke.
+ */
 void
 Painter::StrokeLine(BPoint a, BPoint b, const BGradient& gradient)
 {
@@ -608,7 +802,18 @@ Painter::StrokeLine(BPoint a, BPoint b, const BGradient& gradient)
 }
 
 
-// StraightLine
+/**
+ * @brief Fast-path renderer for axis-aligned 1px solid lines.
+ *
+ * Iterates the clipping region's rectangles and writes raw 32-bit pixels
+ * directly into the buffer for purely vertical or horizontal lines.
+ *
+ * @param a Start point.
+ * @param b End point.
+ * @param c Solid color to write (alpha is forced to 255).
+ * @retval true  Line was vertical or horizontal and has been drawn.
+ * @retval false Line is diagonal; the caller should fall back to AGG.
+ */
 bool
 Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
 {
@@ -683,7 +888,14 @@ Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
 // #pragma mark -
 
 
-// StrokeTriangle
+/**
+ * @brief Strokes a triangle outline.
+ *
+ * @param pt1 First vertex.
+ * @param pt2 Second vertex.
+ * @param pt3 Third vertex.
+ * @return Bounding rectangle of the rendered geometry, clipped.
+ */
 BRect
 Painter::StrokeTriangle(BPoint pt1, BPoint pt2, BPoint pt3) const
 {
@@ -691,7 +903,15 @@ Painter::StrokeTriangle(BPoint pt1, BPoint pt2, BPoint pt3) const
 }
 
 
-// StrokeTriangle
+/**
+ * @brief Strokes a triangle with a gradient stroke.
+ *
+ * @param pt1      First vertex.
+ * @param pt2      Second vertex.
+ * @param pt3      Third vertex.
+ * @param gradient Gradient applied to the stroke.
+ * @return Bounding rectangle of the rendered geometry, clipped.
+ */
 BRect
 Painter::StrokeTriangle(BPoint pt1, BPoint pt2, BPoint pt3, const BGradient& gradient)
 {
@@ -699,7 +919,14 @@ Painter::StrokeTriangle(BPoint pt1, BPoint pt2, BPoint pt3, const BGradient& gra
 }
 
 
-// FillTriangle
+/**
+ * @brief Fills a triangle with the current pattern.
+ *
+ * @param pt1 First vertex.
+ * @param pt2 Second vertex.
+ * @param pt3 Third vertex.
+ * @return Bounding rectangle of the filled triangle, clipped.
+ */
 BRect
 Painter::FillTriangle(BPoint pt1, BPoint pt2, BPoint pt3) const
 {
@@ -707,7 +934,15 @@ Painter::FillTriangle(BPoint pt1, BPoint pt2, BPoint pt3) const
 }
 
 
-// FillTriangle
+/**
+ * @brief Fills a triangle with a gradient.
+ *
+ * @param pt1      First vertex.
+ * @param pt2      Second vertex.
+ * @param pt3      Third vertex.
+ * @param gradient Gradient to fill the triangle with.
+ * @return Bounding rectangle of the filled triangle, clipped.
+ */
 BRect
 Painter::FillTriangle(BPoint pt1, BPoint pt2, BPoint pt3,
 	const BGradient& gradient)
@@ -716,7 +951,19 @@ Painter::FillTriangle(BPoint pt1, BPoint pt2, BPoint pt3,
 }
 
 
-// DrawPolygon
+/**
+ * @brief Strokes or fills a polygon defined by an array of points.
+ *
+ * Aligns each vertex to pixel boundaries (with optional half-pixel center
+ * offset for odd-width strokes), builds the path, and dispatches to
+ * _StrokePath() or _FillPath().
+ *
+ * @param p      Vertex array, will be modified for alignment.
+ * @param numPts Number of vertices.
+ * @param filled True to fill, false to stroke.
+ * @param closed True to close the polygon.
+ * @return Bounding rectangle of the rendered polygon, clipped.
+ */
 BRect
 Painter::DrawPolygon(BPoint* p, int32 numPts, bool filled, bool closed) const
 {
@@ -749,7 +996,16 @@ Painter::DrawPolygon(BPoint* p, int32 numPts, bool filled, bool closed) const
 }
 
 
-// FillPolygon
+/**
+ * @brief Strokes or fills a polygon with a gradient.
+ *
+ * @param p        Vertex array, modified for alignment.
+ * @param numPts   Number of vertices.
+ * @param filled   True to fill, false to stroke.
+ * @param closed   True to close the polygon.
+ * @param gradient Gradient applied to the stroke or fill.
+ * @return Bounding rectangle of the rendered polygon, clipped.
+ */
 BRect
 Painter::DrawPolygon(BPoint* p, int32 numPts, bool filled, bool closed, const BGradient& gradient)
 {
@@ -782,7 +1038,13 @@ Painter::DrawPolygon(BPoint* p, int32 numPts, bool filled, bool closed, const BG
 }
 
 
-// DrawBezier
+/**
+ * @brief Strokes or fills a cubic Bezier curve defined by 4 control points.
+ *
+ * @param p      Array of four control points (start, ctrl1, ctrl2, end).
+ * @param filled True to fill the curve as a closed shape.
+ * @return Bounding rectangle of the rendered curve, clipped.
+ */
 BRect
 Painter::DrawBezier(BPoint* p, bool filled) const
 {
@@ -807,7 +1069,14 @@ Painter::DrawBezier(BPoint* p, bool filled) const
 }
 
 
-// FillBezier
+/**
+ * @brief Strokes or fills a cubic Bezier curve with a gradient.
+ *
+ * @param p        Array of four control points.
+ * @param filled   True to fill, false to stroke.
+ * @param gradient Gradient to apply.
+ * @return Bounding rectangle of the rendered curve, clipped.
+ */
 BRect
 Painter::DrawBezier(BPoint* p, bool filled, const BGradient& gradient)
 {
@@ -832,7 +1101,21 @@ Painter::DrawBezier(BPoint* p, bool filled, const BGradient& gradient)
 }
 
 
-// DrawShape
+/**
+ * @brief Renders a BShape-style operation/point list.
+ *
+ * Iterates the (opList, points) shape encoding through _IterateShapeData()
+ * and either fills or strokes the resulting AGG path.
+ *
+ * @param opCount             Number of opcodes in @a opList.
+ * @param opList              Shape opcodes (OP_MOVETO, OP_LINETO, etc.).
+ * @param ptCount             Number of points referenced by @a points.
+ * @param points              Point list.
+ * @param filled              True to fill, false to stroke.
+ * @param viewToScreenOffset  Translation applied to every point.
+ * @param viewScale           Scale applied to every point.
+ * @return Bounding rectangle of the rendered shape, clipped.
+ */
 BRect
 Painter::DrawShape(const int32& opCount, const uint32* opList,
 	const int32& ptCount, const BPoint* points, bool filled,
@@ -850,7 +1133,19 @@ Painter::DrawShape(const int32& opCount, const uint32* opList,
 }
 
 
-// FillShape
+/**
+ * @brief Renders a BShape with a gradient applied to its fill or stroke.
+ *
+ * @param opCount             Number of opcodes in @a opList.
+ * @param opList              Shape opcodes.
+ * @param ptCount             Number of points referenced by @a points.
+ * @param points              Point list.
+ * @param filled              True to fill, false to stroke.
+ * @param gradient            Gradient to apply.
+ * @param viewToScreenOffset  Translation applied to every point.
+ * @param viewScale           Scale applied to every point.
+ * @return Bounding rectangle of the rendered shape, clipped.
+ */
 BRect
 Painter::DrawShape(const int32& opCount, const uint32* opList,
 	const int32& ptCount, const BPoint* points, bool filled, const BGradient& gradient,
@@ -868,7 +1163,17 @@ Painter::DrawShape(const int32& opCount, const uint32* opList,
 }
 
 
-// StrokeRect
+/**
+ * @brief Strokes a rectangle outline with the current pen and pattern.
+ *
+ * Tries the StraightLine() fast path for 1px strokes with B_OP_COPY/OVER
+ * and a solid pattern; otherwise builds a closed path and runs the AGG
+ * stroke pipeline. Single-pixel-width or single-pixel-height rectangles
+ * collapse to a single line for accuracy.
+ *
+ * @param r Source rectangle.
+ * @return Bounding rectangle of the stroke, clipped.
+ */
 BRect
 Painter::StrokeRect(const BRect& r) const
 {
@@ -919,7 +1224,13 @@ Painter::StrokeRect(const BRect& r) const
 }
 
 
-// StrokeRect
+/**
+ * @brief Strokes a rectangle with a gradient.
+ *
+ * @param r        Source rectangle.
+ * @param gradient Gradient applied to the stroke.
+ * @return Bounding rectangle of the stroke, clipped.
+ */
 BRect
 Painter::StrokeRect(const BRect& r, const BGradient& gradient)
 {
@@ -954,7 +1265,14 @@ Painter::StrokeRect(const BRect& r, const BGradient& gradient)
 }
 
 
-// StrokeRect
+/**
+ * @brief Strokes a 1-pixel solid-color rectangle without blending.
+ *
+ * Decomposes the rectangle into four StraightLine() calls; never anti-aliased.
+ *
+ * @param r Source rectangle.
+ * @param c Solid color.
+ */
 void
 Painter::StrokeRect(const BRect& r, const rgb_color& c) const
 {
@@ -965,7 +1283,17 @@ Painter::StrokeRect(const BRect& r, const rgb_color& c) const
 }
 
 
-// FillRect
+/**
+ * @brief Fills a rectangle with the current pattern.
+ *
+ * Tries solid-color and B_OP_ALPHA fast paths first (see FillRect(rect, c)
+ * and _BlendRect32()). Falls back to building a 4-vertex AGG path and
+ * running the fill pipeline. Coordinates are interpreted as inclusive
+ * pixel indices, then expanded by one to the AGG "pixel area" convention.
+ *
+ * @param r Source rectangle.
+ * @return Bounding rectangle of the filled area, clipped.
+ */
 BRect
 Painter::FillRect(const BRect& r) const
 {
@@ -1025,7 +1353,17 @@ Painter::FillRect(const BRect& r) const
 }
 
 
-// FillRect
+/**
+ * @brief Fills a rectangle with a gradient.
+ *
+ * Vertical linear gradients short-circuit through FillRectVerticalGradient()
+ * for big speedups; everything else goes through the generic AGG gradient
+ * fill pipeline.
+ *
+ * @param r        Source rectangle.
+ * @param gradient Gradient to apply.
+ * @return Bounding rectangle of the filled area, clipped.
+ */
 BRect
 Painter::FillRect(const BRect& r, const BGradient& gradient)
 {
@@ -1071,7 +1409,15 @@ Painter::FillRect(const BRect& r, const BGradient& gradient)
 }
 
 
-// FillRect
+/**
+ * @brief Fills a rectangle with a solid color, no blending.
+ *
+ * Walks the clipping region's rectangles and writes 32-bit pixels straight
+ * into the buffer using gfxset32. Bypasses AGG entirely.
+ *
+ * @param r Source rectangle (inclusive pixel indices).
+ * @param c Solid RGBA color.
+ */
 void
 Painter::FillRect(const BRect& r, const rgb_color& c) const
 {
@@ -1111,7 +1457,17 @@ Painter::FillRect(const BRect& r, const rgb_color& c) const
 }
 
 
-// FillRectVerticalGradient
+/**
+ * @brief Optimized solid-blend fill for vertical linear gradients.
+ *
+ * Pre-computes one row of gradient colors (length = rect height) using
+ * _MakeGradient(), then writes it row by row through gfxset32 for each
+ * clipping rectangle. Up-side-down gradients are not supported and
+ * silently produce nothing.
+ *
+ * @param r        Destination rectangle, modified by intersecting with the clip.
+ * @param gradient Vertical linear gradient. Caller must ensure verticality.
+ */
 void
 Painter::FillRectVerticalGradient(BRect r,
 	const BGradientLinear& gradient) const
@@ -1164,7 +1520,14 @@ Painter::FillRectVerticalGradient(BRect r,
 }
 
 
-// FillRectNoClipping
+/**
+ * @brief Solid-color rect fill that skips the clipping region entirely.
+ *
+ * Caller is responsible for ensuring @a r lies within the buffer.
+ *
+ * @param r Rectangle in integer pixel coordinates.
+ * @param c Solid RGBA color.
+ */
 void
 Painter::FillRectNoClipping(const clipping_rect& r, const rgb_color& c) const
 {
@@ -1192,7 +1555,14 @@ Painter::FillRectNoClipping(const clipping_rect& r, const rgb_color& c) const
 }
 
 
-// StrokeRoundRect
+/**
+ * @brief Strokes a rounded rectangle.
+ *
+ * @param r       Bounding rectangle.
+ * @param xRadius Horizontal corner radius.
+ * @param yRadius Vertical corner radius.
+ * @return Bounding rectangle of the stroke, clipped.
+ */
 BRect
 Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius) const
 {
@@ -1212,7 +1582,15 @@ Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius) const
 }
 
 
-// StrokeRoundRect
+/**
+ * @brief Strokes a rounded rectangle with a gradient.
+ *
+ * @param r        Bounding rectangle.
+ * @param xRadius  Horizontal corner radius.
+ * @param yRadius  Vertical corner radius.
+ * @param gradient Gradient applied to the stroke.
+ * @return Bounding rectangle of the stroke, clipped.
+ */
 BRect
 Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius,
 	const BGradient& gradient)
@@ -1233,7 +1611,14 @@ Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius,
 }
 
 
-// FillRoundRect
+/**
+ * @brief Fills a rounded rectangle with the current pattern.
+ *
+ * @param r       Bounding rectangle.
+ * @param xRadius Horizontal corner radius.
+ * @param yRadius Vertical corner radius.
+ * @return Bounding rectangle of the filled area, clipped.
+ */
 BRect
 Painter::FillRoundRect(const BRect& r, float xRadius, float yRadius) const
 {
@@ -1258,7 +1643,15 @@ Painter::FillRoundRect(const BRect& r, float xRadius, float yRadius) const
 }
 
 
-// FillRoundRect
+/**
+ * @brief Fills a rounded rectangle with a gradient.
+ *
+ * @param r        Bounding rectangle.
+ * @param xRadius  Horizontal corner radius.
+ * @param yRadius  Vertical corner radius.
+ * @param gradient Gradient to apply.
+ * @return Bounding rectangle of the filled area, clipped.
+ */
 BRect
 Painter::FillRoundRect(const BRect& r, float xRadius, float yRadius,
 	const BGradient& gradient)
@@ -1284,7 +1677,16 @@ Painter::FillRoundRect(const BRect& r, float xRadius, float yRadius,
 }
 
 
-// AlignEllipseRect
+/**
+ * @brief Aligns an ellipse bounding rectangle to pixel boundaries.
+ *
+ * Converts pixel indices to pixel area coordinates, and (for non-subpixel
+ * strokes with odd pen size) insets by half a pixel so the stroke ends up
+ * pixel-centered. Filled and subpixel rendering paths skip the alignment.
+ *
+ * @param rect   Rectangle to align in place.
+ * @param filled True for fill, false for stroke (controls inset).
+ */
 void
 Painter::AlignEllipseRect(BRect* rect, bool filled) const
 {
@@ -1302,7 +1704,16 @@ Painter::AlignEllipseRect(BRect* rect, bool filled) const
 }
 
 
-// DrawEllipse
+/**
+ * @brief Strokes or fills an ellipse fitted in @a r.
+ *
+ * Picks an adaptive subdivision count based on the average radius and the
+ * pen size, clamped to [12, 4096], and rasterizes through agg::ellipse.
+ *
+ * @param r    Bounding rectangle.
+ * @param fill True to fill, false to stroke.
+ * @return Bounding rectangle of the rendered ellipse, clipped.
+ */
 BRect
 Painter::DrawEllipse(BRect r, bool fill) const
 {
@@ -1329,7 +1740,14 @@ Painter::DrawEllipse(BRect r, bool fill) const
 }
 
 
-// FillEllipse
+/**
+ * @brief Strokes or fills an ellipse with a gradient.
+ *
+ * @param r        Bounding rectangle.
+ * @param fill     True to fill, false to stroke.
+ * @param gradient Gradient to apply.
+ * @return Bounding rectangle of the rendered ellipse, clipped.
+ */
 BRect
 Painter::DrawEllipse(BRect r, bool fill, const BGradient& gradient)
 {
@@ -1356,7 +1774,20 @@ Painter::DrawEllipse(BRect r, bool fill, const BGradient& gradient)
 }
 
 
-// StrokeArc
+/**
+ * @brief Strokes an elliptical arc.
+ *
+ * Builds the arc as a Bezier curve and runs the stroke pipeline. Both
+ * @a angle and @a span are in degrees and increase counter-clockwise; the
+ * implementation negates both to match BeOS's clockwise convention.
+ *
+ * @param center  Center of the ellipse.
+ * @param xRadius Horizontal radius.
+ * @param yRadius Vertical radius.
+ * @param angle   Start angle in degrees.
+ * @param span    Sweep angle in degrees.
+ * @return Bounding rectangle of the stroked arc, clipped.
+ */
 BRect
 Painter::StrokeArc(BPoint center, float xRadius, float yRadius, float angle,
 	float span) const
@@ -1377,7 +1808,17 @@ Painter::StrokeArc(BPoint center, float xRadius, float yRadius, float angle,
 }
 
 
-// StrokeArc
+/**
+ * @brief Strokes an elliptical arc with a gradient.
+ *
+ * @param center   Center of the ellipse.
+ * @param xRadius  Horizontal radius.
+ * @param yRadius  Vertical radius.
+ * @param angle    Start angle in degrees.
+ * @param span     Sweep angle in degrees.
+ * @param gradient Gradient applied to the stroke.
+ * @return Bounding rectangle of the stroked arc, clipped.
+ */
 BRect
 Painter::StrokeArc(BPoint center, float xRadius, float yRadius, float angle,
 	float span, const BGradient& gradient)
@@ -1398,7 +1839,16 @@ Painter::StrokeArc(BPoint center, float xRadius, float yRadius, float angle,
 }
 
 
-// FillArc
+/**
+ * @brief Fills a pie slice traced from the arc back to the center.
+ *
+ * @param center  Center of the ellipse.
+ * @param xRadius Horizontal radius.
+ * @param yRadius Vertical radius.
+ * @param angle   Start angle in degrees.
+ * @param span    Sweep angle in degrees.
+ * @return Bounding rectangle of the filled slice, clipped.
+ */
 BRect
 Painter::FillArc(BPoint center, float xRadius, float yRadius, float angle,
 	float span) const
@@ -1435,7 +1885,17 @@ Painter::FillArc(BPoint center, float xRadius, float yRadius, float angle,
 }
 
 
-// FillArc
+/**
+ * @brief Fills a pie slice with a gradient.
+ *
+ * @param center   Center of the ellipse.
+ * @param xRadius  Horizontal radius.
+ * @param yRadius  Vertical radius.
+ * @param angle    Start angle in degrees.
+ * @param span     Sweep angle in degrees.
+ * @param gradient Gradient to apply.
+ * @return Bounding rectangle of the filled slice, clipped.
+ */
 BRect
 Painter::FillArc(BPoint center, float xRadius, float yRadius, float angle,
 	float span, const BGradient& gradient)
@@ -1475,7 +1935,20 @@ Painter::FillArc(BPoint center, float xRadius, float yRadius, float angle,
 // #pragma mark -
 
 
-// DrawString
+/**
+ * @brief Renders a UTF-8 string anchored at @a baseLine.
+ *
+ * Snaps the baseline to integer pixels in non-subpixel mode, forces a
+ * solid pattern through SolidPatternGuard, and dispatches to the
+ * AGGTextRenderer.
+ *
+ * @param utf8String     Source string.
+ * @param length         Byte length of @a utf8String.
+ * @param baseLine       Pen origin in view space.
+ * @param delta          Optional escapement delta (per-character spacing).
+ * @param cacheReference Optional cache reference for the glyph cache.
+ * @return Bounding rectangle of the rendered text, clipped.
+ */
 BRect
 Painter::DrawString(const char* utf8String, uint32 length, BPoint baseLine,
 	const escapement_delta* delta, FontCacheReference* cacheReference)
@@ -1499,7 +1972,15 @@ Painter::DrawString(const char* utf8String, uint32 length, BPoint baseLine,
 }
 
 
-// DrawString
+/**
+ * @brief Renders a UTF-8 string with explicit per-character positions.
+ *
+ * @param utf8String     Source string.
+ * @param length         Byte length of @a utf8String.
+ * @param offsets        Array of per-character pen positions.
+ * @param cacheReference Optional cache reference for the glyph cache.
+ * @return Bounding rectangle of the rendered text, clipped.
+ */
 BRect
 Painter::DrawString(const char* utf8String, uint32 length,
 	const BPoint* offsets, FontCacheReference* cacheReference)
@@ -1520,7 +2001,19 @@ Painter::DrawString(const char* utf8String, uint32 length,
 }
 
 
-// BoundingBox
+/**
+ * @brief Measures a UTF-8 string anchored at @a baseLine without drawing.
+ *
+ * Runs the AGGTextRenderer in dry-run mode.
+ *
+ * @param utf8String     Source string.
+ * @param length         Byte length of @a utf8String.
+ * @param baseLine       Pen origin in view space.
+ * @param penLocation    Optional out parameter for the pen position after measurement.
+ * @param delta          Optional escapement delta.
+ * @param cacheReference Optional glyph cache reference.
+ * @return Bounding rectangle that drawing the string would produce.
+ */
 BRect
 Painter::BoundingBox(const char* utf8String, uint32 length, BPoint baseLine,
 	BPoint* penLocation, const escapement_delta* delta,
@@ -1537,7 +2030,16 @@ Painter::BoundingBox(const char* utf8String, uint32 length, BPoint baseLine,
 }
 
 
-// BoundingBox
+/**
+ * @brief Measures a UTF-8 string with explicit per-character offsets.
+ *
+ * @param utf8String     Source string.
+ * @param length         Byte length of @a utf8String.
+ * @param offsets        Per-character pen positions.
+ * @param penLocation    Optional out parameter for pen position.
+ * @param cacheReference Optional glyph cache reference.
+ * @return Bounding rectangle that drawing the string would produce.
+ */
 BRect
 Painter::BoundingBox(const char* utf8String, uint32 length,
 	const BPoint* offsets, BPoint* penLocation,
@@ -1551,7 +2053,14 @@ Painter::BoundingBox(const char* utf8String, uint32 length,
 }
 
 
-// StringWidth
+/**
+ * @brief Returns the advance width of a UTF-8 string under the active font.
+ *
+ * @param utf8String Source string.
+ * @param length     Byte length of @a utf8String.
+ * @param delta      Optional escapement delta (per-character spacing).
+ * @return Total advance width in pixels.
+ */
 float
 Painter::StringWidth(const char* utf8String, uint32 length,
 	const escapement_delta* delta)
@@ -1563,7 +2072,17 @@ Painter::StringWidth(const char* utf8String, uint32 length,
 // #pragma mark -
 
 
-// DrawBitmap
+/**
+ * @brief Draws a ServerBitmap into the destination view rectangle.
+ *
+ * Delegates to BitmapPainter when the transformed view rectangle is non-empty.
+ *
+ * @param bitmap     Source bitmap.
+ * @param bitmapRect Source rectangle inside the bitmap.
+ * @param viewRect   Destination rectangle in view space.
+ * @param options    Bitmap rendering option flags (B_FILTER_BITMAP_BILINEAR, etc.).
+ * @return Bounding rectangle of the area touched, clipped.
+ */
 BRect
 Painter::DrawBitmap(const ServerBitmap* bitmap, BRect bitmapRect,
 	BRect viewRect, uint32 options) const
@@ -1584,7 +2103,12 @@ Painter::DrawBitmap(const ServerBitmap* bitmap, BRect bitmapRect,
 // #pragma mark -
 
 
-// FillRegion
+/**
+ * @brief Fills every rectangle of @a region with the current pattern.
+ *
+ * @param region Region to fill (deep-copied so the original is not modified).
+ * @return Union of the bounding rectangles touched, clipped.
+ */
 BRect
 Painter::FillRegion(const BRegion* region) const
 {
@@ -1600,7 +2124,13 @@ Painter::FillRegion(const BRegion* region) const
 }
 
 
-// FillRegion
+/**
+ * @brief Fills every rectangle of @a region with a gradient.
+ *
+ * @param region   Region to fill.
+ * @param gradient Gradient to apply.
+ * @return Union of the bounding rectangles touched, clipped.
+ */
 BRect
 Painter::FillRegion(const BRegion* region, const BGradient& gradient)
 {
@@ -1616,7 +2146,13 @@ Painter::FillRegion(const BRegion* region, const BGradient& gradient)
 }
 
 
-// InvertRect
+/**
+ * @brief Bitwise-inverts every RGB channel inside @a r, intersected with the clip.
+ *
+ * @param r Rectangle to invert.
+ * @return Bounding rectangle of the inverted area, clipped.
+ * @note Currently implemented for B_RGB32 only.
+ */
 BRect
 Painter::InvertRect(const BRect& r) const
 {
@@ -1634,6 +2170,15 @@ Painter::InvertRect(const BRect& r) const
 }
 
 
+/**
+ * @brief Sets the screen-space offset of the AGG base renderer.
+ *
+ * Used by the DrawingEngine to translate the renderer's coordinates when
+ * the buffer is mapped to a sub-area of the screen.
+ *
+ * @param offsetX Horizontal offset in pixels.
+ * @param offsetY Vertical offset in pixels.
+ */
 void
 Painter::SetRendererOffset(int32 offsetX, int32 offsetY)
 {
@@ -1644,6 +2189,14 @@ Painter::SetRendererOffset(int32 offsetX, int32 offsetY)
 // #pragma mark - private
 
 
+/**
+ * @brief Aligns a single coordinate to integer or half-pixel boundaries.
+ *
+ * @param coord        Coordinate to align.
+ * @param round        Truncate to integer when true.
+ * @param centerOffset Add 0.5 to land on a pixel center when true.
+ * @return Aligned coordinate.
+ */
 inline float
 Painter::_Align(float coord, bool round, bool centerOffset) const
 {
@@ -1661,6 +2214,12 @@ Painter::_Align(float coord, bool round, bool centerOffset) const
 }
 
 
+/**
+ * @brief In-place point alignment that respects the subpixel-precise flag.
+ *
+ * @param point        Point to align; ignored if NULL.
+ * @param centerOffset Add 0.5 to each coordinate when true.
+ */
 inline void
 Painter::_Align(BPoint* point, bool centerOffset) const
 {
@@ -1668,6 +2227,13 @@ Painter::_Align(BPoint* point, bool centerOffset) const
 }
 
 
+/**
+ * @brief In-place point alignment with explicit rounding control.
+ *
+ * @param point        Point to align.
+ * @param round        Truncate coordinates when true.
+ * @param centerOffset Add 0.5 when true.
+ */
 inline void
 Painter::_Align(BPoint* point, bool round, bool centerOffset) const
 {
@@ -1676,6 +2242,13 @@ Painter::_Align(BPoint* point, bool round, bool centerOffset) const
 }
 
 
+/**
+ * @brief Returns an aligned copy of @a point.
+ *
+ * @param point        Source point.
+ * @param centerOffset Add 0.5 when true.
+ * @return Aligned point.
+ */
 inline BPoint
 Painter::_Align(const BPoint& point, bool centerOffset) const
 {
@@ -1685,7 +2258,12 @@ Painter::_Align(const BPoint& point, bool centerOffset) const
 }
 
 
-// _Clipped
+/**
+ * @brief Intersects @a rect with the current clipping region's frame.
+ *
+ * @param rect Source rectangle.
+ * @return Clipped rectangle, or the original if it is invalid.
+ */
 BRect
 Painter::_Clipped(const BRect& rect) const
 {
@@ -1696,7 +2274,13 @@ Painter::_Clipped(const BRect& rect) const
 }
 
 
-// _UpdateDrawingMode
+/**
+ * @brief Refreshes the PixelFormat's drawing-mode dispatch table.
+ *
+ * Called whenever the drawing mode, alpha source/function, or pattern
+ * changes; the AGG renderers rely on the PixelFormat to pick optimized
+ * solid-pattern code paths.
+ */
 void
 Painter::_UpdateDrawingMode()
 {
@@ -1716,7 +2300,11 @@ Painter::_UpdateDrawingMode()
 }
 
 
-// _SetRendererColor
+/**
+ * @brief Reseeds the AGG solid renderers with @a color converted to floats.
+ *
+ * @param color Source color (each channel is divided by 255 to produce AGG rgba).
+ */
 void
 Painter::_SetRendererColor(const rgb_color& color) const
 {
@@ -1733,7 +2321,15 @@ Painter::_SetRendererColor(const rgb_color& color) const
 // #pragma mark -
 
 
-// _DrawTriangle
+/**
+ * @brief Internal triangle stroke/fill helper.
+ *
+ * @param pt1  First vertex.
+ * @param pt2  Second vertex.
+ * @param pt3  Third vertex.
+ * @param fill True to fill, false to stroke.
+ * @return Bounding rectangle of the rendered triangle, clipped.
+ */
 inline BRect
 Painter::_DrawTriangle(BPoint pt1, BPoint pt2, BPoint pt3, bool fill) const
 {
@@ -1758,6 +2354,16 @@ Painter::_DrawTriangle(BPoint pt1, BPoint pt2, BPoint pt3, bool fill) const
 }
 
 
+/**
+ * @brief Internal gradient triangle stroke/fill helper.
+ *
+ * @param pt1      First vertex.
+ * @param pt2      Second vertex.
+ * @param pt3      Third vertex.
+ * @param fill     True to fill, false to stroke.
+ * @param gradient Gradient applied to the stroke or fill.
+ * @return Bounding rectangle of the rendered triangle, clipped.
+ */
 inline BRect
 Painter::_DrawTriangle(BPoint pt1, BPoint pt2, BPoint pt3, bool fill, const BGradient& gradient)
 {
@@ -1782,6 +2388,21 @@ Painter::_DrawTriangle(BPoint pt1, BPoint pt2, BPoint pt3, bool fill, const BGra
 }
 
 
+/**
+ * @brief Walks a BShape op/point stream and feeds segments into the AGG path.
+ *
+ * Supports OP_MOVETO, OP_LINETO, OP_BEZIERTO, the four arc op variants and
+ * OP_CLOSE. Every coordinate is scaled by @a viewScale and translated by
+ * @a viewToScreenOffset before being added to fPath.
+ *
+ * @param opCount            Number of opcodes.
+ * @param opList             Opcode stream (top byte = op, low 24 bits = count).
+ * @param ptCount            Number of points referenced by @a points.
+ * @param points             Point stream consumed in order.
+ * @param viewToScreenOffset Translation applied to every point.
+ * @param viewScale          Scale applied to every point.
+ * @todo Replace this with an AGG VertexSource adaptor over BShape data.
+ */
 void
 Painter::_IterateShapeData(const int32& opCount, const uint32* opList,
 	const int32& ptCount, const BPoint* points,
@@ -1849,7 +2470,11 @@ Painter::_IterateShapeData(const int32& opCount, const uint32* opList,
 }
 
 
-// _InvertRect32
+/**
+ * @brief 32-bit per-channel inversion (255 - x) inside @a r.
+ *
+ * @param r Rectangle to invert; assumed to be already clipped to the buffer.
+ */
 void
 Painter::_InvertRect32(BRect r) const
 {
@@ -1867,7 +2492,15 @@ Painter::_InvertRect32(BRect r) const
 }
 
 
-// _BlendRect32
+/**
+ * @brief Alpha-overlay blend of @a c across @a r in 32-bit pixel format.
+ *
+ * Iterates the clipping region's rectangles and calls blend_line32 row by
+ * row. Used by FillRect()'s B_OP_ALPHA fast path.
+ *
+ * @param r Rectangle to blend.
+ * @param c Source color including alpha.
+ */
 void
 Painter::_BlendRect32(const BRect& r, const rgb_color& c) const
 {
@@ -1905,6 +2538,13 @@ Painter::_BlendRect32(const BRect& r, const rgb_color& c) const
 // #pragma mark -
 
 
+/**
+ * @brief Computes the axis-aligned bounding box of an AGG vertex source.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path whose vertices are scanned.
+ * @return Bounding rectangle containing every vertex.
+ */
 template<class VertexSource>
 BRect
 Painter::_BoundingBox(VertexSource& path) const
@@ -1920,7 +2560,12 @@ Painter::_BoundingBox(VertexSource& path) const
 }
 
 
-// agg_line_cap_mode_for
+/**
+ * @brief Translates a BeOS cap_mode into the matching AGG line_cap_e.
+ *
+ * @param mode BeOS cap mode.
+ * @return Equivalent AGG cap; defaults to butt_cap on unknown input.
+ */
 inline agg::line_cap_e
 agg_line_cap_mode_for(cap_mode mode)
 {
@@ -1936,7 +2581,12 @@ agg_line_cap_mode_for(cap_mode mode)
 }
 
 
-// agg_line_join_mode_for
+/**
+ * @brief Translates a BeOS join_mode into the matching AGG line_join_e.
+ *
+ * @param mode BeOS join mode.
+ * @return Equivalent AGG join; defaults to miter_join on unknown input.
+ */
 inline agg::line_join_e
 agg_line_join_mode_for(join_mode mode)
 {
@@ -1954,6 +2604,13 @@ agg_line_join_mode_for(join_mode mode)
 }
 
 
+/**
+ * @brief Stroke entry point; uses the configured cap mode.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to stroke.
+ * @return Bounding rectangle of the stroked geometry, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_StrokePath(VertexSource& path) const
@@ -1962,6 +2619,19 @@ Painter::_StrokePath(VertexSource& path) const
 }
 
 
+/**
+ * @brief Strokes an AGG path with an explicit cap mode.
+ *
+ * Builds a conv_stroke pipeline with the active pen size, line join, and
+ * miter limit. When the transform is non-identity, the stroke is run
+ * through conv_transform so the pen width is computed in untransformed
+ * space first and the result is transformed afterward.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to stroke.
+ * @param  capMode      Line cap mode to apply.
+ * @return Bounding rectangle of the stroked geometry, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_StrokePath(VertexSource& path, cap_mode capMode) const
@@ -1984,6 +2654,14 @@ Painter::_StrokePath(VertexSource& path, cap_mode capMode) const
 }
 
 
+/**
+ * @brief Gradient stroke entry point; uses the configured cap mode.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to stroke.
+ * @param  gradient     Gradient applied to the stroke.
+ * @return Bounding rectangle of the stroked geometry, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_StrokePath(VertexSource& path, const BGradient& gradient)
@@ -1992,6 +2670,15 @@ Painter::_StrokePath(VertexSource& path, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes an AGG path with a gradient and explicit cap mode.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to stroke.
+ * @param  capMode      Line cap mode to apply.
+ * @param  gradient     Gradient applied to the stroke.
+ * @return Bounding rectangle of the stroked geometry, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_StrokePath(VertexSource& path, cap_mode capMode, const BGradient& gradient)
@@ -2014,7 +2701,13 @@ Painter::_StrokePath(VertexSource& path, cap_mode capMode, const BGradient& grad
 }
 
 
-// _FillPath
+/**
+ * @brief Fills an AGG path, transparently transforming it when needed.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to fill.
+ * @return Bounding rectangle of the filled area, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_FillPath(VertexSource& path) const
@@ -2027,7 +2720,19 @@ Painter::_FillPath(VertexSource& path) const
 }
 
 
-// _RasterizePath
+/**
+ * @brief Rasterizes an AGG path through the appropriate solid pipeline.
+ *
+ * Picks one of three pipelines:
+ *   1. Alpha-masked: AA rasterizer + masked scanline + solid renderer.
+ *   2. Subpixel AA:  subpixel rasterizer + packed subpixel scanline.
+ *   3. Plain AA:     AA rasterizer + packed scanline + solid renderer.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to rasterize.
+ * @return Bounding rectangle of the rasterized geometry, clipped.
+ * @note Alpha masking and subpixel AA are mutually exclusive at the moment.
+ */
 template<class VertexSource>
 BRect
 Painter::_RasterizePath(VertexSource& path) const
@@ -2053,7 +2758,14 @@ Painter::_RasterizePath(VertexSource& path) const
 }
 
 
-// _FillPath
+/**
+ * @brief Fills an AGG path with a gradient, transforming it when needed.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to fill.
+ * @param  gradient     Gradient to apply.
+ * @return Bounding rectangle of the filled area, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_FillPath(VertexSource& path, const BGradient& gradient)
@@ -2066,7 +2778,19 @@ Painter::_FillPath(VertexSource& path, const BGradient& gradient)
 }
 
 
-// _FillPath
+/**
+ * @brief Selects an AGG gradient function based on @a gradient's type.
+ *
+ * Computes the gradient transform with _CalcLinearGradientTransform() or
+ * _CalcRadialGradientTransform() and dispatches to the templated
+ * _RasterizePath() that runs the AGG span_gradient pipeline. Unknown or
+ * TYPE_NONE gradients produce nothing.
+ *
+ * @tparam VertexSource AGG vertex source type.
+ * @param  path         Path to rasterize.
+ * @param  gradient     Gradient describing color stops and geometry.
+ * @return Bounding rectangle of the rasterized geometry, clipped.
+ */
 template<class VertexSource>
 BRect
 Painter::_RasterizePath(VertexSource& path, const BGradient& gradient)
@@ -2144,6 +2868,18 @@ Painter::_RasterizePath(VertexSource& path, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Builds the AGG transform for a linear gradient.
+ *
+ * Composes scale-by-(distance/d2), rotation, translation, the active view
+ * transform, and finally inverts the matrix because AGG's span_gradient
+ * walks the gradient by mapping screen pixels back into gradient space.
+ *
+ * @param startPoint   Gradient start in view space.
+ * @param endPoint     Gradient end in view space.
+ * @param matrix       Output AGG transform; reset and overwritten.
+ * @param gradient_d2  Gradient virtual length (defaults to 100).
+ */
 void
 Painter::_CalcLinearGradientTransform(BPoint startPoint, BPoint endPoint,
 	agg::trans_affine& matrix, float gradient_d2) const
@@ -2160,6 +2896,16 @@ Painter::_CalcLinearGradientTransform(BPoint startPoint, BPoint endPoint,
 }
 
 
+/**
+ * @brief Builds the AGG transform for a radial/diamond/conic gradient.
+ *
+ * Translates @a center to the origin, applies the view transform, and
+ * inverts the result for use by span_gradient.
+ *
+ * @param center       Gradient center in view space.
+ * @param matrix       Output AGG transform; reset and overwritten.
+ * @param gradient_d2  Gradient virtual radius hint (currently unused here).
+ */
 void
 Painter::_CalcRadialGradientTransform(BPoint center,
 	agg::trans_affine& matrix, float gradient_d2) const
@@ -2171,6 +2917,20 @@ Painter::_CalcRadialGradientTransform(BPoint center,
 }
 
 
+/**
+ * @brief Materializes a gradient into a flat 32-bit color array.
+ *
+ * Walks the gradient's color stops and writes interpolated BGRA pixels
+ * into @a colors. Used by FillRectVerticalGradient() to drive a fast,
+ * blend-free row writer. Pixels outside the gradient extents are clamped
+ * to the start/end colors so the array is always fully populated.
+ *
+ * @param gradient    Source gradient.
+ * @param colorCount  Number of stops in the gradient direction.
+ * @param colors      Output BGRA32 array.
+ * @param arrayOffset Index in @a colors at which the first stop lands.
+ * @param arraySize   Total size of @a colors in entries.
+ */
 void
 Painter::_MakeGradient(const BGradient& gradient, int32 colorCount,
 	uint32* colors, int32 arrayOffset, int32 arraySize) const
@@ -2250,6 +3010,16 @@ Painter::_MakeGradient(const BGradient& gradient, int32 colorCount,
 }
 
 
+/**
+ * @brief Materializes a gradient into an AGG color array (rgba8).
+ *
+ * Variant of _MakeGradient() used by the AGG span_gradient pipeline; fills
+ * @a array with rgba8 colors interpolated between successive stops.
+ *
+ * @tparam Array   Container with at least 256 rgba8 entries.
+ * @param  array   Output array.
+ * @param  gradient Source gradient.
+ */
 template<class Array>
 void
 Painter::_MakeGradient(Array& array, const BGradient& gradient) const
@@ -2281,6 +3051,22 @@ Painter::_MakeGradient(Array& array, const BGradient& gradient) const
 }
 
 
+/**
+ * @brief Runs the AGG span_gradient pipeline for a single path.
+ *
+ * Builds linear span interpolation, span allocator, color array, and the
+ * span_gradient renderer, then rasterizes @a path through either the
+ * regular or alpha-masked scanline. Wraps everything in a SolidPatternGuard
+ * so pattern-aware drawing modes still take their solid fast paths.
+ *
+ * @tparam VertexSource     AGG vertex source type.
+ * @tparam GradientFunction AGG gradient function (gradient_x, gradient_radial, ...).
+ * @param  path              Path to rasterize.
+ * @param  gradient          Source BGradient (color stops).
+ * @param  function          Per-type AGG gradient function.
+ * @param  gradientTransform Pre-computed gradient transform.
+ * @param  gradientStop      Gradient cap (defaults to 100; radius for radial).
+ */
 template<class VertexSource, typename GradientFunction>
 void
 Painter::_RasterizePath(VertexSource& path, const BGradient& gradient,

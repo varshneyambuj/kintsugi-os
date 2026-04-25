@@ -1,11 +1,29 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2009, Haiku.
+ * Original authors: DarkWyrm, Axel Dörfler.
  */
+
+/** @file GlobalFontManager.h
+    @brief System-wide font manager that scans the install directories and
+           watches them for changes via node monitoring. */
+
 #ifndef GLOBAL_FONT_MANAGER_H
 #define GLOBAL_FONT_MANAGER_H
 
@@ -27,19 +45,28 @@ class FontStyle;
 class ServerFont;
 
 
-/*!
-	\class GlobalFontManager GlobalFontManager.h
-	\brief Manager for system fonts within the font subsystem
-*/
+/**
+ * @brief Application-wide font catalog backed by the system font directories.
+ *
+ * Subclasses FontManager and BLooper: the looper thread receives node
+ * monitor messages from the watched font directories and folds added,
+ * moved, or removed font files into the cached family/style tables.
+ * Defaults (plain/bold/fixed) are resolved lazily from a fallback chain
+ * configured in ServerConfig.h.
+ */
 class GlobalFontManager : public FontManager, public BLooper {
 public:
 								GlobalFontManager();
 	virtual						~GlobalFontManager();
 
+			/** @brief Forwards Lock to the BLooper lock. */
 			bool				Lock() { return BLooper::Lock(); }
+			/** @brief Forwards Unlock to the BLooper lock. */
 			void				Unlock() { BLooper::Unlock(); }
+			/** @brief Returns true when the calling thread owns the looper lock. */
 			bool				IsLocked() const { return BLooper::IsLocked(); }
 
+			/** @brief Returns the result of FreeType library initialization. */
 			status_t			InitCheck() { return fInitStatus; }
 
 			void				SaveRecentFontMappings();
@@ -123,6 +150,7 @@ private:
 };
 
 
+/** @brief Process-wide pointer to the singleton GlobalFontManager. */
 extern GlobalFontManager* gFontManager;
 
 #endif	/* GLOBAL_FONT_MANAGER_H */

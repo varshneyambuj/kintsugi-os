@@ -1121,12 +1121,12 @@ Window::EnableUpdateRequests()
 // #pragma mark -
 
 
-/*!	\brief Handles a mouse-down message for the window.
+/*!	@brief Handles a mouse-down message for the window.
 
-	\param message The message.
-	\param where The point where the mouse click happened.
-	\param lastClickTarget The target of the previous click.
-	\param clickCount The number of subsequent, no longer than double-click
+	@param message The message.
+	@param where The point where the mouse click happened.
+	@param lastClickTarget The target of the previous click.
+	@param clickCount The number of subsequent, no longer than double-click
 		interval separated clicks that have happened so far. This number doesn't
 		necessarily match the value in the message. It has already been
 		pre-processed in order to avoid erroneous multi-clicks (e.g. when a
@@ -1134,7 +1134,7 @@ Window::EnableUpdateRequests()
 		is an in-out variable. The method can reset the value to 1, if it
 		doesn't want this event handled as a multi-click. Returning a different
 		click target will also make the caller reset the click count.
-	\param _clickTarget Set by the method to a value identifying the clicked
+	@param _clickTarget Set by the method to a value identifying the clicked
 		element. If not explicitly set, an invalid click target is assumed.
 */
 /** @brief Dispatches a mouse-down event to the window behaviour or the view under the cursor.
@@ -1864,11 +1864,11 @@ Window::HasModal() const
 }
 
 
-/*!	\brief Returns the windows that's in behind of the backmost position
+/*!	@brief Returns the windows that's in behind of the backmost position
 		this window can get.
 	Returns NULL is this window can be the backmost window.
 
-	\param workspace the workspace on which this check should be made. If
+	@param workspace the workspace on which this check should be made. If
 		the value is -1, the window's current workspace will be used.
 */
 /** @brief Returns the window immediately behind the furthest-back position this window may occupy.
@@ -1912,11 +1912,11 @@ Window::Backmost(Window* window, int32 workspace)
 }
 
 
-/*!	\brief Returns the window that's in front of the frontmost position
+/*!	@brief Returns the window that's in front of the frontmost position
 		this window can get.
 	Returns NULL if this window can be the frontmost window.
 
-	\param workspace the workspace on which this check should be made. If
+	@param workspace the workspace on which this check should be made. If
 		the value is -1, the window's current workspace will be used.
 */
 /** @brief Returns the window immediately in front of the frontmost position this window may occupy.
@@ -2029,7 +2029,7 @@ Window::HasInSubset(const Window* window) const
 }
 
 
-/*!	\brief Collects all workspaces views in this window and puts it into \a list
+/*!	@brief Collects all workspaces views in this window and puts it into \a list
 */
 /** @brief Collects all WorkspacesView instances in this window's view tree.
  *  @param list Output list to append found views into.
@@ -2042,7 +2042,7 @@ Window::FindWorkspacesViews(BObjectList<WorkspacesView>& list) const
 }
 
 
-/*!	\brief Returns on which workspaces the window should be visible.
+/*!	@brief Returns on which workspaces the window should be visible.
 
 	A modal or floating window may be visible on a workspace if one
 	of its subset windows is visible there. Floating windows also need

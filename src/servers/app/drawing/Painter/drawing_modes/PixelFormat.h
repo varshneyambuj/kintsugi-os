@@ -1,15 +1,31 @@
 /*
- * Copyright 2005, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Copyright 2002-2004 Maxim Shemanarev (http://www.antigrain.com)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * A class implementing the AGG "pixel format" interface which maintains
- * a PatternHandler and pointers to blending functions implementing the
- * different BeOS "drawing_modes".
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005, Stephan Aßmus and 2008, Andrej Spielmann.
+ * Also incorporates work Copyright 2002-2004 Maxim Shemanarev
+ * (http://www.antigrain.com). A class implementing the AGG "pixel format"
+ * interface which maintains a PatternHandler and pointers to blending
+ * functions implementing the different BeOS "drawing_modes".
  */
+
+/** @file PixelFormat.h
+    @brief AGG pixel format facade dispatching to per-drawing_mode blend
+           function pointers selected by SetDrawingMode(). */
 
 #ifndef PIXEL_FORMAT_H
 #define PIXEL_FORMAT_H
@@ -25,6 +41,12 @@
 
 class PatternHandler;
 
+
+/**
+ * @brief AGG-compatible pixel format that holds blend function pointers
+ *        for the active Haiku drawing mode and forwards every blend call
+ *        through them.
+ */
 class PixelFormat {
  public:
 	typedef agg::rgba8						color_type;
@@ -191,21 +213,24 @@ class PixelFormat {
 
 // inlined functions
 
-// pix_ptr
+
+/** @brief Returns a writable pointer to the BGRA pixel at (@a x, @a y). */
 inline uint8*
 PixelFormat::pix_ptr(int x, int y)
 {
 	return fBuffer->row_ptr(y) + x * pix_width;
 }
 
-// pix_ptr
+
+/** @brief Returns a read-only pointer to the BGRA pixel at (@a x, @a y). */
 inline const uint8*
 PixelFormat::pix_ptr(int x, int y) const
 {
 	return fBuffer->row_ptr(y) + x * pix_width;
 }
 
-// make_pix
+
+/** @brief Stores @a c into a BGRA pixel slot pointed to by @a p. */
 inline void
 PixelFormat::make_pix(uint8* p, const color_type& c)
 {
@@ -227,14 +252,17 @@ PixelFormat::make_pix(uint8* p, const color_type& c)
 //	return color_type::no_color();
 //}
 
-// blend_pixel
+/** @brief Forwards a single-pixel blend through the active drawing mode's
+           blend_pixel function pointer. */
 inline void
 PixelFormat::blend_pixel(int x, int y, const color_type& c, uint8 cover)
 {
 	fBlendPixel(x, y, c, cover, fBuffer, fPatternHandler);
 }
 
-// blend_hline
+
+/** @brief Forwards a horizontal-line blend through the active drawing
+           mode's blend_hline function pointer. */
 inline void
 PixelFormat::blend_hline(int x, int y, unsigned len,
 						 const color_type& c, uint8 cover)
@@ -242,7 +270,9 @@ PixelFormat::blend_hline(int x, int y, unsigned len,
 	fBlendHLine(x, y, len, c, cover, fBuffer, fPatternHandler);
 }
 
-// blend_vline
+
+/** @brief Forwards a vertical-line blend through the active drawing mode's
+           blend_vline function pointer. */
 inline void
 PixelFormat::blend_vline(int x, int y, unsigned len,
 						 const color_type& c, uint8 cover)
@@ -250,7 +280,9 @@ PixelFormat::blend_vline(int x, int y, unsigned len,
 	fBlendVLine(x, y, len, c, cover, fBuffer, fPatternHandler);
 }
 
-// blend_solid_hspan
+
+/** @brief Forwards an anti-aliased horizontal solid-color span through the
+           active drawing mode's blend_solid_hspan pointer. */
 inline void
 PixelFormat::blend_solid_hspan(int x, int y, unsigned len,
 							   const color_type& c, const uint8* covers)
@@ -258,7 +290,9 @@ PixelFormat::blend_solid_hspan(int x, int y, unsigned len,
 	fBlendSolidHSpan(x, y, len, c, covers, fBuffer, fPatternHandler);
 }
 
-// blend_solid_hspan_subpix
+
+/** @brief Forwards a subpixel horizontal solid-color span through the
+           active drawing mode's blend_solid_hspan_subpix pointer. */
 inline void
 PixelFormat::blend_solid_hspan_subpix(int x, int y, unsigned len,
 							   const color_type& c, const uint8* covers)
@@ -266,7 +300,9 @@ PixelFormat::blend_solid_hspan_subpix(int x, int y, unsigned len,
 	fBlendSolidHSpanSubpix(x, y, len, c, covers, fBuffer, fPatternHandler);
 }
 
-// blend_solid_vspan
+
+/** @brief Forwards an anti-aliased vertical solid-color span through the
+           active drawing mode's blend_solid_vspan pointer. */
 inline void
 PixelFormat::blend_solid_vspan(int x, int y, unsigned len,
 							   const color_type& c, const uint8* covers)
@@ -274,7 +310,9 @@ PixelFormat::blend_solid_vspan(int x, int y, unsigned len,
 	fBlendSolidVSpan(x, y, len, c, covers, fBuffer, fPatternHandler);
 }
 
-// blend_color_hspan
+
+/** @brief Forwards a horizontal color span (per-pixel colors) through the
+           active drawing mode's blend_color_hspan pointer. */
 inline void
 PixelFormat::blend_color_hspan(int x, int y, unsigned len,
 							   const color_type* colors,
@@ -285,7 +323,9 @@ PixelFormat::blend_color_hspan(int x, int y, unsigned len,
 					 fBuffer, fPatternHandler);
 }
 
-// blend_color_vspan
+
+/** @brief Forwards a vertical color span (per-pixel colors) through the
+           active drawing mode's blend_color_vspan pointer. */
 inline void
 PixelFormat::blend_color_vspan(int x, int y, unsigned len,
 							   const color_type* colors,
