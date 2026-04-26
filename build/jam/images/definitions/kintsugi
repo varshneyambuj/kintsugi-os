@@ -112,7 +112,6 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	su
 	sysinfo
 	system_time
-	tcptester
 	top
 	traceroute
 	traceroute6

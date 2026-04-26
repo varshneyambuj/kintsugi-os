@@ -170,11 +170,6 @@ rule SetPlatformCompatibilityFlagVariables
 		EXIT "specify it manually." ;
 	}
 
-	# special case: Haiku libbe.so built for testing under Haiku
-	if $(platform) = libbe_test {
-		platform = $(HOST_PLATFORM) ;
-	}
-
 	# unset variables first
 	$(varPrefix)_PLATFORM_HAIKU_COMPATIBLE = ;
 

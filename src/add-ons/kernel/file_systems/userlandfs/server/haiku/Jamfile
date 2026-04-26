@@ -13,7 +13,7 @@ UsePrivateHeaders libroot shared ;
 
 SEARCH_SOURCE += [ FDirName $(userlandFSTop) private ] ;
 SEARCH_SOURCE += [ FDirName $(userlandFSTop) shared ] ;
-SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src tests add-ons kernel
+SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src add-ons kernel
 	kernelland_emu ] ;
 
 DEFINES += USER=1 ;

@@ -20,16 +20,7 @@ rule UnitTestLib
 		DEBUG on $(lib) [ FGristFiles $(sources:S=$(SUFOBJ)) ] ?= 1 ;
 	}
 
-	# define TEST_R5/TEST_HAIKU depending on the platform we build for
-	if $(TARGET_PLATFORM) = libbe_test {
-		ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
-
-		# make the target depend on the installed libbe libraries
-		Depends $(lib) :
-			<tests!unittests>libbe_test.so ;
-	} else {
-		ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
-	}
+	ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
 
 	UseCppUnitObjectHeaders $(sources) ;
 
@@ -88,16 +79,7 @@ rule UnitTest
 	local libraries = $(3) ;
 	local resources = $(4) ;
 
-	# define TEST_R5/TEST_HAIKU depending on the platform we build for
-	if $(TARGET_PLATFORM) = libbe_test {
-		ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
-
-		# make the target depend on the installed libbe libraries
-		Depends $(target) :
-			<tests!unittests>libbe_test.so ;
-	} else {
-		ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
-	}
+	ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
 
 	UseCppUnitObjectHeaders $(sources) ;
 
@@ -116,12 +98,7 @@ rule TestObjects
 	#
 	local sources = $(1) ;
 
-	# define TEST_R5/TEST_HAIKU depending on the platform we build for
-	if $(TARGET_PLATFORM) = libbe_test {
-		ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
-	} else {
-		ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
-	}
+	ObjectDefines $(2) : TEST_HAIKU TEST_OBOS ;
 
 	UseCppUnitObjectHeaders $(sources) ;
 

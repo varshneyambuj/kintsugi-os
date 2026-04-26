@@ -53,32 +53,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 	}
 }
 
-# Build libbe_test.so
-
-SetSupportedPlatformsForTarget libbe_test.so : libbe_test ;
-
-SetVersionScript libbe_test.so : libbe_test_versions ;
-
 UsePrivateHeaders storage mime ;
-
-SharedLibrary libbe_test.so :
-	:
-	<libbe!$(TARGET_PACKAGING_ARCH)>app_kit.o
-	<libbe!$(TARGET_PACKAGING_ARCH)>interface_kit.o
-	<libbe!$(TARGET_PACKAGING_ARCH)>locale_kit.o
-	<libbe!$(TARGET_PACKAGING_ARCH)>storage_kit.o
-	<libbe!$(TARGET_PACKAGING_ARCH)>support_kit.o
-
-	[ MultiArchDefaultGristFiles libstorage_kit_mime.a ]
-
-	[ MultiArchDefaultGristFiles libicon.a ]
-	[ MultiArchDefaultGristFiles libagg.a ]
-
-	[ TargetLibstdc++ ]
-	[ BuildFeatureAttribute icu : libraries ]
-	[ BuildFeatureAttribute zlib : library ]
-	[ BuildFeatureAttribute zstd : library ]
-	;
 
 SEARCH_SOURCE += [ FDirName $(SUBDIR) interface ] ;
 SEARCH_SOURCE += [ FDirName $(SUBDIR) interface textview_support ] ;

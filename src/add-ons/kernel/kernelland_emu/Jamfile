@@ -1,4 +1,4 @@
-SubDir HAIKU_TOP src tests add-ons kernel kernelland_emu ;
+SubDir HAIKU_TOP src add-ons kernel kernelland_emu ;
 
 UsePrivateKernelHeaders ;
 UsePrivateHeaders shared ;
