@@ -1,11 +1,42 @@
 /*
- * Copyright 2004-2011 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Sandor Vroemisse
- *		Jérôme Duval
- *		Axel Dörfler, axeld@pinc-software.de.
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2011 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Sandor Vroemisse
+ *       Jerome Duval
+ *       Axel Doerfler, axeld@pinc-software.de
+ */
+
+
+/**
+ * @file Keymap.cpp
+ * @brief Editable Keymap that loads/saves the binary keymap blob and
+ *        notifies observers of mutations.
+ *
+ * The on-disk format is the BeOS/Haiku binary key_map plus a UTF-8 string
+ * table; this class reads it from disk, exposes mutators for individual
+ * keys and modifier roles, and writes the result back, byte-swapping
+ * to big-endian on save and back to host byte order after.
  */
 
 
@@ -23,10 +54,22 @@
 #include <input_globals.h>
 
 
+/** @brief Bitmask of all "side-agnostic" modifier flags. */
 static const uint32 kModifierKeys = B_SHIFT_KEY | B_CAPS_LOCK | B_CONTROL_KEY
 	| B_OPTION_KEY | B_COMMAND_KEY | B_MENU_KEY;
 
 
+/**
+ * @brief Helper used by DumpKeymap() to print a single mapped UTF-8 character.
+ *
+ * The string table @a chars stores each entry prefixed by a one-byte
+ * length, followed by the UTF-8 bytes. A length of zero means the slot
+ * is unmapped and is printed as "N/A".
+ *
+ * @param chars  String table from the active key_map.
+ * @param offset Offset of the entry to print.
+ * @param last   When true, suppress the trailing tab separator.
+ */
 static void
 print_key(char* chars, int32 offset, bool last = false)
 {
@@ -63,6 +106,7 @@ print_key(char* chars, int32 offset, bool last = false)
 //	#pragma mark -
 
 
+/** @brief Construct an empty Keymap with no modification target. */
 Keymap::Keymap()
 	:
 	fModificationMessage(NULL)
@@ -70,12 +114,24 @@ Keymap::Keymap()
 }
 
 
+/** @brief Free the optional modification-notification message. */
 Keymap::~Keymap()
 {
 	delete fModificationMessage;
 }
 
 
+/**
+ * @brief Configure where modification notifications should be sent.
+ *
+ * Each mutator (SetKey, SetModifier, SetDeadKey...) posts @a modificationMessage
+ * to @a target after a successful change so the UI can refresh.
+ *
+ * @param target              Messenger that will receive change notifications.
+ * @param modificationMessage Message to send on each change. Ownership
+ *                            transfers to the Keymap; the previous message
+ *                            (if any) is freed.
+ */
 void
 Keymap::SetTarget(BMessenger target, BMessage* modificationMessage)
 {
@@ -86,6 +142,14 @@ Keymap::SetTarget(BMessenger target, BMessage* modificationMessage)
 }
 
 
+/**
+ * @brief Replace the keymap's display name.
+ *
+ * The name is stored in @c fName and persisted to the @c keymap:name
+ * extended attribute on save.
+ *
+ * @param name New name; truncated to @c B_FILE_NAME_LENGTH bytes.
+ */
 void
 Keymap::SetName(const char* name)
 {
@@ -93,6 +157,13 @@ Keymap::SetName(const char* name)
 }
 
 
+/**
+ * @brief Dump the entire keymap to stdout for debugging.
+ *
+ * Prints a 9-column chart (normal, shift, control, option, option+shift,
+ * Caps, Caps+shift, Caps+option, Caps+option+shift) for keycodes 0..127.
+ * Only version 3 keymaps are supported; otherwise the function is a no-op.
+ */
 void
 Keymap::DumpKeymap()
 {
@@ -119,7 +190,16 @@ Keymap::DumpKeymap()
 }
 
 
-//!	Load a map from a file
+/**
+ * @brief Load a keymap from a file.
+ *
+ * Parses the binary key_map blob plus the UTF-8 string table from
+ * @a ref, and reads the keymap's display name from the @c keymap:name
+ * extended attribute (falling back to the file name).
+ *
+ * @param ref entry_ref of the keymap file to load.
+ * @return    @c B_OK on success; an I/O or parse error otherwise.
+ */
 status_t
 Keymap::Load(const entry_ref& ref)
 {
@@ -146,7 +226,17 @@ Keymap::Load(const entry_ref& ref)
 }
 
 
-//!	We save a map to a file
+/**
+ * @brief Serialize the keymap to a file.
+ *
+ * Writes the key_map struct (byte-swapped to big-endian for portability),
+ * the size of the UTF-8 string table, the table itself, and finally the
+ * @c keymap:name attribute. The in-memory key_map is restored to host byte
+ * order before the function returns.
+ *
+ * @param ref entry_ref of the destination file. The file is truncated.
+ * @return    @c B_OK on success; otherwise an I/O error.
+ */
 status_t
 Keymap::Save(const entry_ref& ref)
 {
@@ -194,6 +284,18 @@ Keymap::Save(const entry_ref& ref)
 }
 
 
+/**
+ * @brief Reassign a modifier role to a different physical key.
+ *
+ * Recognizes both the per-side modifiers (e.g. @c B_LEFT_SHIFT_KEY) and
+ * the side-agnostic ones (e.g. @c B_SHIFT_KEY). The latter are masked
+ * down to known modifiers before being applied.
+ *
+ * @param keyCode  Scancode of the physical key to bind.
+ * @param modifier Modifier flag identifying which role to assign.
+ * @retval B_OK         On success; modification message is posted.
+ * @retval B_BAD_VALUE  If @a modifier is not a recognized modifier flag.
+ */
 status_t
 Keymap::SetModifier(uint32 keyCode, uint32 modifier)
 {
@@ -240,7 +342,17 @@ Keymap::SetModifier(uint32 keyCode, uint32 modifier)
 }
 
 
-//! Enables/disables the "deadness" of the given keycode/modifier combo.
+/**
+ * @brief Toggle whether a key acts as a dead key under @a modifiers.
+ *
+ * The keymap maintains a per-dead-key bitmask of "active" tables; setting
+ * the corresponding bit makes that combination a dead key, clearing it
+ * disables it.
+ *
+ * @param keyCode   Scancode of the candidate dead key.
+ * @param modifiers Modifier mask under which the dead-key behavior applies.
+ * @param enabled   True to enable, false to disable.
+ */
 void
 Keymap::SetDeadKeyEnabled(uint32 keyCode, uint32 modifiers, bool enabled)
 {
@@ -267,9 +379,12 @@ Keymap::SetDeadKeyEnabled(uint32 keyCode, uint32 modifiers, bool enabled)
 }
 
 
-/*! Returns the trigger character string that is currently set for the dead
-	key with the given index (which is 1..5).
-*/
+/**
+ * @brief Read the trigger character associated with a dead key.
+ *
+ * @param deadKeyIndex Index of the dead key (1..5; see @c dead_key_index).
+ * @param outTrigger   Out: receives the UTF-8 trigger string, or empty.
+ */
 void
 Keymap::GetDeadKeyTrigger(dead_key_index deadKeyIndex, BString& outTrigger)
 {
@@ -297,9 +412,16 @@ Keymap::GetDeadKeyTrigger(dead_key_index deadKeyIndex, BString& outTrigger)
 }
 
 
-/*! Sets the trigger character string that shall be used for the dead key
-	with the given index (which is 1..5).
-*/
+/**
+ * @brief Update the trigger character of a dead key.
+ *
+ * Writes the new UTF-8 sequence into the string table and re-enables the
+ * dead key across every modifier table so the new trigger takes effect
+ * everywhere it was previously active.
+ *
+ * @param deadKeyIndex Index of the dead key (1..5).
+ * @param trigger      New trigger string. Maximum 6 bytes per UTF-8 character.
+ */
 void
 Keymap::SetDeadKeyTrigger(dead_key_index deadKeyIndex, const BString& trigger)
 {
@@ -339,6 +461,15 @@ Keymap::SetDeadKeyTrigger(dead_key_index deadKeyIndex, const BString& trigger)
 }
 
 
+/**
+ * @brief Discard the user keymap and re-activate the system default.
+ *
+ * Removes @c ~/config/settings/Key_map and asks the input server to
+ * fall back to the system default keymap.
+ *
+ * @return @c B_OK on success; otherwise an error from the file system or
+ *         input server.
+ */
 status_t
 Keymap::RestoreSystemDefault()
 {
@@ -356,7 +487,14 @@ Keymap::RestoreSystemDefault()
 }
 
 
-//! We make our input server use the map in /boot/home/config/settings/Keymap
+/**
+ * @brief Tell the input server to activate the saved user keymap.
+ *
+ * Calls @c _restore_key_map_() and refreshes the keyboard lock LEDs
+ * (Caps Lock, Num Lock, Scroll Lock) on success.
+ *
+ * @return @c B_OK on success; otherwise an error from the input server.
+ */
 status_t
 Keymap::Use()
 {
@@ -367,6 +505,20 @@ Keymap::Use()
 }
 
 
+/**
+ * @brief Reassign the UTF-8 character produced by a key + modifier combo.
+ *
+ * Looks up the offset in the active modifier table for the given
+ * key code, then writes @a numBytes bytes of @a bytes into the string
+ * table. Posts a modification message on success.
+ *
+ * @param keyCode   Scancode of the key to mutate.
+ * @param modifiers Modifier mask selecting the active sub-table.
+ * @param deadKey   Dead-key index, or 0 for none.
+ * @param bytes     UTF-8 character to assign.
+ * @param numBytes  Number of bytes in @a bytes; -1 to call @c strlen.
+ *                  Values above 6 are silently rejected.
+ */
 void
 Keymap::SetKey(uint32 keyCode, uint32 modifiers, int8 deadKey,
 	const char* bytes, int32 numBytes)
@@ -387,6 +539,12 @@ Keymap::SetKey(uint32 keyCode, uint32 modifiers, int8 deadKey,
 }
 
 
+/**
+ * @brief Deep-copy assignment that duplicates the string table and message.
+ *
+ * @param other Source keymap to copy from.
+ * @return      Reference to this Keymap.
+ */
 Keymap&
 Keymap::operator=(const Keymap& other)
 {
@@ -415,6 +573,20 @@ Keymap::operator=(const Keymap& other)
 }
 
 
+/**
+ * @brief Write @a numBytes bytes of @a bytes at @a offset in the string table.
+ *
+ * Resizes the string table when the new entry is a different length and
+ * patches every offset in the key_map that points past @a offset so the
+ * downstream entries remain valid.
+ *
+ * @param offset   Offset of the entry within @c fChars.
+ * @param bytes    New UTF-8 bytes to write.
+ * @param numBytes Number of bytes in @a bytes (excluding the length prefix).
+ * @return         True when the table was actually changed; false when
+ *                 the new content was identical to the old or when the
+ *                 reallocation failed.
+ */
 bool
 Keymap::_SetChars(int32 offset, const char* bytes, int32 numBytes)
 {

@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2012, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Mark Hogben
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Philippe St-Pierre, stpere@gmail.com
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2012, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Mark Hogben
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Philippe St-Pierre, stpere@gmail.com
+ *       Stephan Aßmus <superstippi@gmx.de>
+ */
+
+
+/**
+ * @file FontView.cpp
+ * @brief Aggregates the four FontSelectionView pickers in the Fonts tab.
+ *
+ * Owns the plain, bold, fixed, and menu pickers, aligns their first
+ * column to the longest label and polls the system font registry
+ * every three seconds so the menus reflect newly installed fonts.
  */
 
 
@@ -32,9 +61,18 @@
 #define B_TRANSLATION_CONTEXT "Font view"
 
 
+/** @brief Tick message that triggers a font registry refresh. */
 static const uint32 kMsgCheckFonts = 'chkf';
 
 
+/**
+ * @brief Constructs the Fonts tab and its four font pickers.
+ *
+ * Computes the maximum label width across the four pickers and pins
+ * each picker's first column to that width so the labels line up.
+ *
+ * @param name Identifier passed to the BView base class.
+ */
 FontView::FontView(const char* name)
 	:
 	BView(name, B_WILL_DRAW )
@@ -79,6 +117,12 @@ FontView::FontView(const char* name)
 }
 
 
+/**
+ * @brief Wires picker targets and starts the font-update poll timer.
+ *
+ * Posts kMsgCheckFonts every three seconds so the family/style menus
+ * pick up newly installed fonts without restarting the preflet.
+ */
 void
 FontView::AttachedToWindow()
 {
@@ -93,6 +137,9 @@ FontView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Stops the font-update poll timer when the view leaves a window.
+ */
 void
 FontView::DetachedFromWindow()
 {
@@ -101,6 +148,9 @@ FontView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Resets every picker to its compiled-in system default.
+ */
 void
 FontView::SetDefaults()
 {
@@ -111,6 +161,16 @@ FontView::SetDefaults()
 }
 
 
+/**
+ * @brief Routes per-picker messages to the FontSelectionView they target.
+ *
+ * Looks up the destination picker via the "name" string carried in the
+ * message ("plain", "bold", "fixed", "menu") and forwards the message
+ * unchanged. Also services kMsgCheckFonts ticks by reloading menus
+ * when @c update_font_families() reports a change.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 FontView::MessageReceived(BMessage* message)
 {
@@ -149,6 +209,9 @@ FontView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Restores every picker to its constructor-time snapshot.
+ */
 void
 FontView::Revert()
 {
@@ -159,6 +222,12 @@ FontView::Revert()
 }
 
 
+/**
+ * @brief Rebuilds the family/style menu of every picker.
+ *
+ * Called on attach and whenever @c update_font_families() reports that
+ * the list of installed fonts has changed.
+ */
 void
 FontView::UpdateFonts()
 {
@@ -169,6 +238,11 @@ FontView::UpdateFonts()
 }
 
 
+/**
+ * @brief Reports whether any picker has a non-default font selected.
+ *
+ * @return @c true if at least one picker reports IsDefaultable().
+ */
 bool
 FontView::IsDefaultable()
 {
@@ -179,6 +253,11 @@ FontView::IsDefaultable()
 }
 
 
+/**
+ * @brief Reports whether any picker has unsaved edits.
+ *
+ * @return @c true if at least one picker reports IsRevertable().
+ */
 bool
 FontView::IsRevertable()
 {

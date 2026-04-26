@@ -1,12 +1,41 @@
 /*
- * Copyright 2001-2015, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Rene Gollent <rene@gollent.com>
- *		Joseph Groover <looncraz@looncraz.net>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Rene Gollent <rene@gollent.com>
+ *       Joseph Groover <looncraz@looncraz.net>
+ */
+
+
+/**
+ * @file Colors.cpp
+ * @brief UI color descriptor table and helpers for the Colors tab.
+ *
+ * Provides a translatable, ordered table that pairs each @c color_which
+ * constant with a human-readable label, plus convenience routines for
+ * snapshotting the current and default UI palettes into a BMessage.
  */
 
 
@@ -28,6 +57,7 @@
 #define B_TRANSLATION_CONTEXT "Colors tab"
 
 
+/** @brief Ordered table of UI color slots and their translatable labels. */
 static ColorDescription sColorDescriptionTable[] = {
 	{ B_PANEL_BACKGROUND_COLOR, B_TRANSLATE_MARK("Panel background") },
 	{ B_PANEL_TEXT_COLOR, B_TRANSLATE_MARK("Panel text") },
@@ -77,10 +107,17 @@ static ColorDescription sColorDescriptionTable[] = {
 		B_TRANSLATE_MARK("Inactive window border") }
 };
 
+/** @brief Number of entries in @c sColorDescriptionTable. */
 const int32 sColorDescriptionCount = sizeof(sColorDescriptionTable)
 	/ sizeof(ColorDescription);
 
 
+/**
+ * @brief Returns the color description at @a index, or @c NULL if out of range.
+ *
+ * @param index Zero-based slot index.
+ * @return Pointer to the descriptor, or @c NULL if @a index is invalid.
+ */
 const ColorDescription*
 get_color_description(int32 index)
 {
@@ -90,6 +127,11 @@ get_color_description(int32 index)
 }
 
 
+/**
+ * @brief Returns the number of entries in the color description table.
+ *
+ * @return The count of UI color slots known to the Colors tab.
+ */
 int32
 color_description_count(void)
 {
@@ -97,6 +139,14 @@ color_description_count(void)
 }
 
 
+/**
+ * @brief Stores the system default UI palette in @a message.
+ *
+ * Adds one rgb_color entry per @c color_which slot, keyed by the value
+ * of @c ui_color_name(). No-op when @a message is @c NULL.
+ *
+ * @param message Output message to receive the colors.
+ */
 void
 get_default_colors(BMessage* message)
 {
@@ -111,6 +161,14 @@ get_default_colors(BMessage* message)
 }
 
 
+/**
+ * @brief Stores the live UI palette in @a message.
+ *
+ * Reads each slot via @c ui_color() and adds it to @a message keyed by
+ * @c ui_color_name(). No-op when @a message is @c NULL.
+ *
+ * @param message Output message to receive the colors.
+ */
 void
 get_current_colors(BMessage* message)
 {

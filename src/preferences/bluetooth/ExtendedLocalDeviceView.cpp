@@ -1,11 +1,45 @@
 /*
- * Copyright 2008-2009, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes@gmail.com>
- * Copyright 2021, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- * 		Fredrik Modéen <fredrik_at_modeen.se>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2009, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes@gmail.com>
+ *   Copyright 2021, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Fredrik Modéen <fredrik_at_modeen.se>
  */
+
+
+/**
+ * @file ExtendedLocalDeviceView.cpp
+ * @brief Implementation of ExtendedLocalDeviceView.
+ *
+ * Combines a BluetoothDeviceView (read-only properties) with three
+ * BCheckBox controls for the live discoverable, visibility, and
+ * authentication settings of the active LocalDevice. User toggles are
+ * pushed to the LocalDevice immediately.
+ *
+ * @see BluetoothDeviceView, LocalDevice
+ */
+
 
 #include "ExtendedLocalDeviceView.h"
 
@@ -24,6 +58,17 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Extended local device view"
 
+
+/**
+ * @brief Constructs an ExtendedLocalDeviceView for the given LocalDevice.
+ *
+ * Creates the inner BluetoothDeviceView and the three BCheckBoxes,
+ * arranges them vertically, and disables them until SetLocalDevice() is
+ * called with a non-NULL device.
+ *
+ * @param bDevice  Initial LocalDevice to display; may be NULL.
+ * @param flags    Additional BView flags OR'd with B_WILL_DRAW.
+ */
 ExtendedLocalDeviceView::ExtendedLocalDeviceView(LocalDevice* bDevice,
 	uint32 flags)
 	:
@@ -56,11 +101,24 @@ ExtendedLocalDeviceView::ExtendedLocalDeviceView(LocalDevice* bDevice,
 }
 
 
+/**
+ * @brief Destroys the view.
+ */
 ExtendedLocalDeviceView::~ExtendedLocalDeviceView()
 {
 }
 
 
+/**
+ * @brief Re-binds the view to a different LocalDevice.
+ *
+ * Updates the BluetoothDeviceView with the new device, resets the check
+ * box state with ClearDevice(), then reads the live discoverable/visible
+ * mode (1 = discoverable, 2 = visible name, 3 = both) back into the
+ * checkboxes.
+ *
+ * @param lDevice  New LocalDevice; if NULL the view is left untouched.
+ */
 void
 ExtendedLocalDeviceView::SetLocalDevice(LocalDevice* lDevice)
 {
@@ -89,6 +147,9 @@ ExtendedLocalDeviceView::SetLocalDevice(LocalDevice* lDevice)
 }
 
 
+/**
+ * @brief Routes check-box changes back to this view once attached.
+ */
 void
 ExtendedLocalDeviceView::AttachedToWindow()
 {
@@ -98,6 +159,11 @@ ExtendedLocalDeviceView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Diagnostic hook printing a notice when the target changes.
+ *
+ * @param target  Ignored.
+ */
 void
 ExtendedLocalDeviceView::SetTarget(BHandler* target)
 {
@@ -105,6 +171,18 @@ ExtendedLocalDeviceView::SetTarget(BHandler* target)
 }
 
 
+/**
+ * @brief Translates check-box clicks into LocalDevice configuration calls.
+ *
+ * Combines the discoverable and visible check-box states into the
+ * scan-mode value the controller expects (0 = neither, 1 = discoverable,
+ * 2 = visible, 3 = both) and pushes it through SetDiscoverable. The
+ * authentication toggle is forwarded directly.
+ *
+ * @param message  Incoming BMessage. Unhandled cases fall through to
+ *                 BView::MessageReceived. If no LocalDevice is currently
+ *                 bound the message is ignored.
+ */
 void
 ExtendedLocalDeviceView::MessageReceived(BMessage* message)
 {
@@ -149,6 +227,11 @@ ExtendedLocalDeviceView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Enables or disables every interactive control in the view.
+ *
+ * @param value  true to enable, false to disable the three check boxes.
+ */
 void
 ExtendedLocalDeviceView::SetEnabled(bool value)
 {
@@ -158,6 +241,9 @@ ExtendedLocalDeviceView::SetEnabled(bool value)
 }
 
 
+/**
+ * @brief Resets every check box to its unchecked state.
+ */
 void
 ExtendedLocalDeviceView::ClearDevice()
 {

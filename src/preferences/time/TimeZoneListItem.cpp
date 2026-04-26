@@ -1,13 +1,43 @@
 /*
- * Copyright 2010-2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Adrien Destugues, pulkomandy@pulkomandy.ath.cx
- *		Axel Dörfler, axeld@pinc-software.de
- *		John Scipione, jscipione@gmail.com
- *		Oliver Tappe, zooey@hirschkaefer.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Adrien Destugues, pulkomandy@pulkomandy.ath.cx
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       John Scipione, jscipione@gmail.com
+ *       Oliver Tappe, zooey@hirschkaefer.de
+ */
+
+
+/**
+ * @file TimeZoneListItem.cpp
+ * @brief Implementation of TimeZoneListItem, one row in the time-zone list.
+ *
+ * Each item carries an optional BCountry (used to draw a flag icon) and an
+ * optional BTimeZone (used for tool tips and the OffsetFromGMT lookup).
+ * Pure region or country header rows have neither; only leaf time-zone
+ * entries supply both icon and zone data.
  */
 
 
@@ -23,9 +53,21 @@
 #include <Window.h>
 
 
+/** @brief Sentinel empty string returned by ID()/Name() when no zone is set. */
 static const BString skDefaultString;
 
 
+/**
+ * @brief Constructs a list item with optional country and time-zone info.
+ *
+ * Region header rows pass NULL for both @a country and @a timeZone; leaf
+ * time-zone rows supply both. Ownership of both pointers transfers to this
+ * item and they are deleted in the destructor.
+ *
+ * @param text     Display label shown in the list view.
+ * @param country  Country whose flag icon should be drawn, or NULL.
+ * @param timeZone Time zone associated with this row, or NULL.
+ */
 TimeZoneListItem::TimeZoneListItem(const char* text, BCountry* country,
 	BTimeZone* timeZone)
 	:
@@ -37,6 +79,9 @@ TimeZoneListItem::TimeZoneListItem(const char* text, BCountry* country,
 }
 
 
+/**
+ * @brief Releases the owned country, time-zone, and cached icon bitmap.
+ */
 TimeZoneListItem::~TimeZoneListItem()
 {
 	delete fCountry;
@@ -45,6 +90,13 @@ TimeZoneListItem::~TimeZoneListItem()
 }
 
 
+/**
+ * @brief Draws the row, prefixing the label with the country flag if any.
+ *
+ * @param owner    View into which the row is drawn.
+ * @param frame    Rectangle assigned to this row.
+ * @param complete Whether the entire row background should be repainted.
+ */
 void
 TimeZoneListItem::DrawItem(BView* owner, BRect frame, bool complete)
 {
@@ -65,6 +117,16 @@ TimeZoneListItem::DrawItem(BView* owner, BRect frame, bool complete)
 }
 
 
+/**
+ * @brief Refreshes the cached icon bitmap when the row height changes.
+ *
+ * Recomputes the row width to make space for the icon and rebuilds the
+ * country flag bitmap at the new size. Rows without an associated country
+ * bypass the bitmap creation entirely.
+ *
+ * @param owner View whose font metrics drive the new row height.
+ * @param font  Font used to render the label text.
+ */
 void
 TimeZoneListItem::Update(BView* owner, const BFont* font)
 {
@@ -89,6 +151,11 @@ TimeZoneListItem::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief Replaces the owned country, deleting the previous one.
+ *
+ * @param country New country whose ownership transfers to this item.
+ */
 void
 TimeZoneListItem::SetCountry(BCountry* country)
 {
@@ -97,6 +164,11 @@ TimeZoneListItem::SetCountry(BCountry* country)
 }
 
 
+/**
+ * @brief Replaces the owned time zone, deleting the previous one.
+ *
+ * @param timeZone New zone whose ownership transfers to this item.
+ */
 void
 TimeZoneListItem::SetTimeZone(BTimeZone* timeZone)
 {
@@ -105,6 +177,11 @@ TimeZoneListItem::SetTimeZone(BTimeZone* timeZone)
 }
 
 
+/**
+ * @brief Returns the IANA zone ID, or an empty string when no zone is set.
+ *
+ * @return Zone ID for leaf rows, empty sentinel for header rows.
+ */
 const BString&
 TimeZoneListItem::ID() const
 {
@@ -115,6 +192,11 @@ TimeZoneListItem::ID() const
 }
 
 
+/**
+ * @brief Returns the localized zone name, or empty string when none is set.
+ *
+ * @return Localized zone name for leaf rows, empty sentinel otherwise.
+ */
 const BString&
 TimeZoneListItem::Name() const
 {
@@ -125,6 +207,11 @@ TimeZoneListItem::Name() const
 }
 
 
+/**
+ * @brief Returns the zone's UTC offset in seconds, or zero when unknown.
+ *
+ * @return Offset from GMT in seconds, including any DST adjustment.
+ */
 int
 TimeZoneListItem::OffsetFromGMT() const
 {
@@ -135,6 +222,19 @@ TimeZoneListItem::OffsetFromGMT() const
 }
 
 
+/**
+ * @brief Draws the row text and selection background at a given text offset.
+ *
+ * Used by DrawItem() to share rendering between the icon-prefixed and
+ * unprefixed code paths. Adjusts colors for selected and disabled states
+ * before drawing the label, then restores the previous high/low colors.
+ *
+ * @param owner      View into which the row is drawn.
+ * @param frame      Rectangle assigned to this row.
+ * @param complete   Whether the entire row background should be repainted.
+ * @param textOffset Horizontal pixel offset applied before drawing the
+ *                   label, used to make room for the country icon.
+ */
 void
 TimeZoneListItem::_DrawItemWithTextOffset(BView* owner, BRect frame,
 	bool complete, float textOffset)

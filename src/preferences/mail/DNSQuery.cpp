@@ -1,3 +1,39 @@
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Originally distributed under permissive terms by the Haiku project.
+ *   See RFC 1035 for the protocol implemented here.
+ */
+
+
+/**
+ * @file DNSQuery.cpp
+ * @brief Implements BRawNetBuffer, DNSTools, and DNSQuery for the
+ *        Mail auto-config wizard.
+ *
+ * Provides just enough of the RFC 1035 protocol to send a single MX query
+ * over UDP, decode the response, and surface the highest-priority mail
+ * exchange for a domain.
+ */
+
+
 #include "DNSQuery.h"
 
 #include <errno.h>
@@ -7,7 +43,7 @@
 #include <FindDirectory.h>
 #include <NetAddress.h>
 #include <NetEndpoint.h>
-#include <Path.h> 
+#include <Path.h>
 
 // #define DEBUG 1
 
@@ -19,15 +55,23 @@
 #endif
 
 
+/** @brief Monotonically increasing process-wide DNS query identifier. */
 static int32 gID = 1;
 
 
+/** @brief Constructs an empty buffer with both read and write cursors at
+           offset zero. */
 BRawNetBuffer::BRawNetBuffer()
 {
 	_Init(NULL, 0);
 }
 
 
+/**
+ * @brief Constructs an empty buffer pre-allocated to @a size bytes.
+ *
+ * @param size  Initial allocation in bytes.
+ */
 BRawNetBuffer::BRawNetBuffer(off_t size)
 {
 	_Init(NULL, 0);
@@ -35,12 +79,25 @@ BRawNetBuffer::BRawNetBuffer(off_t size)
 }
 
 
+/**
+ * @brief Constructs a buffer initialised from @a buf.
+ *
+ * @param buf   Source bytes copied into the buffer; may be @c NULL.
+ * @param size  Number of bytes to copy from @a buf.
+ */
 BRawNetBuffer::BRawNetBuffer(const void* buf, size_t size)
 {
 	_Init(buf, size);
 }
 
 
+/**
+ * @brief Appends @a value to the buffer in big-endian (network) byte order.
+ *
+ * @param value  16-bit integer to append.
+ * @retval B_OK         Bytes written and the write cursor advanced.
+ * @retval B_NO_MEMORY  Underlying BMallocIO could not grow.
+ */
 status_t
 BRawNetBuffer::AppendUint16(uint16 value)
 {
@@ -53,6 +110,14 @@ BRawNetBuffer::AppendUint16(uint16 value)
 }
 
 
+/**
+ * @brief Appends a NUL-terminated C string verbatim including the
+ *        terminator.
+ *
+ * @param string  String to append; must not be @c NULL.
+ * @retval B_OK         Bytes written and the write cursor advanced.
+ * @retval B_NO_MEMORY  Underlying BMallocIO could not grow.
+ */
 status_t
 BRawNetBuffer::AppendString(const char* string)
 {
@@ -65,6 +130,14 @@ BRawNetBuffer::AppendString(const char* string)
 }
 
 
+/**
+ * @brief Reads a big-endian 16-bit integer at the current read cursor and
+ *        advances it.
+ *
+ * @param value  Output: host-byte-order integer; only valid on @c B_OK.
+ * @retval B_OK     Two bytes consumed.
+ * @retval B_ERROR  Buffer was already at EOF.
+ */
 status_t
 BRawNetBuffer::ReadUint16(uint16& value)
 {
@@ -78,6 +151,14 @@ BRawNetBuffer::ReadUint16(uint16& value)
 }
 
 
+/**
+ * @brief Reads a big-endian 32-bit integer at the current read cursor and
+ *        advances it.
+ *
+ * @param value  Output: host-byte-order integer; only valid on @c B_OK.
+ * @retval B_OK     Four bytes consumed.
+ * @retval B_ERROR  Buffer was already at EOF.
+ */
 status_t
 BRawNetBuffer::ReadUint32(uint32& value)
 {
@@ -91,6 +172,18 @@ BRawNetBuffer::ReadUint32(uint32& value)
 }
 
 
+/**
+ * @brief Reads a length-prefixed (and possibly compressed) DNS name out of
+ *        the buffer at the current read cursor.
+ *
+ * Honours the RFC 1035 message-compression scheme: a leading byte of @c
+ * 192 signals a back-pointer to an earlier name in the same packet.
+ *
+ * @param string  Output: decoded ASCII name.
+ * @retval B_OK     Name read and the cursor advanced past the on-wire
+ *                  bytes.
+ * @retval B_ERROR  Buffer ended before the name terminated.
+ */
 status_t
 BRawNetBuffer::ReadString(BString& string)
 {
@@ -103,6 +196,14 @@ BRawNetBuffer::ReadString(BString& string)
 }
 
 
+/**
+ * @brief Advances the read cursor by @a skip bytes without consuming them
+ *        into a value.
+ *
+ * @param skip  Number of bytes to skip.
+ * @retval B_OK     Cursor advanced.
+ * @retval B_ERROR  The skip would run past the end of the buffer.
+ */
 status_t
 BRawNetBuffer::SkipReading(off_t skip)
 {
@@ -113,6 +214,13 @@ BRawNetBuffer::SkipReading(off_t skip)
 }
 
 
+/**
+ * @brief Common constructor helper that resets cursors and seeds the
+ *        underlying BMallocIO with @a buf.
+ *
+ * @param buf   Initial bytes; may be @c NULL when @a size is zero.
+ * @param size  Number of bytes to copy from @a buf.
+ */
 void
 BRawNetBuffer::_Init(const void* buf, size_t size)
 {
@@ -122,6 +230,16 @@ BRawNetBuffer::_Init(const void* buf, size_t size)
 }
 
 
+/**
+ * @brief Recursive helper that decodes a DNS name starting at absolute
+ *        offset @a pos, following compression pointers.
+ *
+ * @param string  Accumulator for the decoded characters.
+ * @param pos     Absolute offset into the buffer where the name starts.
+ * @return Number of bytes consumed by the name in the on-wire stream
+ *         (including the terminator or the compression pointer), or @c -1
+ *         when @a pos is past the end of the buffer.
+ */
 ssize_t
 BRawNetBuffer::_ReadStringAt(BString& string, off_t pos)
 {
@@ -154,6 +272,23 @@ BRawNetBuffer::_ReadStringAt(BString& string, off_t pos)
 // #pragma mark - DNSTools
 
 
+/**
+ * @brief Parses @c /system/settings/network/resolv.conf and copies up to
+ *        two nameserver addresses into @a serverList.
+ *
+ * Comments (lines starting with @c ';' or @c '#') are skipped and only
+ * the first two @c "nameserver" lines are kept.
+ *
+ * @param serverList  Owning list filled with newly allocated BString
+ *                    addresses (caller frees the entries via the list's
+ *                    own ownership semantics).
+ * @retval B_OK              File was opened and parsed; the list may still
+ *                           be empty if no nameservers were configured.
+ * @retval B_ENTRY_NOT_FOUND The settings directory or @c resolv.conf
+ *                           could not be located/opened.
+ * @todo Stop hand-parsing @c resolv.conf once a public DNS-list API
+ *       exists.
+ */
 status_t
 DNSTools::GetDNSServers(BObjectList<BString, true>* serverList)
 {
@@ -209,6 +344,16 @@ DNSTools::GetDNSServers(BObjectList<BString, true>* serverList)
 }
 
 
+/**
+ * @brief Converts a dotted DNS name into the length-prefixed wire form.
+ *
+ * "www.example.com" becomes "3www7example3com" with each dot replaced by
+ * the byte count of the following label.
+ *
+ * @param string  Dotted source name.
+ * @return Length-prefixed encoding suitable for the question section of a
+ *         DNS request.
+ */
 BString
 DNSTools::ConvertToDNSName(const BString& string)
 {
@@ -241,6 +386,15 @@ DNSTools::ConvertToDNSName(const BString& string)
 }
 
 
+/**
+ * @brief Inverse of ConvertToDNSName(): turns a length-prefixed wire-form
+ *        name back into dotted notation.
+ *
+ * @param string  Length-prefixed source name (without compression
+ *                pointers).
+ * @return Dotted human-readable name; the same value if @a string is
+ *         empty.
+ */
 BString
 DNSTools::ConvertFromDNSName(const BString& string)
 {
@@ -269,16 +423,30 @@ DNSTools::ConvertFromDNSName(const BString& string)
 // see http://tools.ietf.org/html/rfc1035 for more information about DNS
 
 
+/** @brief Constructs an idle DNSQuery; no socket is opened until
+           GetMXRecords() is called. */
 DNSQuery::DNSQuery()
 {
 }
 
 
+/** @brief Trivial destructor; sockets are owned by the call-scoped
+           BNetEndpoint inside GetMXRecords(). */
 DNSQuery::~DNSQuery()
 {
 }
 
 
+/**
+ * @brief Looks up the first nameserver from resolv.conf and decodes it
+ *        into @a add.
+ *
+ * @param add  Output: numeric IPv4 address of the first nameserver. Only
+ *             valid on @c B_OK.
+ * @retval B_OK     A nameserver was read and decoded.
+ * @retval (other)  Whatever DNSTools::GetDNSServers() returned, or
+ *                  @c B_ERROR when the address failed to parse.
+ */
 status_t
 DNSQuery::ReadDNSServer(in_addr* add)
 {
@@ -297,6 +465,25 @@ DNSQuery::ReadDNSServer(in_addr* add)
 }
 
 
+/**
+ * @brief Sends a single MX query for @a serverName over UDP and decodes
+ *        the answer into @a mxList.
+ *
+ * Constructs a recursion-desired query, sends it to the first system
+ * nameserver, then walks the answer section keeping only records whose
+ * type is @c MX_RECORD.
+ *
+ * @param serverName  Domain whose MX records are wanted.
+ * @param mxList      Owning list that receives newly-allocated mx_record
+ *                    entries; the highest-priority entry is at index 0
+ *                    when more than one is returned in priority order.
+ * @param timeout     Receive-timeout in microseconds; defaults to
+ *                    500 ms.
+ * @retval B_OK     At least one MX record was found and added to
+ *                  @a mxList.
+ * @retval B_ERROR  No nameserver, no socket, no answer, or no MX record
+ *                  in the answer.
+ */
 status_t
 DNSQuery::GetMXRecords(const BString&  serverName,
 	BObjectList<mx_record, true>* mxList, bigtime_t timeout)
@@ -383,6 +570,14 @@ DNSQuery::GetMXRecords(const BString&  serverName,
 }
 
 
+/**
+ * @brief Atomically allocates a fresh DNS query identifier.
+ *
+ * Wraps back to zero before approaching the 16-bit ceiling so a long-
+ * running session does not collide with the upper-reserved range.
+ *
+ * @return New 16-bit query ID.
+ */
 uint16
 DNSQuery::_GetUniqueID()
 {
@@ -394,6 +589,13 @@ DNSQuery::_GetUniqueID()
 }
 
 
+/**
+ * @brief Fills @a header with the flag set used by the wizard's MX
+ *        lookups: standard query, recursion desired, one question, no
+ *        answers.
+ *
+ * @param header  dns_header to populate; must not be @c NULL.
+ */
 void
 DNSQuery::_SetMXHeader(dns_header* header)
 {
@@ -413,6 +615,17 @@ DNSQuery::_SetMXHeader(dns_header* header)
 }
 
 
+/**
+ * @brief Serialises @a header to @a buffer in the wire layout expected by
+ *        the resolver.
+ *
+ * Packs the flag bitfields into a single 16-bit word in the order defined
+ * by RFC 1035 section 4.1.1.
+ *
+ * @param buffer  Destination raw buffer; the write cursor advances past
+ *                the header.
+ * @param header  Source header; must not be @c NULL.
+ */
 void
 DNSQuery::_AppendQueryHeader(BRawNetBuffer& buffer, const dns_header* header)
 {
@@ -434,6 +647,14 @@ DNSQuery::_AppendQueryHeader(BRawNetBuffer& buffer, const dns_header* header)
 }
 
 
+/**
+ * @brief Inverse of _AppendQueryHeader(): unpacks a wire-format DNS header
+ *        out of @a buffer into @a header.
+ *
+ * @param buffer  Source raw buffer; the read cursor advances past the
+ *                header.
+ * @param header  Destination header; must not be @c NULL.
+ */
 void
 DNSQuery::_ReadQueryHeader(BRawNetBuffer& buffer, dns_header* header)
 {
@@ -455,6 +676,14 @@ DNSQuery::_ReadQueryHeader(BRawNetBuffer& buffer, dns_header* header)
 }
 
 
+/**
+ * @brief Decodes a single MX answer body (preference + exchange name) out
+ *        of @a buffer into @a mxRecord.
+ *
+ * @param buffer    Source raw buffer; the read cursor advances past the
+ *                  record body.
+ * @param mxRecord  Destination record; must not be @c NULL.
+ */
 void
 DNSQuery::_ReadMXRecord(BRawNetBuffer& buffer, mx_record* mxRecord)
 {
@@ -464,6 +693,14 @@ DNSQuery::_ReadMXRecord(BRawNetBuffer& buffer, mx_record* mxRecord)
 }
 
 
+/**
+ * @brief Decodes the fixed-size header preceding a resource record's
+ *        type-specific data.
+ *
+ * @param buffer  Source raw buffer; the read cursor advances past the RR
+ *                header.
+ * @param rrHead  Destination structure; must not be @c NULL.
+ */
 void
 DNSQuery::_ReadResourceRecord(BRawNetBuffer& buffer,
 	resource_record_head *rrHead)

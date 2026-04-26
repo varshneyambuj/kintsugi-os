@@ -1,13 +1,29 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Copyright 2002, Thomas Kurschel.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Rafael Romo
- *		Thomas Kurschel
- *		Axel Dörfler, axeld@pinc-software.de
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2009, Haiku. Copyright 2002, Thomas Kurschel.
+ * Original authors: Rafael Romo, Thomas Kurschel,
+ *                   Axel Doerfler (axeld@pinc-software.de).
  */
+
+/** @file MonitorView.h
+    @brief Schematic monitor preview shown in the Screen preferences window. */
+
 #ifndef MONITOR_VIEW_H
 #define MONITOR_VIEW_H
 
@@ -15,6 +31,14 @@
 #include <View.h>
 
 
+/**
+ * @brief Stylized monitor view that previews the current desktop dimensions.
+ *
+ * Draws a rounded rectangle representing the physical screen, with an
+ * inner rectangle scaled to the chosen resolution and tinted with the
+ * desktop color. Clicking on the view launches the Backgrounds app.
+ * The DPI label is computed from the EDID monitor info when available.
+ */
 class MonitorView : public BView {
 public:
 							MonitorView(BRect frame, const char* name,

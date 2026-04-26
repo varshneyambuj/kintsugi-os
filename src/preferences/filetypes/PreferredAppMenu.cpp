@@ -1,6 +1,33 @@
 /*
- * Copyright 2006, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file PreferredAppMenu.cpp
+ * @brief Helpers that build a "Preferred application" menu for a MIME
+ *        type and resolve a user pick (a refs message dropped on a
+ *        button) back to an application signature suitable for
+ *        BMimeType::SetPreferredApp().
  */
 
 
@@ -26,6 +53,13 @@
 #define B_TRANSLATION_CONTEXT "Preferred App Menu"
 
 
+/**
+ * @brief Case-insensitive comparator that orders menu items by label.
+ *
+ * @param _a  Pointer to a BMenuItem* (qsort signature).
+ * @param _b  Pointer to a BMenuItem* (qsort signature).
+ * @return    Result of strcasecmp() on the two labels.
+ */
 static int
 compare_menu_items(const void* _a, const void* _b)
 {
@@ -36,6 +70,15 @@ compare_menu_items(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief Checks whether @a app appears in the "applications" string
+ *        array of @a applications.
+ *
+ * @param applications  Message returned by
+ *                      BMimeType::GetSupportingApps() or GetWildcardApps().
+ * @param app           Application signature to look for.
+ * @return              True when found (case-insensitive), false otherwise.
+ */
 static bool
 is_application_in_message(BMessage& applications, const char* app)
 {
@@ -50,6 +93,16 @@ is_application_in_message(BMessage& applications, const char* app)
 }
 
 
+/**
+ * @brief Disambiguates a menu item by appending its application's
+ *        signature subtype to its label.
+ *
+ * Used when two installed applications share the same human-readable
+ * short description.
+ *
+ * @param item       Menu item to mutate.
+ * @param signature  Application signature, e.g. "application/x-vnd.Foo".
+ */
 static void
 add_signature(BMenuItem* item, const char* signature)
 {
@@ -64,6 +117,17 @@ add_signature(BMenuItem* item, const char* signature)
 }
 
 
+/**
+ * @brief Builds an icon menu item for an application signature.
+ *
+ * The label is the application's short description when available,
+ * falling back to the raw signature. The carried message has @a what
+ * and a "signature" string field.
+ *
+ * @param signature  Application signature.
+ * @param what       BMessage what code to attach.
+ * @return           Newly allocated IconMenuItem; caller-owned.
+ */
 static IconMenuItem*
 create_application_item(const char* signature, uint32 what)
 {
@@ -83,6 +147,27 @@ create_application_item(const char* signature, uint32 what)
 //	#pragma mark - Public functions
 
 
+/**
+ * @brief Rebuilds @a menu to reflect the preferred-app choices for
+ *        @a type.
+ *
+ * Removes everything except the first item ("None"), adds the supporting
+ * applications grouped into "supports MIME subtype" and "supports super-
+ * type" sections, sorts each group by label, disambiguates colliding
+ * labels with their signatures, and selects the matching entry. When the
+ * preferred application is not among the supporting apps, an extra
+ * separator and entry is appended so the user can still see and clear it.
+ *
+ * @param type            MIME type whose preferred-app list is being
+ *                        edited. May be NULL to leave only "None".
+ * @param menu            Pop-up menu to populate; the first item is
+ *                        preserved.
+ * @param what            BMessage what code attached to each generated
+ *                        menu entry.
+ * @param preferredFrom   When non-NULL, override which signature should
+ *                        appear marked. Used to reflect a pending,
+ *                        not-yet-saved selection.
+ */
 void
 update_preferred_app_menu(BMenu* menu, BMimeType* type, uint32 what,
 	const char* preferredFrom)
@@ -207,6 +292,30 @@ update_preferred_app_menu(BMenu* menu, BMimeType* type, uint32 what,
 }
 
 
+/**
+ * @brief Resolves a refs message dropped on a preferred-app button into
+ *        the application signature to record on the MIME type.
+ *
+ * When @a sameAs is true, the first ref's preferred-app attribute (or
+ * its MIME type's preferred app) is used. Otherwise the ref is opened
+ * as an executable and its application signature is read. The function
+ * also verifies that the chosen application supports @a forType and
+ * displays a confirmation alert when it does not.
+ *
+ * @param message       Refs message; must contain at least one "refs"
+ *                      entry.
+ * @param sameAs        True for "use the same preferred app as this
+ *                      file", false for "use this application".
+ * @param forType       MIME type the preferred app will be set on.
+ * @param preferredApp  Output: the resolved signature on success.
+ * @retval B_OK            On success.
+ * @retval B_BAD_VALUE     @a message is NULL or has no refs entry.
+ * @retval B_ERROR         No usable signature could be derived, or the
+ *                         user cancelled the unsupported-application
+ *                         confirmation alert.
+ * @retval other           Any status_t propagated from BFile, BNodeInfo,
+ *                         or BAppFileInfo.
+ */
 status_t
 retrieve_preferred_app(BMessage* message, bool sameAs, const char* forType,
 	BString& preferredApp)

@@ -1,12 +1,44 @@
 /*
- * Copyright 2002-2010, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Siebenmarck
- *		Andrew McCall, mccall@digitalparadise.co.uk
- *		Michael Wilber
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2010, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Oliver Siebenmarck
+ *       Andrew McCall, mccall@digitalparadise.co.uk
+ *       Michael Wilber
  */
+
+
+/**
+ * @file DataTranslations.cpp
+ * @brief BApplication entry point for the DataTranslations preferences app.
+ *
+ * Hosts the BApplication subclass that owns the DataTranslationsWindow and
+ * handles drag-and-drop installation of new translator add-ons into the user
+ * Translators directory by talking to the BTranslatorRoster.
+ *
+ * @see DataTranslationsWindow, BTranslatorRoster
+ */
+
 
 #include "DataTranslations.h"
 
@@ -28,9 +60,16 @@
 #define B_TRANSLATION_CONTEXT "DataTranslations"
 
 
+/** @brief MIME signature used to register the DataTranslations preferences app. */
 const char* kApplicationSignature = "application/x-vnd.Haiku-DataTranslations";
 
 
+/**
+ * @brief Constructs the application and creates its single top-level window.
+ *
+ * Registers the BApplication signature and instantiates a
+ * DataTranslationsWindow which becomes the visible UI.
+ */
 DataTranslationsApplication::DataTranslationsApplication()
 	:
 	BApplication(kApplicationSignature)
@@ -39,11 +78,20 @@ DataTranslationsApplication::DataTranslationsApplication()
 }
 
 
+/**
+ * @brief Destructor; the framework tears down the owned window.
+ */
 DataTranslationsApplication::~DataTranslationsApplication()
 {
 }
 
 
+/**
+ * @brief Displays a localized error alert when installing a translator fails.
+ *
+ * @param name    Human-readable name of the translator entry that failed.
+ * @param status  Underlying status_t error from the I/O attempt.
+ */
 void
 DataTranslationsApplication::_InstallError(const char* name, status_t status)
 {
@@ -58,10 +106,20 @@ DataTranslationsApplication::_InstallError(const char* name, status_t status)
 }
 
 
-/*!
-	Installs the given entry in the target directory either by moving
-	or copying the entry.
-*/
+/**
+ * @brief Installs an entry into the user Translators directory.
+ *
+ * Attempts to move @a entry into @a target; if a move is not possible the
+ * function should fall back to copying.
+ *
+ * @param target  Destination directory (the user Translators folder).
+ * @param entry   File system entry of the translator add-on to install.
+ * @return        B_OK on success, or an error code on failure.
+ * @retval B_OK     The entry was moved into @a target.
+ * @retval B_ERROR  The entry could not be moved and copy fallback is
+ *                  not yet implemented.
+ * @todo Implement the copy fallback for cross-volume installs.
+ */
 status_t
 DataTranslationsApplication::_Install(BDirectory& target, BEntry& entry)
 {
@@ -77,6 +135,12 @@ DataTranslationsApplication::_Install(BDirectory& target, BEntry& entry)
 }
 
 
+/**
+ * @brief Displays an alert when a dropped file is not a valid translator.
+ *
+ * @param name  Display name of the rejected entry, substituted into the
+ *              localized message.
+ */
 void
 DataTranslationsApplication::_NoTranslatorError(const char* name)
 {
@@ -90,6 +154,19 @@ DataTranslationsApplication::_NoTranslatorError(const char* name)
 }
 
 
+/**
+ * @brief Handles file drops, installing each ref as a translator add-on.
+ *
+ * Iterates through all entry_refs in @a message, validates each as a
+ * translator via BTranslatorRoster, prompts the user to overwrite when a
+ * translator with the same name already exists, and finally moves the entry
+ * into the user Translators directory.
+ *
+ * @param message  B_REFS_RECEIVED message carrying one or more "refs"
+ *                 entries dragged onto the application.
+ * @note On success a confirmation alert is shown; on any failure an
+ *       error alert is displayed and the loop continues with the next ref.
+ */
 void
 DataTranslationsApplication::RefsReceived(BMessage* message)
 {
@@ -166,6 +243,12 @@ DataTranslationsApplication::RefsReceived(BMessage* message)
 //	#pragma mark -
 
 
+/**
+ * @brief Program entry point; instantiates and runs the application.
+ *
+ * @return Process exit status (always 0 once the BApplication run loop
+ *         returns).
+ */
 int
 main(int, char**)
 {

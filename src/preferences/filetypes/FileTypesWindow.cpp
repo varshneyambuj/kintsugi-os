@@ -1,6 +1,34 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file FileTypesWindow.cpp
+ * @brief Implementation of the main MIME-type browser window. Owns the
+ *        MIME tree on the left and a stack of editor groups on the
+ *        right (icon, file recognition, description, preferred app,
+ *        and Tracker attributes), plus a couple of small helper views
+ *        (TypeIconView, ExtensionListView).
  */
 
 
@@ -51,37 +79,64 @@
 #define B_TRANSLATION_CONTEXT "FileTypes Window"
 
 
+/** @brief A row in the MIME type list was selected. */
 const uint32 kMsgTypeSelected = 'typs';
+/** @brief Open the New File Type dialog. */
 const uint32 kMsgAddType = 'atyp';
+/** @brief Delete the currently selected MIME type. */
 const uint32 kMsgRemoveType = 'rtyp';
 
+/** @brief A row in the extension list was selected. */
 const uint32 kMsgExtensionSelected = 'exts';
+/** @brief A row in the extension list was double-clicked. */
 const uint32 kMsgExtensionInvoked = 'exti';
+/** @brief Open the Add Extension dialog. */
 const uint32 kMsgAddExtension = 'aext';
+/** @brief Remove the currently selected extension. */
 const uint32 kMsgRemoveExtension = 'rext';
+/** @brief The sniffer rule text control was edited. */
 const uint32 kMsgRuleEntered = 'rule';
 
+/** @brief A row in the attribute list was selected. */
 const uint32 kMsgAttributeSelected = 'atrs';
+/** @brief A row in the attribute list was double-clicked. */
 const uint32 kMsgAttributeInvoked = 'atri';
+/** @brief Open the Add Attribute dialog. */
 const uint32 kMsgAddAttribute = 'aatr';
+/** @brief Remove the currently selected attribute. */
 const uint32 kMsgRemoveAttribute = 'ratr';
+/** @brief Move the currently selected attribute up by one slot. */
 const uint32 kMsgMoveUpAttribute = 'muat';
+/** @brief Move the currently selected attribute down by one slot. */
 const uint32 kMsgMoveDownAttribute = 'mdat';
 
+/** @brief A preferred-application menu entry was chosen. */
 const uint32 kMsgPreferredAppChosen = 'papc';
+/** @brief Open the file panel to pick a preferred application. */
 const uint32 kMsgSelectPreferredApp = 'slpa';
+/** @brief Open the file panel to copy the preferred app from another file. */
 const uint32 kMsgSamePreferredAppAs = 'spaa';
 
+/** @brief File panel returned a preferred-application executable. */
 const uint32 kMsgPreferredAppOpened = 'paOp';
+/** @brief File panel returned a "same preferred app as" target. */
 const uint32 kMsgSamePreferredAppAsOpened = 'spaO';
 
+/** @brief The type-name text control was edited. */
 const uint32 kMsgTypeEntered = 'type';
+/** @brief The long description text control was edited. */
 const uint32 kMsgDescriptionEntered = 'dsce';
 
+/** @brief Toggle icons in the type list (Settings menu). */
 const uint32 kMsgToggleIcons = 'tgic';
+/** @brief Toggle the sniffer rule control's visibility (Settings menu). */
 const uint32 kMsgToggleRule = 'tgrl';
 
 
+/**
+ * @brief Names of the parallel BMessage fields that make up a Tracker
+ *        attribute description in BMimeType::GetAttrInfo() / SetAttrInfo().
+ */
 static const char* kAttributeNames[] = {
 	"attr:public_name",
 	"attr:name",
@@ -95,6 +150,11 @@ static const char* kAttributeNames[] = {
 };
 
 
+/**
+ * @brief IconView subclass that renders a placeholder caption underneath
+ *        the icon ("no icon", "(from application)", "(from super type)")
+ *        when the type does not own its own icon.
+ */
 class TypeIconView : public IconView {
 	typedef IconView _inherited;
 
@@ -110,6 +170,10 @@ class TypeIconView : public IconView {
 };
 
 
+/**
+ * @brief Drop-aware list view of file-name extensions for the currently
+ *        selected MIME type; accepts ref drops and merges their suffixes.
+ */
 class ExtensionListView : public DropTargetListView {
 	public:
 		ExtensionListView(const char* name,
@@ -133,6 +197,12 @@ class ExtensionListView : public DropTargetListView {
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the type-icon view with a 48 px icon and no empty
+ *        frame placeholder.
+ *
+ * @param name  Layout name forwarded to the base IconView.
+ */
 TypeIconView::TypeIconView(const char* name)
 	: IconView(name)
 {
@@ -141,11 +211,20 @@ TypeIconView::TypeIconView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; layout-managed children are released by the parent.
+ */
 TypeIconView::~TypeIconView()
 {
 }
 
 
+/**
+ * @brief Draws the icon and overlays a translated caption identifying
+ *        the source of the displayed icon.
+ *
+ * @param updateRect  Region requested by the redraw notification.
+ */
 void
 TypeIconView::Draw(BRect updateRect)
 {
@@ -191,6 +270,13 @@ TypeIconView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Computes the preferred size, accounting for the longest
+ *        translated caption variant.
+ *
+ * @param _width   Optional output: preferred width.
+ * @param _height  Optional output: preferred height.
+ */
 void
 TypeIconView::GetPreferredSize(float* _width, float* _height)
 {
@@ -216,6 +302,15 @@ TypeIconView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Returns the rectangle that is treated as the icon for hit
+ *        testing and for delineating the drop-target area.
+ *
+ * In the "no icon" state the rectangle is recentred around the caption
+ * so users can drop bitmaps onto the placeholder text.
+ *
+ * @return  Bitmap rectangle in view coordinates.
+ */
 BRect
 TypeIconView::BitmapRect() const
 {
@@ -243,6 +338,13 @@ TypeIconView::BitmapRect() const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the extension list view with no associated MIME type.
+ *
+ * @param name   Layout name.
+ * @param type   Selection style.
+ * @param flags  View creation flags.
+ */
 ExtensionListView::ExtensionListView(const char* name,
 		list_view_type type, uint32 flags)
 	:
@@ -251,11 +353,20 @@ ExtensionListView::ExtensionListView(const char* name,
 }
 
 
+/**
+ * @brief Destructor; items are owned by BListView and released by it.
+ */
 ExtensionListView::~ExtensionListView()
 {
 }
 
 
+/**
+ * @brief Computes a minimum size large enough for "...mmmmm" and three
+ *        line heights, lazily caching the result.
+ *
+ * @return Minimum size in pixels.
+ */
 BSize
 ExtensionListView::MinSize()
 {
@@ -273,6 +384,16 @@ ExtensionListView::MinSize()
 }
 
 
+/**
+ * @brief Routes ref drops into merge_extensions(), forwarding all other
+ *        messages to the base implementation.
+ *
+ * Each dropped ref's file-name extension (the suffix after the first
+ * dot) is collected into a temporary list and then merged into the
+ * MIME type's extensions field.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 ExtensionListView::MessageReceived(BMessage* message)
 {
@@ -298,6 +419,13 @@ ExtensionListView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Drag policy: accept only when a MIME type is bound and at
+ *        least one ref carries a usable file-name extension.
+ *
+ * @param message  Drag payload to test.
+ * @return         True if the drop should be allowed.
+ */
 bool
 ExtensionListView::AcceptsDrag(const BMessage* message)
 {
@@ -318,6 +446,12 @@ ExtensionListView::AcceptsDrag(const BMessage* message)
 }
 
 
+/**
+ * @brief Binds the list view to a MIME type so subsequent drops can be
+ *        routed into its extensions field.
+ *
+ * @param type  Target MIME type, or NULL to disable drops.
+ */
 void
 ExtensionListView::SetType(BMimeType* type)
 {
@@ -331,6 +465,18 @@ ExtensionListView::SetType(BMimeType* type)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the main FileTypes browser window from persisted
+ *        @a settings.
+ *
+ * Builds the menu bar, the MIME type list on the left, and the right-
+ * hand stack of editor groups (Icon, File recognition, Description,
+ * Preferred application, Extra attributes) inside a horizontal split
+ * view, restores split weights from @a settings, and registers for MIME
+ * database notifications.
+ *
+ * @param settings  Persistent settings BMessage.
+ */
 FileTypesWindow::FileTypesWindow(const BMessage& settings)
 	:
 	BWindow(_Frame(settings), B_TRANSLATE_SYSTEM_NAME("FileTypes"),
@@ -591,12 +737,26 @@ FileTypesWindow::FileTypesWindow(const BMessage& settings)
 }
 
 
+/**
+ * @brief Stops MIME database watching and tears the window down.
+ */
 FileTypesWindow::~FileTypesWindow()
 {
 	BMimeType::StopWatching(this);
 }
 
 
+/**
+ * @brief Top-level message dispatch for every editor pane in the window.
+ *
+ * Routes selection changes, add/remove/edit actions for types,
+ * extensions, and attributes, the sniffer-rule and description text
+ * controls, file-panel results for the preferred-application controls,
+ * the Settings menu toggles, and incremental MIME database
+ * notifications back to the appropriate helper.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 FileTypesWindow::MessageReceived(BMessage* message)
 {
@@ -962,6 +1122,14 @@ FileTypesWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Programmatically selects a MIME type by identifier.
+ *
+ * Used by the FileTypes BApplication when the user passes "-type ..."
+ * on the command line.
+ *
+ * @param type  MIME identifier to look up and select.
+ */
 void
 FileTypesWindow::SelectType(const char* type)
 {
@@ -969,6 +1137,12 @@ FileTypesWindow::SelectType(const char* type)
 }
 
 
+/**
+ * @brief Persists window frame and split weights, then notifies the
+ *        BApplication that the main window is closing.
+ *
+ * @return Always true.
+ */
 bool
 FileTypesWindow::QuitRequested()
 {
@@ -983,6 +1157,14 @@ FileTypesWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Centres @a window over this main window.
+ *
+ * Used by sub-dialogs (NewFileTypeWindow, ExtensionWindow,
+ * AttributeWindow) so they appear visually anchored to the parent.
+ *
+ * @param window  Sub-window to move.
+ */
 void
 FileTypesWindow::PlaceSubWindow(BWindow* window)
 {
@@ -995,6 +1177,14 @@ FileTypesWindow::PlaceSubWindow(BWindow* window)
 // #pragma mark - private
 
 
+/**
+ * @brief Returns the saved frame from @a settings or a default one.
+ *
+ * @param settings  Persistent settings message.
+ * @return          Frame in screen coordinates; the default rectangle
+ *                  has zero width/height to let the layout system size
+ *                  the window from its content.
+ */
 BRect
 FileTypesWindow::_Frame(const BMessage& settings) const
 {
@@ -1006,6 +1196,12 @@ FileTypesWindow::_Frame(const BMessage& settings) const
 }
 
 
+/**
+ * @brief Hides or unhides the sniffer rule text control to match the
+ *        current Settings menu state.
+ *
+ * @param show  True to make the control visible.
+ */
 void
 FileTypesWindow::_ShowSnifferRule(bool show)
 {
@@ -1019,6 +1215,15 @@ FileTypesWindow::_ShowSnifferRule(bool show)
 }
 
 
+/**
+ * @brief Repopulates the extensions list view from @a type's
+ *        BMimeType::GetFileExtensions() result.
+ *
+ * Existing items are deleted; a leading dot is prepended to each
+ * extension so it reads naturally in the UI.
+ *
+ * @param type  Type to read from. NULL leaves the list empty.
+ */
 void
 FileTypesWindow::_UpdateExtensions(BMimeType* type)
 {
@@ -1049,6 +1254,14 @@ FileTypesWindow::_UpdateExtensions(BMimeType* type)
 }
 
 
+/**
+ * @brief Resolves the preferred application from @a message and writes
+ *        it onto the current MIME type.
+ *
+ * @param message  Refs message returned by the file panel.
+ * @param sameAs   True for "use the same preferred app as this file";
+ *                 false for "use this file as the application".
+ */
 void
 FileTypesWindow::_AdoptPreferredApplication(BMessage* message, bool sameAs)
 {

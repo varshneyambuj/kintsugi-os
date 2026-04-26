@@ -1,14 +1,43 @@
 /*
- * Copyright 2002-2025 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm, darkwyrm@earthlink.net
- *		Rene Gollent, rene@gollent.com
- *		John Scipione, jscipione@gmail.com
- *		Joseph Groover <looncraz@looncraz.net>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2025 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm, darkwyrm@earthlink.net
+ *       Rene Gollent, rene@gollent.com
+ *       John Scipione, jscipione@gmail.com
+ *       Joseph Groover <looncraz@looncraz.net>
  */
 
+
+/**
+ * @file ColorsView.cpp
+ * @brief Implementation of the Colors tab in the Appearance preflet.
+ *
+ * Hosts a list of UI color slots, a color picker, and an optional
+ * "auto-pick secondary colors" mode. When the user edits panel,
+ * progress-bar, or window-tab colors, derived slots are recomputed in
+ * HSL space to keep the palette internally consistent.
+ */
 
 
 #include <stdio.h>
@@ -47,6 +76,15 @@ using BPrivate::BColorListView;
 using BPrivate::BColorPreview;
 
 
+/**
+ * @brief Constructs the Colors tab and lays out its controls.
+ *
+ * Loads the live and default palettes, builds the color list, color
+ * picker, and "auto-pick secondary colors" check box, and arranges
+ * them in a vertical layout.
+ *
+ * @param name Identifier passed to the BView base class.
+ */
 ColorsView::ColorsView(const char* name)
 	:
 	BView(name, B_WILL_DRAW)
@@ -87,11 +125,19 @@ ColorsView::ColorsView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; child views are owned by the BView hierarchy.
+ */
 ColorsView::~ColorsView()
 {
 }
 
 
+/**
+ * @brief Wires control targets and selects the first color slot.
+ *
+ * Called by the BView framework once the view enters its window.
+ */
 void
 ColorsView::AttachedToWindow()
 {
@@ -105,6 +151,16 @@ ColorsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Dispatches drop, picker, list-selection and auto-adjust messages.
+ *
+ * Color drops on the list, preview, or picker update either the
+ * targeted slot or the currently selected one. Selection changes mirror
+ * the chosen slot into the picker, while AUTO_ADJUST_CHANGED rebuilds
+ * the slot list with primary-only or full-list contents.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 ColorsView::MessageReceived(BMessage* message)
 {
@@ -176,6 +232,12 @@ ColorsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Snapshots the default and current UI palettes for later use.
+ *
+ * Initializes @c fDefaultColors from the system defaults, @c fCurrentColors
+ * from the live palette, and @c fPrevColors as the revert baseline.
+ */
 void
 ColorsView::LoadSettings()
 {
@@ -185,6 +247,12 @@ ColorsView::LoadSettings()
 }
 
 
+/**
+ * @brief Resets every color slot to the system default palette.
+ *
+ * Pushes the defaults to the app_server, refreshes the list previews
+ * and picker, and notifies the parent window.
+ */
 void
 ColorsView::SetDefaults()
 {
@@ -203,6 +271,11 @@ ColorsView::SetDefaults()
 }
 
 
+/**
+ * @brief Restores the palette captured the last time settings were loaded.
+ *
+ * Pushes @c fPrevColors back to the app_server and refreshes the UI.
+ */
 void
 ColorsView::Revert()
 {
@@ -218,6 +291,11 @@ ColorsView::Revert()
 }
 
 
+/**
+ * @brief Reports whether any slot differs from the system default palette.
+ *
+ * @return @c true if @c fDefaultColors differs from @c fCurrentColors.
+ */
 bool
 ColorsView::IsDefaultable()
 {
@@ -225,6 +303,11 @@ ColorsView::IsDefaultable()
 }
 
 
+/**
+ * @brief Reports whether the live palette differs from the saved snapshot.
+ *
+ * @return @c true if @c fPrevColors differs from @c fCurrentColors.
+ */
 bool
 ColorsView::IsRevertable()
 {
@@ -232,6 +315,13 @@ ColorsView::IsRevertable()
 }
 
 
+/**
+ * @brief Rebuilds the color list from @c sColorDescriptionTable.
+ *
+ * Filters the list to the three primary slots when "auto-pick secondary
+ * colors" is enabled, otherwise shows every slot. Selects index 0 once
+ * the view is attached to a window.
+ */
 void
 ColorsView::_CreateItems()
 {
@@ -260,6 +350,14 @@ ColorsView::_CreateItems()
 }
 
 
+/**
+ * @brief Refreshes the color swatch shown next to each slot label.
+ *
+ * Walks the list backwards reading each slot's color from @a colors and
+ * invalidates the affected rows.
+ *
+ * @param colors BMessage holding rgb_color entries keyed by ui color name.
+ */
 void
 ColorsView::_UpdatePreviews(const BMessage& colors)
 {
@@ -278,6 +376,13 @@ ColorsView::_UpdatePreviews(const BMessage& colors)
 }
 
 
+/**
+ * @brief Pushes a complete palette to the app_server.
+ *
+ * Mirrors @a colors into @c fCurrentColors and applies it system-wide.
+ *
+ * @param colors BMessage holding rgb_color entries to apply.
+ */
 void
 ColorsView::_SetUIColors(const BMessage& colors)
 {
@@ -286,6 +391,13 @@ ColorsView::_SetUIColors(const BMessage& colors)
 }
 
 
+/**
+ * @brief Applies @a color to the slot currently selected in the list.
+ *
+ * Updates the picker and preview swatch in addition to the slot value.
+ *
+ * @param color The new rgb_color to assign.
+ */
 void
 ColorsView::_SetCurrentColor(rgb_color color)
 {
@@ -295,6 +407,14 @@ ColorsView::_SetCurrentColor(rgb_color color)
 }
 
 
+/**
+ * @brief Applies @a color to the list row at @a index.
+ *
+ * Forwards to the @c color_which overload after redrawing the swatch.
+ *
+ * @param index Zero-based row index.
+ * @param color The new rgb_color to assign.
+ */
 void
 ColorsView::_SetColor(int32 index, rgb_color color)
 {
@@ -307,6 +427,17 @@ ColorsView::_SetColor(int32 index, rgb_color color)
 }
 
 
+/**
+ * @brief Updates a single color slot, optionally adjusting derived slots.
+ *
+ * When the auto-adjust check box is on and @a which is one of the three
+ * primary slots (panel background, status bar, window tab) the derived
+ * slots are recomputed in HSL space so that the resulting palette stays
+ * coherent.
+ *
+ * @param which The @c color_which slot to write.
+ * @param color The new rgb_color to assign.
+ */
 void
 ColorsView::_SetColor(color_which which, rgb_color color)
 {

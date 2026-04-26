@@ -1,11 +1,41 @@
 /*
- * Copyright 1999-2009 Jeremy Friesner
- * Copyright 2009-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jeremy Friesner
- *		Fredrik Modéen
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 1999-2009 Jeremy Friesner
+ *   Copyright 2009-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jeremy Friesner
+ *       Fredrik Modéen
+ */
+
+
+/**
+ * @file ShortcutsWindow.cpp
+ * @brief Implementation of the Shortcuts preference window.
+ *
+ * Builds the menu bar, BColumnListView, and action buttons; loads and saves
+ * KeySet files; and routes keyboard, mouse, drag, and clipboard activity
+ * into the underlying ShortcutsSpec rows. Window position and column state
+ * are persisted to a separate side-band settings file.
  */
 
 
@@ -72,6 +102,13 @@
 #define WARNING "Shortcuts warning"
 
 
+/**
+ * @brief Builds a pop-up menu reflecting the chording states of one
+ *        meta-key column.
+ *
+ * @param column Column index in the range [0, NUM_META_COLUMNS).
+ * @return Newly allocated BPopUpMenu owned by the caller.
+ */
 // Creates a pop-up-menu that reflects the possible states of the specified
 // meta-key.
 static BPopUpMenu*
@@ -88,6 +125,11 @@ CreateMetaPopUp(int column)
 }
 
 
+/**
+ * @brief Builds a pop-up menu listing every supported keycap name.
+ *
+ * @return Newly allocated BPopUpMenu owned by the caller.
+ */
 // Creates a pop-up that allows the user to choose a key-cap visually
 static BPopUpMenu*
 CreateKeysPopUp()
@@ -104,6 +146,14 @@ CreateKeysPopUp()
 }
 
 
+/**
+ * @brief Constructs and lays out the main Shortcuts preference window.
+ *
+ * Creates the File menu, builds the column list (modifier states, key,
+ * application command), wires the Add/Remove/Save buttons, then either
+ * loads the user's KeySet from disk or seeds the list with default
+ * volume-control bindings.
+ */
 ShortcutsWindow::ShortcutsWindow()
 	:
 	BWindow(BRect(0, 0, 0, 0), B_TRANSLATE_SYSTEM_NAME("Shortcuts"),
@@ -248,6 +298,9 @@ ShortcutsWindow::ShortcutsWindow()
 }
 
 
+/**
+ * @brief Destructor; tears down file panels and asks the application to quit.
+ */
 ShortcutsWindow::~ShortcutsWindow()
 {
 	delete fSavePanel;
@@ -257,6 +310,16 @@ ShortcutsWindow::~ShortcutsWindow()
 }
 
 
+/**
+ * @brief Confirms with the user before quitting if there are unsaved changes.
+ *
+ * Pops a Save / Don't save / Cancel alert when the keyset is dirty, attempts
+ * an automatic save if a path is already known, and otherwise routes the
+ * user through the save-as panel. On a confirmed quit, persists the window
+ * frame and column state.
+ *
+ * @return True when quitting is allowed; false to abort the quit.
+ */
 bool
 ShortcutsWindow::QuitRequested()
 {
@@ -315,6 +378,12 @@ ShortcutsWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Locates the user's shortcuts settings file in B_USER_SETTINGS.
+ *
+ * @param eref Output entry_ref filled with the settings file path.
+ * @return True when the file exists and the ref was populated.
+ */
 bool
 ShortcutsWindow::_GetSettingsFile(entry_ref* eref)
 {
@@ -329,6 +398,16 @@ ShortcutsWindow::_GetSettingsFile(entry_ref* eref)
 }
 
 
+/**
+ * @brief Persists the current shortcut list to disk.
+ *
+ * Archives every ShortcutsSpec into a single BMessage and flattens it to
+ * the supplied BEntry. Clears the dirty flag and disables the Save button
+ * on success.
+ *
+ * @param saveEntry Destination entry; opened for write/create/erase.
+ * @return True on success, false on file or archive failure.
+ */
 // Saves a settings file to (saveEntry). Returns true iff successful.
 bool
 ShortcutsWindow::_SaveKeySet(BEntry& saveEntry)
@@ -358,6 +437,15 @@ ShortcutsWindow::_SaveKeySet(BEntry& saveEntry)
 }
 
 
+/**
+ * @brief Adds rows from a flattened keyset message into the list view.
+ *
+ * Iterates every "spec" sub-message, instantiates the matching
+ * ShortcutsSpec, and appends it to the column list.
+ *
+ * @param loadMessage Previously flattened keyset BMessage.
+ * @return Always true; per-spec failures are logged but tolerated.
+ */
 // Appends new entries from the file specified in the "spec" entry of
 // (loadMessage). Returns true iff successful.
 bool
@@ -378,6 +466,12 @@ ShortcutsWindow::_LoadKeySet(const BMessage& loadMessage)
 }
 
 
+/**
+ * @brief Resolves the path of the side-band window settings file.
+ *
+ * @param eref Output entry_ref populated when the settings directory exists.
+ * @return True when the ref was populated.
+ */
 // Gets the filesystem location of the "Shortcuts_window_settings" file.
 bool
 ShortcutsWindow::_GetWindowSettingsFile(entry_ref* eref)
@@ -392,6 +486,13 @@ ShortcutsWindow::_GetWindowSettingsFile(entry_ref* eref)
 }
 
 
+/**
+ * @brief Persists window frame and column state to a side-band file.
+ *
+ * Errors are silently ignored because window placement is non-essential.
+ *
+ * @param saveEntry Destination entry for the flattened settings.
+ */
 // Saves the application settings file to (saveEntry).  Because this is a
 // non-essential file, errors are ignored when writing the settings.
 void
@@ -412,6 +513,15 @@ ShortcutsWindow::_SaveWindowSettings(BEntry& saveEntry)
 }
 
 
+/**
+ * @brief Restores window frame and column state from a side-band message.
+ *
+ * Clamps the restored size to the computed minimum and the restored origin
+ * to the current screen, so a relocated/resized monitor cannot leave the
+ * window off-screen.
+ *
+ * @param loadMessage Previously flattened settings message.
+ */
 // Loads the application settings file from (loadMessage) and resizes
 // the interface to match the previously saved settings. Because this
 // is a non-essential file, errors are ignored when loading the settings.
@@ -438,6 +548,16 @@ ShortcutsWindow::_LoadWindowSettings(const BMessage& loadMessage)
 }
 
 
+/**
+ * @brief Adds a new shortcut row, optionally pre-populated from the selection.
+ *
+ * Marks the keyset dirty, copies the current selection if any, otherwise
+ * creates an empty row, and seeds it with the supplied default command and
+ * key code.
+ *
+ * @param defaultCommand Initial command line, or NULL to leave blank.
+ * @param keyCode        Optional initial key code; ignored when zero.
+ */
 // Creates a new entry and adds it to the GUI. (defaultCommand) will be the
 // text in the entry, or NULL if no text is desired.
 void
@@ -467,6 +587,16 @@ ShortcutsWindow::_AddNewSpec(const char* defaultCommand, uint32 keyCode)
 }
 
 
+/**
+ * @brief Routes incoming messages to the appropriate UI handler.
+ *
+ * Handles file-panel commands (open / append / revert / save / save as),
+ * drag-and-drop additions, B_REFS_RECEIVED loads, application-picker
+ * confirmations, list add/remove, selection updates, and per-cell
+ * modifications produced by the column list view.
+ *
+ * @param message Incoming BMessage.
+ */
 void
 ShortcutsWindow::MessageReceived(BMessage* message)
 {
@@ -751,6 +881,9 @@ ShortcutsWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Marks the keyset as modified and re-enables the Save button.
+ */
 void
 ShortcutsWindow::_MarkKeySetModified()
 {
@@ -761,6 +894,9 @@ ShortcutsWindow::_MarkKeySetModified()
 }
 
 
+/**
+ * @brief Forwards the quit request to the BWindow base class.
+ */
 void
 ShortcutsWindow::Quit()
 {
@@ -768,6 +904,17 @@ ShortcutsWindow::Quit()
 }
 
 
+/**
+ * @brief Pre-routes drag, clipboard, and key events for direct handling.
+ *
+ * Diverts B_SIMPLE_DATA to MessageReceived(), implements copy/cut/paste of
+ * the selected row's command text via the system clipboard, and converts
+ * raw key-down events targeted at the column list into key-name updates on
+ * the selected ShortcutsSpec. Anything else falls through to BWindow.
+ *
+ * @param message Incoming message.
+ * @param handler Handler the framework would otherwise dispatch to.
+ */
 void
 ShortcutsWindow::DispatchMessage(BMessage* message, BHandler* handler)
 {

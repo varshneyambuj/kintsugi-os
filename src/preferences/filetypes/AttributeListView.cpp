@@ -1,12 +1,39 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2014 Haiku, Inc. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2014 Haiku, Inc. All rights reserved.
+ *
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       John Scipione, jscipione@gmail.com
+ */
+
+/**
+ * @file AttributeListView.cpp
+ * @brief Implementation of AttributeListView and AttributeItem, the list
+ *        view that renders a MIME type's Tracker attribute table together
+ *        with its translation tables for type codes and display-as
+ *        identifiers.
  */
 
 
@@ -24,6 +51,10 @@
 #define B_TRANSLATION_CONTEXT "Attribute ListView"
 
 
+/**
+ * @brief Translation table from a B_*_TYPE type code to a translated
+ *        display name shown in attribute editors.
+ */
 const struct type_map kTypeMap[] = {
 	{ B_TRANSLATE("String"),         B_STRING_TYPE },
 	{ B_TRANSLATE("Boolean"),        B_BOOL_TYPE   },
@@ -38,8 +69,13 @@ const struct type_map kTypeMap[] = {
 };
 
 
-// TODO: in the future, have a (private) Tracker API that exports these
-//	as well as a nice GUI for them.
+/**
+ * @brief Translation table for Tracker "display_as" identifiers and the
+ *        list of type codes each one accepts.
+ *
+ * @todo  In the future, have a (private) Tracker API that exports these
+ *        as well as a nice GUI for them.
+ */
 const struct display_as_map kDisplayAsMap[] = {
 	{ B_TRANSLATE("Default"),	NULL,
 		{}
@@ -59,6 +95,17 @@ const struct display_as_map kDisplayAsMap[] = {
 };
 
 
+/**
+ * @brief Appends ", <name>" to @a string when @a displayAs is a
+ *        recognised display-as identifier.
+ *
+ * The leading "<name>" is the identifier itself (the part before the
+ * first colon), allowing patterns like "duration:..." to be displayed
+ * without their parameters.
+ *
+ * @param string     String to extend.
+ * @param displayAs  Display-as identifier, possibly with arguments.
+ */
 static void
 add_display_as(BString& string, const char* displayAs)
 {
@@ -80,6 +127,18 @@ add_display_as(BString& string, const char* displayAs)
 }
 
 
+/**
+ * @brief Writes a human-readable type description into @a string.
+ *
+ * Looks @a type up in kTypeMap to find a translated name; otherwise
+ * formats the four-character code along with its hexadecimal value
+ * (printable bytes verbatim, others replaced with '.').
+ *
+ * @param string     Output string.
+ * @param type       Attribute type code.
+ * @param displayAs  Optional Tracker display-as identifier appended in
+ *                   parentheses when recognised.
+ */
 static void
 name_for_type(BString& string, type_code type, const char* displayAs)
 {
@@ -109,6 +168,18 @@ name_for_type(BString& string, type_code type, const char* displayAs)
 }
 
 
+/**
+ * @brief Builds an AttributeItem from one row of a BMimeType attribute
+ *        info message.
+ *
+ * Fields are read with sane defaults so that an attribute info message
+ * missing optional fields still produces a complete item.
+ *
+ * @param attributes  Message returned by BMimeType::GetAttrInfo().
+ * @param index       Row index in the attribute info message.
+ * @return            Newly allocated item, or NULL if @a index is past
+ *                    the end of the message. Caller takes ownership.
+ */
 AttributeItem*
 create_attribute_item(BMessage& attributes, int32 index)
 {
@@ -151,6 +222,18 @@ create_attribute_item(BMessage& attributes, int32 index)
 //	#pragma mark - AttributeItem
 
 
+/**
+ * @brief Constructs a fully populated attribute item.
+ *
+ * @param name        Internal attribute name (e.g. "META:title").
+ * @param publicName  Translated label shown to the user.
+ * @param type        Attribute type code.
+ * @param displayAs   Optional Tracker display-as identifier.
+ * @param alignment   Column alignment in Tracker views.
+ * @param width       Default column width in Tracker.
+ * @param visible     Whether Tracker shows this attribute by default.
+ * @param editable    Whether Tracker allows in-place editing.
+ */
 AttributeItem::AttributeItem(const char* name, const char* publicName,
 	type_code type, const char* displayAs, int32 alignment,
 	int32 width, bool visible, bool editable)
@@ -167,6 +250,12 @@ AttributeItem::AttributeItem(const char* name, const char* publicName,
 }
 
 
+/**
+ * @brief Constructs an empty placeholder item with sensible defaults.
+ *
+ * Used as a sentinel when the attribute window saves a "previous selection"
+ * snapshot before the list is rebuilt.
+ */
 AttributeItem::AttributeItem()
 	:
 	BStringItem(""),
@@ -179,6 +268,11 @@ AttributeItem::AttributeItem()
 }
 
 
+/**
+ * @brief Copy constructor; defers actual field copy to operator=.
+ *
+ * @param other  Source item.
+ */
 AttributeItem::AttributeItem(const AttributeItem& other)
 	:
 	BStringItem(other.PublicName())
@@ -187,11 +281,26 @@ AttributeItem::AttributeItem(const AttributeItem& other)
 }
 
 
+/**
+ * @brief Destructor; no owned heap resources.
+ */
 AttributeItem::~AttributeItem()
 {
 }
 
 
+/**
+ * @brief Renders the attribute name on the left half and a translated
+ *        type description on the right half of @a frame.
+ *
+ * Honours the list's selected and enabled state when picking high and
+ * low colours so the entry blends into Be's standard list styling.
+ *
+ * @param owner          List view drawing the item.
+ * @param frame          Item rectangle in @a owner's coordinates.
+ * @param drawEverything Force a full redraw rather than the optimised
+ *                       path.
+ */
 void
 AttributeItem::DrawItem(BView* owner, BRect frame, bool drawEverything)
 {
@@ -240,6 +349,12 @@ AttributeItem::DrawItem(BView* owner, BRect frame, bool drawEverything)
 }
 
 
+/**
+ * @brief Assigns all attribute fields from @a other to this item.
+ *
+ * @param other  Source item.
+ * @return       Reference to this item.
+ */
 AttributeItem&
 AttributeItem::operator=(const AttributeItem& other)
 {
@@ -256,6 +371,13 @@ AttributeItem::operator=(const AttributeItem& other)
 }
 
 
+/**
+ * @brief Field-wise equality test across every visible attribute.
+ *
+ * @param other  Item to compare to.
+ * @return       True when names, type, display-as, alignment, width,
+ *               and flag bits all match.
+ */
 bool
 AttributeItem::operator==(const AttributeItem& other) const
 {
@@ -270,6 +392,12 @@ AttributeItem::operator==(const AttributeItem& other) const
 }
 
 
+/**
+ * @brief Logical inverse of operator==.
+ *
+ * @param other  Item to compare to.
+ * @return       True when any field differs.
+ */
 bool
 AttributeItem::operator!=(const AttributeItem& other) const
 {
@@ -280,6 +408,12 @@ AttributeItem::operator!=(const AttributeItem& other) const
 //	#pragma mark - AttributeListView
 
 
+/**
+ * @brief Constructs the attribute list view with single-selection and
+ *        full-frame redraw policies suitable for the FileTypes panel.
+ *
+ * @param name  Layout name forwarded to BListView.
+ */
 AttributeListView::AttributeListView(const char* name)
 	:
 	BListView(name, B_SINGLE_SELECTION_LIST,
@@ -288,12 +422,18 @@ AttributeListView::AttributeListView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; deletes all owned items.
+ */
 AttributeListView::~AttributeListView()
 {
 	_DeleteItems();
 }
 
 
+/**
+ * @brief Deletes every item in the list and empties the BListView.
+ */
 void
 AttributeListView::_DeleteItems()
 {
@@ -304,6 +444,16 @@ AttributeListView::_DeleteItems()
 }
 
 
+/**
+ * @brief Rebuilds the list to mirror the attribute table of @a type.
+ *
+ * Saves a snapshot of the previous selection, drops every item, and
+ * recreates the list from BMimeType::GetAttrInfo(). When exactly one new
+ * attribute appears compared to the previous content the new entry is
+ * auto-selected so the user can follow asynchronous database updates.
+ *
+ * @param type  MIME type to read from. NULL leaves the list empty.
+ */
 void
 AttributeListView::SetTo(BMimeType* type)
 {
@@ -388,6 +538,14 @@ AttributeListView::SetTo(BMimeType* type)
 }
 
 
+/**
+ * @brief Draws the list contents and a vertical divider down the middle.
+ *
+ * The divider visually separates the attribute name column from its type
+ * description column.
+ *
+ * @param updateRect  Region requested by the redraw notification.
+ */
 void
 AttributeListView::Draw(BRect updateRect)
 {

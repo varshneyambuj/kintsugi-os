@@ -1,12 +1,40 @@
 /*
- * Copyright 2001-2009, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Rafael Romo
- *		Stefano Ceccherini (burton666@libero.it)
- *		Andrew Bachmann
- *		Sergei Panteleev
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Rafael Romo
+ *       Stefano Ceccherini (burton666@libero.it)
+ *       Andrew Bachmann
+ *       Sergei Panteleev
+ */
+
+
+/**
+ * @file ScreenApplication.cpp
+ * @brief Top-level BApplication and main() entry point for the Screen app.
+ *
+ * Constructs the main ScreenWindow, forwards refresh / desktop-color
+ * messages from satellite windows, and shows the About alert.
  */
 
 
@@ -23,9 +51,13 @@
 #define B_TRANSLATION_CONTEXT "Screen"
 
 
+/** @brief Application MIME signature recognized by the launch_roster. */
 static const char* kAppSignature = "application/x-vnd.Haiku-Screen";
 
 
+/**
+ * @brief Create the main ScreenWindow and show it on launch.
+ */
 ScreenApplication::ScreenApplication()
 	:	BApplication(kAppSignature),
 	fScreenWindow(new ScreenWindow(new ScreenSettings()))
@@ -34,6 +66,9 @@ ScreenApplication::ScreenApplication()
 }
 
 
+/**
+ * @brief Show a simple About alert in response to the About menu item.
+ */
 void
 ScreenApplication::AboutRequested()
 {
@@ -45,6 +80,15 @@ ScreenApplication::AboutRequested()
 }
 
 
+/**
+ * @brief Forward a small set of UI messages to the main ScreenWindow.
+ *
+ * @c SET_CUSTOM_REFRESH_MSG is posted by the "Other..." refresh dialog,
+ * @c MAKE_INITIAL_MSG by the confirmation alert, and
+ * @c UPDATE_DESKTOP_COLOR_MSG by the Backgrounds preferences app.
+ *
+ * @param message Incoming message to dispatch.
+ */
 void
 ScreenApplication::MessageReceived(BMessage* message)
 {
@@ -65,6 +109,11 @@ ScreenApplication::MessageReceived(BMessage* message)
 //	#pragma mark -
 
 
+/**
+ * @brief Process entry point: instantiate the application and enter its loop.
+ *
+ * @return Always zero on a clean exit.
+ */
 int
 main()
 {

@@ -1,10 +1,28 @@
 /*
- * Copyright 2002-2009 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Jerome Duval, jerome.duval@free.fr
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2002-2009 Haiku, Inc.
+ * Original authors: Jerome Duval.
  */
+
+/** @file BackgroundsView.h
+    @brief Main view of the Backgrounds preference application. */
+
 #ifndef BACKGROUNDS_VIEW_H
 #define BACKGROUNDS_VIEW_H
 
@@ -38,6 +56,9 @@
 class ImageFilePanel;
 
 
+/**
+ * @brief BMenuItem that remembers an index into the cached image list.
+ */
 class BGImageMenuItem : public BMenuItem {
 public:
 							BGImageMenuItem(const char* label, int32 imageIndex,
@@ -51,6 +72,7 @@ private:
 };
 
 
+/** @brief Indexes into the 3x3 grid that decorates the preview area. */
 enum frame_parts {
 	FRAME_TOP_LEFT = 0,
 	FRAME_TOP,

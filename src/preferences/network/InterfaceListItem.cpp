@@ -1,12 +1,44 @@
 /*
- * Copyright 2004-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Alexander von Gluck IV, kallisti5@unixzen.com
- *		Philippe Houdoin
- * 		Fredrik Modéen
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Alexander von Gluck IV, kallisti5@unixzen.com
+ *       Philippe Houdoin
+ *       Fredrik Modéen
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file InterfaceListItem.cpp
+ * @brief Implementation of InterfaceListItem, the rich row renderer used
+ *        by the Network preflet's interface list.
+ *
+ * Each row paints a vector icon overlaid with a state badge (offline /
+ * pending / online), the bold device name, a small "no link" / "connected"
+ * status string aligned to the right edge, and a media-type subtitle on
+ * the second line. The renderer reacts to configuration updates posted by
+ * net_server so it can repaint when the link state changes.
  */
 
 
@@ -28,6 +60,15 @@
 #define B_TRANSLATION_CONTEXT "InterfaceListItem"
 
 
+/**
+ * @brief Constructs a list row for the named interface.
+ *
+ * Loads the appropriate icon set based on @a type and resolves the
+ * BNetworkInterface so subsequent updates can query its state.
+ *
+ * @param name  Device name (e.g. "/dev/net/eth0").
+ * @param type  Family of interface used to choose icons and subtitles.
+ */
 InterfaceListItem::InterfaceListItem(const char* name,
 	BNetworkInterfaceType type)
 	:
@@ -48,6 +89,9 @@ InterfaceListItem::InterfaceListItem(const char* name,
 }
 
 
+/**
+ * @brief Destructor. Frees all owned icon bitmaps.
+ */
 InterfaceListItem::~InterfaceListItem()
 {
 	delete fIcon;
@@ -60,6 +104,19 @@ InterfaceListItem::~InterfaceListItem()
 // #pragma mark - InterfaceListItem public methods
 
 
+/**
+ * @brief Renders the two-line row inside @a owner.
+ *
+ * Composes a selection background, the interface bitmap with a state icon
+ * overlay, the bold device name on the first line, the right-aligned state
+ * text, and the subtitle on the second line. When the interface is
+ * disabled, the icon and label are drawn with reduced contrast.
+ *
+ * @param owner     View receiving the drawing operations.
+ * @param bounds    Rectangle to fill / draw into.
+ * @param complete  When true, repaint the entire background (not just the
+ *                  selection rectangle).
+ */
 void
 InterfaceListItem::DrawItem(BView* owner, BRect bounds, bool complete)
 {
@@ -134,6 +191,13 @@ InterfaceListItem::DrawItem(BView* owner, BRect bounds, bool complete)
 }
 
 
+/**
+ * @brief Recomputes layout metrics and width/height to match the current
+ *        font and interface state.
+ *
+ * @param owner  View this item belongs to.
+ * @param font   Font used for measuring labels.
+ */
 void
 InterfaceListItem::Update(BView* owner, const BFont* font)
 {
@@ -158,6 +222,12 @@ InterfaceListItem::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief BNetworkConfigurationListener hook: refreshes cached state after
+ *        a configuration change so the next paint reflects it.
+ *
+ * @param message  Configuration message describing the change (unused).
+ */
 void
 InterfaceListItem::ConfigurationUpdated(const BMessage& message)
 {
@@ -168,6 +238,9 @@ InterfaceListItem::ConfigurationUpdated(const BMessage& message)
 // #pragma mark - InterfaceListItem private methods
 
 
+/**
+ * @brief Selects an icon set based on the interface type and loads bitmaps.
+ */
 void
 InterfaceListItem::_Init()
 {
@@ -191,6 +264,15 @@ InterfaceListItem::_Init()
 }
 
 
+/**
+ * @brief Loads the main interface icon and the offline/pending/online state
+ *        badges from the application's resources.
+ *
+ * The lookup falls back from the per-interface name to @a mediaType to a
+ * generic "ether" icon. State badges are loaded by their fixed names.
+ *
+ * @param mediaType  Resource hint such as "wifi", "ether", or NULL.
+ */
 void
 InterfaceListItem::_PopulateBitmaps(const char* mediaType)
 {
@@ -275,6 +357,13 @@ InterfaceListItem::_PopulateBitmaps(const char* mediaType)
 }
 
 
+/**
+ * @brief Refreshes cached display fields (device name, link state, subtitle)
+ *        from the live BNetworkInterface.
+ *
+ * @note Dial-up and VPN interfaces are never marked disabled here; their
+ *       enabled/disabled state is implied by the connection itself.
+ */
 void
 InterfaceListItem::_UpdateState()
 {
@@ -306,6 +395,13 @@ InterfaceListItem::_UpdateState()
 }
 
 
+/**
+ * @brief Selects which state badge bitmap to overlay on the interface icon.
+ *
+ * @return Pointer to fIconOffline when disabled or no link, otherwise
+ *         fIconOnline.
+ * @todo Wire up fIconPending once auto-configuration progress is exposed.
+ */
 BBitmap*
 InterfaceListItem::_StateIcon() const
 {
@@ -325,6 +421,16 @@ InterfaceListItem::_StateIcon() const
 }
 
 
+/**
+ * @brief Returns the localized status string drawn at the right edge of
+ *        the row.
+ *
+ * VPN and dial-up interfaces map "no link" to "disconnected"; other
+ * families use "no link" / "connected" / "disabled".
+ *
+ * @return Localized C string; lifetime managed by the catalog.
+ * @todo Reflect "connecting" while auto-configuration is in progress.
+ */
 const char*
 InterfaceListItem::_StateText() const
 {

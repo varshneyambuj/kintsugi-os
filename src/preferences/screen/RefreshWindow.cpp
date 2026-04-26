@@ -1,11 +1,36 @@
 /*
- * Copyright 2001-2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Rafael Romo
- *		Stefano Ceccherini (burton666@libero.it)
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Rafael Romo
+ *       Stefano Ceccherini (burton666@libero.it)
+ *       Axel Doerfler, axeld@pinc-software.de
+ */
+
+
+/**
+ * @file RefreshWindow.cpp
+ * @brief Modal dialog wrapping a RefreshSlider for custom refresh rates.
  */
 
 
@@ -27,6 +52,18 @@
 #define B_TRANSLATION_CONTEXT "Screen"
 
 
+/**
+ * @brief Build a refresh-rate picker dialog at @a position.
+ *
+ * Hosts a slider initialized to @a current Hz with the configured Hz
+ * range, plus Done and Cancel buttons. Done posts
+ * @c SET_CUSTOM_REFRESH_MSG to be_app and quits.
+ *
+ * @param position Initial top-left coordinate of the dialog.
+ * @param current  Refresh rate (Hz) shown initially on the slider.
+ * @param min      Lower bound (Hz) accepted by the slider.
+ * @param max      Upper bound (Hz) accepted by the slider.
+ */
 RefreshWindow::RefreshWindow(BPoint position, float current, float min, float max)
 	: BWindow(BRect(0, 0, 300, 200), B_TRANSLATE("Refresh rate"), B_MODAL_WINDOW,
 		B_NOT_RESIZABLE | B_NOT_ZOOMABLE | B_ASYNCHRONOUS_CONTROLS, B_ALL_WORKSPACES)
@@ -80,6 +117,11 @@ RefreshWindow::RefreshWindow(BPoint position, float current, float min, float ma
 }
 
 
+/**
+ * @brief Move keyboard focus to the slider whenever the window activates.
+ *
+ * @param active True when the window is being activated.
+ */
 void
 RefreshWindow::WindowActivated(bool active)
 {
@@ -87,6 +129,14 @@ RefreshWindow::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Handle Done/Cancel buttons and slider invocation messages.
+ *
+ * On @c BUTTON_DONE_MSG posts @c SET_CUSTOM_REFRESH_MSG to be_app with the
+ * chosen refresh rate, then quits.
+ *
+ * @param message Incoming message.
+ */
 void
 RefreshWindow::MessageReceived(BMessage* message)
 {

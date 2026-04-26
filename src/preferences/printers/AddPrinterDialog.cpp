@@ -1,10 +1,41 @@
 /*
- * Copyright 2002-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Pfeiffer
- *		Philippe Houdoin
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Pfeiffer
+ *       Philippe Houdoin
+ */
+
+
+/**
+ * @file AddPrinterDialog.cpp
+ * @brief Modal dialog that creates a new printer entry via print_server.
+ *
+ * Lets the user pick a name, a driver discovered under add-on directories,
+ * and a transport (with optional sub-port menu). On OK the dialog sends a
+ * PSRV_MAKE_PRINTER scripting message to print_server.
+ *
+ * @see TransportMenu, PrinterListView
  */
 
 
@@ -36,6 +67,12 @@
 #define B_TRANSLATION_CONTEXT "AddPrinterDialog"
 
 
+/**
+ * @brief Constructs the modal Add Printer dialog and shows it.
+ *
+ * @param parent BWindow used as the response target for kMsgAddPrinterClosed
+ *               when the dialog goes away.
+ */
 AddPrinterDialog::AddPrinterDialog(BWindow *parent)
 	:
 	Inherited(BRect(78, 71, 400, 300), B_TRANSLATE("Add printer"),
@@ -50,6 +87,11 @@ AddPrinterDialog::AddPrinterDialog(BWindow *parent)
 }
 
 
+/**
+ * @brief Notifies the parent window before allowing the dialog to close.
+ *
+ * @return The BWindow base class result.
+ */
 bool
 AddPrinterDialog::QuitRequested()
 {
@@ -58,6 +100,14 @@ AddPrinterDialog::QuitRequested()
 }
 
 
+/**
+ * @brief Dispatches messages from the dialog's controls.
+ *
+ * Handles the OK and Cancel buttons, name edits, and printer/transport menu
+ * selection.
+ *
+ * @param msg Incoming BMessage.
+ */
 void
 AddPrinterDialog::MessageReceived(BMessage* msg)
 {
@@ -91,6 +141,14 @@ AddPrinterDialog::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Sends a PSRV_MAKE_PRINTER scripting request to print_server.
+ *
+ * Composes the request from the dialog's current state. The Preview driver
+ * skips the transport fields because it does not use a transport add-on.
+ *
+ * @param msg Source message that triggered the action (unused).
+ */
 void
 AddPrinterDialog::_AddPrinter(BMessage *msg)
 {
@@ -117,6 +175,14 @@ AddPrinterDialog::_AddPrinter(BMessage *msg)
 }
 
 
+/**
+ * @brief Records the user's printer-driver selection.
+ *
+ * Reads the @c name string from @a msg, stores it in fPrinterText, and
+ * triggers a UI refresh via _Update().
+ *
+ * @param msg Selection message carrying the driver name.
+ */
 void
 AddPrinterDialog::_StorePrinter(BMessage *msg)
 {
@@ -129,6 +195,16 @@ AddPrinterDialog::_StorePrinter(BMessage *msg)
 }
 
 
+/**
+ * @brief Updates internal state after the user picks a transport or port.
+ *
+ * If @a msg includes a @c path field the user selected a port within a
+ * transport submenu; otherwise the user picked a top-level transport. The
+ * code keeps menu marks consistent and may auto-fill the printer name with
+ * the chosen port label.
+ *
+ * @param msg Incoming selection message from the transport menu.
+ */
 void
 AddPrinterDialog::_HandleChangedTransport(BMessage *msg)
 {
@@ -176,6 +252,17 @@ AddPrinterDialog::_HandleChangedTransport(BMessage *msg)
 }
 
 
+/**
+ * @brief Constructs the dialog's controls and lays them out.
+ *
+ * Builds the printer name field, the driver and transport pop-up menus,
+ * and the Add/Cancel buttons. The accompanying ASCII storyboards describe
+ * the planned multi-stage flow.
+ *
+ * @param stage Reserved for the staged "local vs network printer" flow
+ *              described in the comments below; only stage 0 is currently
+ *              implemented.
+ */
 void
 AddPrinterDialog::_BuildGUI(int stage)
 {
@@ -285,6 +372,8 @@ AddPrinterDialog::_BuildGUI(int stage)
 }
 
 
+/** @brief Search order for printer driver and transport add-on
+    directories: user-private first, then system. */
 static directory_which gAddonDirs[] = {
 	B_USER_NONPACKAGED_ADDONS_DIRECTORY,
 	B_USER_ADDONS_DIRECTORY,
@@ -293,6 +382,17 @@ static directory_which gAddonDirs[] = {
 };
 
 
+/**
+ * @brief Populates @a menu with executable add-ons found under @a path.
+ *
+ * Walks every directory in gAddonDirs, descending into the @a path
+ * subdirectory of each, and adds one BMenuItem per executable file.
+ * Each item carries a BMessage of @a what with a @c name string.
+ *
+ * @param menu Target menu to populate.
+ * @param path Subdirectory under each add-on directory (e.g. "Print").
+ * @param what BMessage @c what code to attach to each generated item.
+ */
 void
 AddPrinterDialog::_FillMenu(BMenu* menu, const char* path, uint32 what)
 {
@@ -339,6 +439,15 @@ AddPrinterDialog::_FillMenu(BMenu* menu, const char* path, uint32 what)
 }
 
 
+/**
+ * @brief Populates @a menu with transports queried from print_server.
+ *
+ * Iterates every Transport via scripting calls. For transports that expose
+ * a list of ports a TransportMenu submenu is created; for transports that
+ * do not (or return no ports) a plain BMenuItem is added.
+ *
+ * @param menu Target menu to populate.
+ */
 void
 AddPrinterDialog::_FillTransportMenu(BMenu* menu)
 {
@@ -396,6 +505,13 @@ AddPrinterDialog::_FillTransportMenu(BMenu* menu)
 }
 
 
+/**
+ * @brief Refreshes button and menu enable states from current selections.
+ *
+ * The OK button activates only when a name, driver, and transport are all
+ * present (the Preview driver does not need a transport). The transport
+ * menu is disabled while Preview is selected.
+ */
 void
 AddPrinterDialog::_Update()
 {

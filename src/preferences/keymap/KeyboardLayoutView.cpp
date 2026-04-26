@@ -1,11 +1,42 @@
 /*
- * Copyright 2009-2010, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2013-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2013-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file KeyboardLayoutView.cpp
+ * @brief Implementation of KeyboardLayoutView, the editable on-screen keyboard.
+ *
+ * Maps a KeyboardLayout to screen pixels, draws each key with labels
+ * resolved through the bound Keymap, and lets the user remap keys via
+ * drag-and-drop or popup menus. Also tracks live keyboard state so the
+ * pressed keys are highlighted in real time, and exposes dead-key
+ * handling and modifier-key swap operations.
  */
 
 
@@ -32,12 +63,21 @@
 #define B_TRANSLATION_CONTEXT "Keyboard Layout View"
 
 
+/** @brief Background tint for keys flagged "dark" in the layout. */
 static const rgb_color kDarkColor = {200, 200, 200, 255};
+/** @brief Highlight colour for the second key of a dead-key sequence. */
 static const rgb_color kIdealSecondDeadKeyColor = {190, 190, 100, 255};
+/** @brief Highlight colour for an active dead key awaiting completion. */
 static const rgb_color kIdealDeadKeyColor = {102, 153, 205, 255};
+/** @brief Fill colour for an LED indicator that is currently lit. */
 static const rgb_color kLitIndicatorColor = {116, 212, 83, 255};
 
 
+/**
+ * @brief Returns true if @a keyCode is a left-side modifier key.
+ *
+ * @param keyCode  Hardware scancode to test.
+ */
 static bool
 is_left_modifier_key(uint32 keyCode)
 {
@@ -48,6 +88,11 @@ is_left_modifier_key(uint32 keyCode)
 }
 
 
+/**
+ * @brief Returns true if @a keyCode is a right-side modifier or menu key.
+ *
+ * @param keyCode  Hardware scancode to test.
+ */
 static bool
 is_right_modifier_key(uint32 keyCode)
 {
@@ -59,6 +104,11 @@ is_right_modifier_key(uint32 keyCode)
 }
 
 
+/**
+ * @brief Returns true if @a keyCode is one of Caps/Num/Scroll Lock.
+ *
+ * @param keyCode  Hardware scancode to test.
+ */
 static bool
 is_lock_key(uint32 keyCode)
 {
@@ -68,6 +118,11 @@ is_lock_key(uint32 keyCode)
 }
 
 
+/**
+ * @brief Returns true if @a keyCode can be reassigned to a modifier role.
+ *
+ * @param keyCode  Hardware scancode to test.
+ */
 static bool
 is_mappable_to_modifier(uint32 keyCode)
 {
@@ -80,6 +135,17 @@ is_mappable_to_modifier(uint32 keyCode)
 //	#pragma mark - KeyboardLayoutView
 
 
+/**
+ * @brief Constructs a layout view, optionally bound to an input device.
+ *
+ * When @a dev is non-NULL the view runs as a virtual on-screen
+ * keyboard that injects key events through the provided device, and
+ * editing is disabled. When @a dev is NULL the view operates in
+ * editor mode and is editable by default.
+ *
+ * @param name  BView name (also used as the layout name on the wire).
+ * @param dev   Optional input-server device for virtual-keyboard mode.
+ */
 KeyboardLayoutView::KeyboardLayoutView(const char* name, BInputServerDevice* dev)
 	:
 	BView(name, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE | B_FRAME_EVENTS | B_TRANSPARENT_BACKGROUND),
@@ -102,11 +168,19 @@ KeyboardLayoutView::KeyboardLayoutView(const char* name, BInputServerDevice* dev
 }
 
 
+/**
+ * @brief Destroys the view. The layout, keymap, and device are not owned.
+ */
 KeyboardLayoutView::~KeyboardLayoutView()
 {
 }
 
 
+/**
+ * @brief Replaces the displayed layout and recomputes the on-screen geometry.
+ *
+ * @param layout  New keyboard layout. Ownership is not taken.
+ */
 void
 KeyboardLayoutView::SetKeyboardLayout(KeyboardLayout* layout)
 {
@@ -116,6 +190,11 @@ KeyboardLayoutView::SetKeyboardLayout(KeyboardLayout* layout)
 }
 
 
+/**
+ * @brief Replaces the keymap used to label keys and resolve dead-key state.
+ *
+ * @param keymap  New keymap. Ownership is not taken.
+ */
 void
 KeyboardLayoutView::SetKeymap(Keymap* keymap)
 {
@@ -124,6 +203,11 @@ KeyboardLayoutView::SetKeymap(Keymap* keymap)
 }
 
 
+/**
+ * @brief Sets the destination for synthesised B_KEY_DOWN messages from clicks.
+ *
+ * @param target  Messenger that receives generated key-down events.
+ */
 void
 KeyboardLayoutView::SetTarget(BMessenger target)
 {
@@ -131,6 +215,11 @@ KeyboardLayoutView::SetTarget(BMessenger target)
 }
 
 
+/**
+ * @brief Sets the base font used for normal key labels and re-measures it.
+ *
+ * @param font  Font to use; its metrics are cached for label sizing.
+ */
 void
 KeyboardLayoutView::SetBaseFont(const BFont& font)
 {
@@ -145,6 +234,9 @@ KeyboardLayoutView::SetBaseFont(const BFont& font)
 }
 
 
+/**
+ * @brief Sets the default fonts and snapshot of current modifiers on attach.
+ */
 void
 KeyboardLayoutView::AttachedToWindow()
 {
@@ -154,6 +246,12 @@ KeyboardLayoutView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Recomputes scale factor and offsets when the view is resized.
+ *
+ * @param width   New width (unused; bounds are read inside _LayoutKeyboard()).
+ * @param height  New height (unused; bounds are read inside _LayoutKeyboard()).
+ */
 void
 KeyboardLayoutView::FrameResized(float width, float height)
 {
@@ -161,6 +259,11 @@ KeyboardLayoutView::FrameResized(float width, float height)
 }
 
 
+/**
+ * @brief Forces a redraw when the window gains focus so highlights stay accurate.
+ *
+ * @param active  Whether the window is becoming active.
+ */
 void
 KeyboardLayoutView::WindowActivated(bool active)
 {
@@ -169,6 +272,9 @@ KeyboardLayoutView::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Returns the minimum size, clamped to 100 x 50 pixels.
+ */
 BSize
 KeyboardLayoutView::MinSize()
 {
@@ -176,6 +282,12 @@ KeyboardLayoutView::MinSize()
 }
 
 
+/**
+ * @brief Refreshes the live key-state map for any pressed key.
+ *
+ * @param bytes     Unused.
+ * @param numBytes  Unused.
+ */
 void
 KeyboardLayoutView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -183,6 +295,12 @@ KeyboardLayoutView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Refreshes the live key-state map for any released key.
+ *
+ * @param bytes     Unused.
+ * @param numBytes  Unused.
+ */
 void
 KeyboardLayoutView::KeyUp(const char* bytes, int32 numBytes)
 {
@@ -190,6 +308,16 @@ KeyboardLayoutView::KeyUp(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Routes mouse-button presses on a key to the appropriate edit action.
+ *
+ * Primary button highlights or toggles modifier keys; secondary
+ * (or primary + Control) opens a remap popup; tertiary toggles the
+ * dead-key state for keys that have one. Most behaviours only apply
+ * when the view is in editable mode.
+ *
+ * @param point  Click position in view coordinates.
+ */
 void
 KeyboardLayoutView::MouseDown(BPoint point)
 {
@@ -364,6 +492,16 @@ KeyboardLayoutView::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Finalises a click sequence by sending a key-down or releasing state.
+ *
+ * Cancels in-progress drags, releases pressed-state for non-modifier
+ * keys, and synthesises a B_KEY_DOWN to the target if a real click
+ * (not a drag) was completed on a non-modifier key. Dead-key handling
+ * is invoked here so chained keypresses produce composed characters.
+ *
+ * @param point  Release position in view coordinates.
+ */
 void
 KeyboardLayoutView::MouseUp(BPoint point)
 {
@@ -411,6 +549,19 @@ KeyboardLayoutView::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Tracks drop-target highlighting and starts a drag once the threshold is crossed.
+ *
+ * While a drag message is in flight, the hovered key is highlighted as
+ * the drop target. Otherwise, if the primary mouse button has been
+ * held and the cursor has moved enough pixels, this method bakes a
+ * bitmap of the source key and starts a drag carrying its scancode
+ * and current text mapping.
+ *
+ * @param point        Current cursor position in view coordinates.
+ * @param transit      Standard BView transit code.
+ * @param dragMessage  Drag message in flight, or NULL for a plain move.
+ */
 void
 KeyboardLayoutView::MouseMoved(BPoint point, uint32 transit,
 	const BMessage* dragMessage)
@@ -499,6 +650,14 @@ KeyboardLayoutView::MouseMoved(BPoint point, uint32 transit,
 }
 
 
+/**
+ * @brief Paints every key and LED indicator in the layout.
+ *
+ * Recomputes the on-screen geometry first if the view was resized
+ * since the previous draw cycle.
+ *
+ * @param updateRect  Region requested for redraw.
+ */
 void
 KeyboardLayoutView::Draw(BRect updateRect)
 {
@@ -526,6 +685,16 @@ KeyboardLayoutView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handles drops, modifier change notifications, and unmapped key events.
+ *
+ * Drops carrying text rebind the drop-target key's character mapping.
+ * Drops carrying a "key" field swap mappings between the two keys
+ * (with special handling for modifier keys). Modifier-changed events
+ * update the live highlight; unmapped key events feed _KeyChanged().
+ *
+ * @param message  Incoming message.
+ */
 void
 KeyboardLayoutView::MessageReceived(BMessage* message)
 {
@@ -670,6 +839,13 @@ KeyboardLayoutView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Recomputes the scaling factor and centring offset for the layout.
+ *
+ * Picks the smaller of the two axis ratios so the layout fits in the
+ * view without distortion, centres it horizontally and vertically,
+ * and chooses an inter-key gap based on the layout's default key size.
+ */
 void
 KeyboardLayoutView::_LayoutKeyboard()
 {
@@ -691,6 +867,16 @@ KeyboardLayoutView::_LayoutKeyboard()
 }
 
 
+/**
+ * @brief Draws the standard rectangular key button frame and background.
+ *
+ * @param view        Target view (this view, or a drag bitmap helper).
+ * @param rect        Key frame; ControlLook may shrink it for borders.
+ * @param updateRect  Clip region passed through to BControlLook.
+ * @param base        Base colour for the key.
+ * @param background  Background colour behind the key frame.
+ * @param pressed     Whether the key should appear pressed.
+ */
 void
 KeyboardLayoutView::_DrawKeyButton(BView* view, BRect& rect, BRect updateRect,
 	rgb_color base, rgb_color background, bool pressed)
@@ -704,6 +890,20 @@ KeyboardLayoutView::_DrawKeyButton(BView* view, BRect& rect, BRect updateRect,
 }
 
 
+/**
+ * @brief Renders one key, including label, dead-key tinting, and highlights.
+ *
+ * Resolves the label from the bound keymap (or uses the bare scancode
+ * if there is no keymap), tints the background to indicate dead-key
+ * state, and dispatches to the rectangle or enter-shaped drawing
+ * paths depending on the key's geometry.
+ *
+ * @param view        Target view.
+ * @param updateRect  Clip region.
+ * @param key         Key being drawn.
+ * @param rect        On-screen frame for the key.
+ * @param pressed     Whether the key is currently held down.
+ */
 void
 KeyboardLayoutView::_DrawKey(BView* view, BRect updateRect, const Key* key,
 	BRect rect, bool pressed)
@@ -829,6 +1029,15 @@ KeyboardLayoutView::_DrawKey(BView* view, BRect updateRect, const Key* key,
 }
 
 
+/**
+ * @brief Draws a Caps/Num/Scroll Lock LED indicator with optional label.
+ *
+ * @param view        Target view.
+ * @param updateRect  Clip region.
+ * @param indicator   Indicator describing which modifier this LED tracks.
+ * @param rect        On-screen frame for the indicator.
+ * @param lit         Whether the LED should be drawn as lit.
+ */
 void
 KeyboardLayoutView::_DrawIndicator(BView* view, BRect updateRect,
 	const Indicator* indicator, BRect rect, bool lit)
@@ -875,6 +1084,14 @@ KeyboardLayoutView::_DrawIndicator(BView* view, BRect updateRect,
 }
 
 
+/**
+ * @brief Returns a localised label for modifier and lock keys.
+ *
+ * @param map          Keymap defining which scancodes act as modifiers.
+ * @param code         Scancode to label.
+ * @param abbreviated  When true, return short forms (e.g. "CMD" vs "COMMAND").
+ * @return             Localised label, or NULL if @a code is not a modifier.
+ */
 const char*
 KeyboardLayoutView::_SpecialKeyLabel(const key_map& map, uint32 code,
 	bool abbreviated)
@@ -919,6 +1136,13 @@ KeyboardLayoutView::_SpecialKeyLabel(const key_map& map, uint32 code,
 }
 
 
+/**
+ * @brief Returns a UTF-8 glyph for tab, enter, backspace, and arrow keys.
+ *
+ * @param bytes     Mapped character bytes from the keymap.
+ * @param numBytes  Length of @a bytes.
+ * @return          Pointer to a static UTF-8 string, or NULL if there is no symbol.
+ */
 const char*
 KeyboardLayoutView::_SpecialMappedKeySymbol(const char* bytes, size_t numBytes)
 {
@@ -945,6 +1169,14 @@ KeyboardLayoutView::_SpecialMappedKeySymbol(const char* bytes, size_t numBytes)
 }
 
 
+/**
+ * @brief Returns a localised label for navigation keys (Esc, Insert, Home, etc.).
+ *
+ * @param bytes        Mapped character bytes from the keymap.
+ * @param numBytes     Length of @a bytes.
+ * @param abbreviated  When true, return short forms (e.g. "PG up arrow").
+ * @return             Localised label, or NULL if @a bytes is not a navigation key.
+ */
 const char*
 KeyboardLayoutView::_SpecialMappedKeyLabel(const char* bytes, size_t numBytes,
 	bool abbreviated)
@@ -978,6 +1210,14 @@ KeyboardLayoutView::_SpecialMappedKeyLabel(const char* bytes, size_t numBytes,
 }
 
 
+/**
+ * @brief Writes "F1" .. "F12" into @a text if @a code is a function key.
+ *
+ * @param code      Scancode to test.
+ * @param text      Output buffer.
+ * @param textSize  Size of @a text in bytes.
+ * @return          true if a label was written, false otherwise.
+ */
 bool
 KeyboardLayoutView::_FunctionKeyLabel(uint32 code, char* text, size_t textSize)
 {
@@ -990,6 +1230,18 @@ KeyboardLayoutView::_FunctionKeyLabel(uint32 code, char* text, size_t textSize)
 }
 
 
+/**
+ * @brief Replaces @a text with a shorter label if it does not fit in @a rect.
+ *
+ * Falls back to abbreviated forms of modifier and navigation labels
+ * when the full label would overflow the available space.
+ *
+ * @param view      Target view; used to measure string widths.
+ * @param rect      Frame in which the label must fit.
+ * @param key       Key whose label is being measured.
+ * @param text      In/out: full label that may be replaced with a short form.
+ * @param textSize  Size of @a text in bytes.
+ */
 void
 KeyboardLayoutView::_GetAbbreviatedKeyLabelIfNeeded(BView* view, BRect rect,
 	const Key* key, char* text, size_t textSize)
@@ -1020,6 +1272,18 @@ KeyboardLayoutView::_GetAbbreviatedKeyLabelIfNeeded(BView* view, BRect rect,
 }
 
 
+/**
+ * @brief Computes the displayed label and font kind for a key.
+ *
+ * Tries, in order: modifier names, function-key names, mapped
+ * navigation labels, mapped special symbols, and finally the literal
+ * mapped character if the base font has glyphs for it.
+ *
+ * @param key       Key being labelled.
+ * @param text      Output buffer for the label.
+ * @param textSize  Size of @a text in bytes.
+ * @param keyKind   Output classification driving the chosen font.
+ */
 void
 KeyboardLayoutView::_GetKeyLabel(const Key* key, char* text, size_t textSize,
 	key_kind& keyKind)
@@ -1066,6 +1330,15 @@ KeyboardLayoutView::_GetKeyLabel(const Key* key, char* text, size_t textSize,
 }
 
 
+/**
+ * @brief Returns true if @a code should currently be rendered as pressed.
+ *
+ * A key is considered pressed if its bit in the live state map is set
+ * or if it is the active drag drop target (so users see the swap
+ * preview).
+ *
+ * @param code  Hardware scancode.
+ */
 bool
 KeyboardLayoutView::_IsKeyPressed(uint32 code)
 {
@@ -1076,6 +1349,12 @@ KeyboardLayoutView::_IsKeyPressed(uint32 code)
 }
 
 
+/**
+ * @brief Returns the live pressed/not-pressed bit for @a code.
+ *
+ * @param code  Hardware scancode (must be < 128).
+ * @return      true if the corresponding bit in fKeyState is set.
+ */
 bool
 KeyboardLayoutView::_KeyState(uint32 code) const
 {
@@ -1086,6 +1365,12 @@ KeyboardLayoutView::_KeyState(uint32 code) const
 }
 
 
+/**
+ * @brief Sets or clears the live pressed bit for @a code.
+ *
+ * @param code     Hardware scancode (silently ignored if >= 128).
+ * @param pressed  Whether to mark the key as pressed.
+ */
 void
 KeyboardLayoutView::_SetKeyState(uint32 code, bool pressed)
 {
@@ -1099,6 +1384,13 @@ KeyboardLayoutView::_SetKeyState(uint32 code, bool pressed)
 }
 
 
+/**
+ * @brief Linearly searches the layout for the Key with the given scancode.
+ *
+ * @param code  Hardware scancode to find.
+ * @return      Pointer to the matching key, or NULL if absent.
+ * @todo        Replace the linear scan with a lookup array.
+ */
 Key*
 KeyboardLayoutView::_KeyForCode(uint32 code)
 {
@@ -1114,6 +1406,11 @@ KeyboardLayoutView::_KeyForCode(uint32 code)
 }
 
 
+/**
+ * @brief Invalidates the on-screen frame of the key with the given scancode.
+ *
+ * @param code  Hardware scancode.
+ */
 void
 KeyboardLayoutView::_InvalidateKey(uint32 code)
 {
@@ -1121,6 +1418,11 @@ KeyboardLayoutView::_InvalidateKey(uint32 code)
 }
 
 
+/**
+ * @brief Invalidates the on-screen frame of @a key.
+ *
+ * @param key  Key whose frame should be redrawn (no-op if NULL).
+ */
 void
 KeyboardLayoutView::_InvalidateKey(const Key* key)
 {
@@ -1129,10 +1431,13 @@ KeyboardLayoutView::_InvalidateKey(const Key* key)
 }
 
 
-/*!	Updates the fDeadKey member, and invalidates the view if needed.
-
-	\return true if the view has been invalidated.
-*/
+/**
+ * @brief Updates the fDeadKey member and invalidates the view if needed.
+ *
+ * @param key        Scancode whose dead-key status to evaluate.
+ * @param modifiers  Active modifier mask at the time of the event.
+ * @return           true if the view has been invalidated.
+ */
 bool
 KeyboardLayoutView::_HandleDeadKey(uint32 key, int32 modifiers)
 {
@@ -1155,6 +1460,12 @@ KeyboardLayoutView::_HandleDeadKey(uint32 key, int32 modifiers)
 }
 
 
+/**
+ * @brief Synchronises live key-state from a BMessage and invalidates changed keys.
+ *
+ * @param message  B_KEY_DOWN/UP or B_UNMAPPED_KEY_DOWN/UP message carrying
+ *                 a fresh "states" byte array and the originating "key".
+ */
 void
 KeyboardLayoutView::_KeyChanged(const BMessage* message)
 {
@@ -1197,6 +1508,16 @@ KeyboardLayoutView::_KeyChanged(const BMessage* message)
 }
 
 
+/**
+ * @brief Hit-tests @a point against the on-screen layout.
+ *
+ * Iterates from the topmost key downward, transforming the click
+ * into layout coordinates first to keep the test fast, then verifies
+ * the screen frame contains the click before returning the key.
+ *
+ * @param point  Point in view coordinates.
+ * @return       Pointer to the hit Key, or NULL if no key was clicked.
+ */
 Key*
 KeyboardLayoutView::_KeyAt(BPoint point)
 {
@@ -1222,6 +1543,15 @@ KeyboardLayoutView::_KeyAt(BPoint point)
 }
 
 
+/**
+ * @brief Converts a layout-space rectangle to a view-space rectangle.
+ *
+ * Applies the global scale factor and centring offset, then shrinks
+ * the result by the inter-key gap to leave space between adjacent keys.
+ *
+ * @param keyFrame  Rectangle in layout coordinates.
+ * @return          Corresponding rectangle in view coordinates.
+ */
 BRect
 KeyboardLayoutView::_FrameFor(BRect keyFrame)
 {
@@ -1236,6 +1566,11 @@ KeyboardLayoutView::_FrameFor(BRect keyFrame)
 }
 
 
+/**
+ * @brief Convenience overload returning the view-space frame for a key.
+ *
+ * @param key  Key whose frame to translate.
+ */
 BRect
 KeyboardLayoutView::_FrameFor(const Key* key)
 {
@@ -1243,6 +1578,16 @@ KeyboardLayoutView::_FrameFor(const Key* key)
 }
 
 
+/**
+ * @brief Picks an appropriate font and size for drawing a key label.
+ *
+ * Shrinks the base font when needed so the label height stays at
+ * roughly half the on-screen key height. Special and indicator keys
+ * use the fixed-width font with adjusted multipliers.
+ *
+ * @param view     Target view to receive the font.
+ * @param keyKind  Classification of the label (normal, special, symbol, indicator).
+ */
 void
 KeyboardLayoutView::_SetFontSize(BView* view, key_kind keyKind)
 {
@@ -1279,6 +1624,14 @@ KeyboardLayoutView::_SetFontSize(BView* view, key_kind keyKind)
 }
 
 
+/**
+ * @brief Recomputes which key is the current drag-and-drop target.
+ *
+ * Suppresses the highlight when the cursor is back over the source
+ * key with the same modifier mask (which would be a no-op drop).
+ *
+ * @param point  Cursor position in view coordinates.
+ */
 void
 KeyboardLayoutView::_EvaluateDropTarget(BPoint point)
 {
@@ -1292,6 +1645,16 @@ KeyboardLayoutView::_EvaluateDropTarget(BPoint point)
 }
 
 
+/**
+ * @brief Synthesises a B_KEY_DOWN message for @a key and dispatches it.
+ *
+ * Populates the standard fields (when, states, key, modifiers,
+ * be:key_repeat, bytes, raw_char, byte) and either posts the message
+ * to the configured target (editor mode) or enqueues it on the bound
+ * input device (virtual-keyboard mode, if compiled in).
+ *
+ * @param key  Key being virtually pressed.
+ */
 void
 KeyboardLayoutView::_SendKeyDown(const Key* key)
 {
@@ -1334,6 +1697,18 @@ KeyboardLayoutView::_SendKeyDown(const Key* key)
 }
 
 
+/**
+ * @brief Builds a popup-menu item that swaps a modifier role between two keys.
+ *
+ * The returned BMenuItem carries a kMsgUpdateModifierKeys message
+ * encoding the swap so that KeymapWindow can apply it.
+ *
+ * @param modifier         Target modifier role (e.g. B_LEFT_SHIFT_KEY).
+ * @param displayModifier  Modifier whose name is shown on the item label.
+ * @param oldCode          Scancode currently bound to the role.
+ * @param newCode          Scancode the user clicked on.
+ * @return                 New BMenuItem; ownership passes to the caller.
+ */
 BMenuItem*
 KeyboardLayoutView::_CreateSwapModifiersMenuItem(uint32 modifier,
 	uint32 displayModifier, uint32 oldCode, uint32 newCode)
@@ -1358,6 +1733,14 @@ KeyboardLayoutView::_CreateSwapModifiersMenuItem(uint32 modifier,
 }
 
 
+/**
+ * @brief Returns the canonical or pretty-printed name for a modifier mask.
+ *
+ * @param modifier  Single-bit modifier mask (e.g. B_LEFT_SHIFT_KEY).
+ * @param pretty    When true, return a localised display name; otherwise
+ *                  return the wire-protocol field name (e.g. "left_shift_key").
+ * @return          Static C string, or NULL if @a modifier is unrecognised.
+ */
 const char*
 KeyboardLayoutView::_NameForModifier(uint32 modifier, bool pretty)
 {

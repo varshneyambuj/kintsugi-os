@@ -1,7 +1,43 @@
 /*
- * Copyright 2008-10, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes_at_gmail.com>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-10, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes_at_gmail.com>
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file BluetoothMain.cpp
+ * @brief Implementation of the Bluetooth preferences BApplication.
+ *
+ * Hosts the BluetoothApplication entry point that drives the Bluetooth
+ * preference panel. The application waits for the system bluetooth_server
+ * to be running, optionally launches it, and then opens the main
+ * BluetoothWindow. Routes a small set of inter-window messages and shows
+ * the About dialog.
+ *
+ * @see BluetoothWindow, BluetoothApplication
+ */
+
+
 #include <stdio.h>
 
 #include <Alert.h>
@@ -18,6 +54,15 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "main"
 
+
+/**
+ * @brief Constructs the Bluetooth preference application.
+ *
+ * Registers the application with the BApplication runtime using the
+ * Bluetooth preference panel's MIME signature. The main window is not
+ * yet created; ReadyToRun() defers that until the bluetooth_server is
+ * confirmed to be running.
+ */
 BluetoothApplication::BluetoothApplication()
 	:
 	BApplication(BLUETOOTH_APP_SIGNATURE)
@@ -25,6 +70,17 @@ BluetoothApplication::BluetoothApplication()
 }
 
 
+/**
+ * @brief Verifies the bluetooth_server is running before opening the UI.
+ *
+ * If the bluetooth_server is not currently running, prompts the user with
+ * an alert offering to launch it. On launch the application schedules a
+ * deferred 'Xtmp' message via BMessageRunner to retry creating the main
+ * window once the server has had time to start. If the server is already
+ * running the window is created immediately by posting 'Xtmp' to self.
+ *
+ * @note Quits the application if the user declines to launch the server.
+ */
 void
 BluetoothApplication::ReadyToRun()
 {
@@ -65,6 +121,16 @@ BluetoothApplication::ReadyToRun()
 }
 
 
+/**
+ * @brief Dispatches application-level messages.
+ *
+ * Forwards remote-list updates to the main window and handles the deferred
+ * 'Xtmp' bootstrap message that creates the BluetoothWindow once the
+ * bluetooth_server is confirmed running.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BApplication::MessageReceived.
+ */
 void
 BluetoothApplication::MessageReceived(BMessage* message)
 {
@@ -91,6 +157,12 @@ BluetoothApplication::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Shows the About window for the Bluetooth preference panel.
+ *
+ * Creates a BAboutWindow populated with copyright and contributor
+ * acknowledgements derived from the original Haiku Bluetooth preflet.
+ */
 void
 BluetoothApplication::AboutRequested()
 {
@@ -130,6 +202,14 @@ BluetoothApplication::AboutRequested()
 }
 
 
+/**
+ * @brief Process entry point for the Bluetooth preference panel.
+ *
+ * Instantiates the BluetoothApplication and runs its message loop until
+ * the user closes the panel.
+ *
+ * @return Always returns 0 once the application loop terminates.
+ */
 int
 main(int, char**)
 {

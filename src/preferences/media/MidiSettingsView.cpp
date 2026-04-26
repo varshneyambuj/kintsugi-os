@@ -1,7 +1,40 @@
 /*
- * Copyright 2014-2017, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014-2017, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file MidiSettingsView.cpp
+ * @brief Implementation of the SoundFont chooser used by the MIDI
+ *        settings tab.
+ *
+ * Lists every SoundFont the BPathFinder reports under the @c synth data
+ * directories, persists the selection through BPrivate::midi_settings,
+ * and watches the directories so freshly installed files appear without
+ * a relaunch. A double-click on an entry opens the containing folder in
+ * Tracker.
+ */
+
 
 #include "MidiSettingsView.h"
 
@@ -31,10 +64,16 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Midi View"
 
+/** @brief Message dispatched when the user picks a SoundFont in the list. */
 const static uint32 kSelectSoundFont = 'SeSf';
+/** @brief Message dispatched when the user double-clicks a SoundFont entry. */
 const static uint32 kDoubleClick = 'DClk';
 
 
+/**
+ * @brief Builds the MIDI settings view layout: scrollable list and a
+ *        single status line.
+ */
 MidiSettingsView::MidiSettingsView()
 	:
 	SettingsView()
@@ -69,6 +108,10 @@ MidiSettingsView::MidiSettingsView()
 }
 
 
+/**
+ * @brief BView AttachedToWindow hook: loads settings, scans the directories,
+ *        selects the active SoundFont, and starts watching.
+ */
 /* virtual */
 void
 MidiSettingsView::AttachedToWindow()
@@ -84,6 +127,9 @@ MidiSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief BView DetachedFromWindow hook: stops node monitoring.
+ */
 /* virtual */
 void
 MidiSettingsView::DetachedFromWindow()
@@ -94,6 +140,18 @@ MidiSettingsView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief BView message hook: handles list-view events and node monitor.
+ *
+ * Recognized messages:
+ *   - @c B_NODE_MONITOR: rescans the directories, preserving the current
+ *     selection by name when possible.
+ *   - @c kSelectSoundFont: persists the new selection.
+ *   - @c kDoubleClick: opens the containing folder in Tracker.
+ *
+ * @param message Incoming message; unhandled messages defer to the base
+ *                SettingsView.
+ */
 /* virtual */
 void
 MidiSettingsView::MessageReceived(BMessage* message)
@@ -160,6 +218,17 @@ MidiSettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Refreshes the list view from the @c synth data directories.
+ *
+ * Empties the list and walks each candidate directory; any entry whose
+ * BNodeInfo reports a known MIME type is added with its full path as
+ * the list label.
+ *
+ * @todo Deduplicate this scan with @c BSoftSynth::SetDefaultInstrumentsFile.
+ * @note The MIME-type check intentionally accepts any type because newly
+ *       written SoundFont files may not yet be sniffed and recognized.
+ */
 void
 MidiSettingsView::_RetrieveSoundFontList()
 {
@@ -195,6 +264,9 @@ MidiSettingsView::_RetrieveSoundFontList()
 }
 
 
+/**
+ * @brief Reads the currently-active SoundFont path from BPrivate::midi_settings.
+ */
 void
 MidiSettingsView::_LoadSettings()
 {
@@ -204,6 +276,11 @@ MidiSettingsView::_LoadSettings()
 }
 
 
+/**
+ * @brief Persists the current selection through BPrivate::midi_settings.
+ *
+ * No-op when nothing is selected (the active SoundFont string is empty).
+ */
 void
 MidiSettingsView::_SaveSettings()
 {
@@ -217,6 +294,11 @@ MidiSettingsView::_SaveSettings()
 }
 
 
+/**
+ * @brief Selects the list item that matches the currently active SoundFont.
+ *
+ * When exactly one SoundFont is available it is auto-selected and saved.
+ */
 void
 MidiSettingsView::_SelectActiveSoundFont()
 {
@@ -236,6 +318,12 @@ MidiSettingsView::_SelectActiveSoundFont()
 }
 
 
+/**
+ * @brief Returns the text of the currently selected list item.
+ *
+ * @return Selected SoundFont path, or an empty BString when none is
+ *         selected.
+ */
 BString
 MidiSettingsView::_SelectedSoundFont() const
 {
@@ -251,6 +339,9 @@ MidiSettingsView::_SelectedSoundFont() const
 }
 
 
+/**
+ * @brief Updates the status line based on list emptiness and selection.
+ */
 void
 MidiSettingsView::_UpdateSoundFontStatus()
 {
@@ -269,6 +360,12 @@ MidiSettingsView::_UpdateSoundFontStatus()
 }
 
 
+/**
+ * @brief Subscribes the node monitor to every @c synth data directory.
+ *
+ * The watcher is broad (@c B_WATCH_ALL) so renames, additions and
+ * removals all trigger a refresh.
+ */
 void
 MidiSettingsView::_WatchFolders()
 {

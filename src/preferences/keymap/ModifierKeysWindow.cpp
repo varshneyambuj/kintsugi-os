@@ -1,10 +1,40 @@
 /*
- * Copyright 2011-2023 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Jorge Acereda, jacereda@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2023 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ *       Jorge Acereda, jacereda@gmail.com
+ */
+
+
+/**
+ * @file ModifierKeysWindow.cpp
+ * @brief Implementation of the modifier-key remapping window.
+ *
+ * Builds a 5-row grid of "role -> physical key" popups, watches the
+ * user's choices for duplicate assignments, and on OK posts the
+ * resulting per-role scancodes back to the main keymap window via
+ * kMsgUpdateModifierKeys.
  */
 
 
@@ -69,6 +99,13 @@ static const int32 kDisabled = -1;
 #define B_TRANSLATION_CONTEXT "Modifier keys window"
 
 
+/**
+ * @brief Constructs the modifier-keys editor window and reads the active key map.
+ *
+ * Captures the live key map twice (current and saved) so that the
+ * Revert button can roll back uncommitted edits, then assembles the
+ * 5-row grid of role popups and the OK/Cancel/Revert buttons.
+ */
 ModifierKeysWindow::ModifierKeysWindow()
 	:
 	BWindow(BRect(0, 0, 360, 220), B_TRANSLATE("Modifier keys"),
@@ -155,12 +192,20 @@ ModifierKeysWindow::ModifierKeysWindow()
 }
 
 
+/**
+ * @brief Notifies the application that the modifier-keys editor is gone.
+ */
 ModifierKeysWindow::~ModifierKeysWindow()
 {
 	be_app->PostMessage(kMsgCloseModifierKeysWindow);
 }
 
 
+/**
+ * @brief Dispatches role updates, the OK action, and the Revert action.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 ModifierKeysWindow::MessageReceived(BMessage* message)
 {
@@ -279,6 +324,18 @@ ModifierKeysWindow::MessageReceived(BMessage* message)
 //	#pragma mark - ModifierKeysWindow private methods
 
 
+/**
+ * @brief Builds one role popup with all possible physical-key choices.
+ *
+ * Populates the popup with a row per modifier role plus a separator
+ * and a Disabled entry, and attaches it to a StatusMenuField for the
+ * caller.
+ *
+ * @param _menu       Output pointer that receives the new popup.
+ * @param _menuField  Output pointer that receives the new menu field.
+ * @param key         Role index (MENU_ITEM_CAPS, ..., MENU_ITEM_COMMAND).
+ * @param label       Localised label for the menu field.
+ */
 void
 ModifierKeysWindow::_CreateMenuField(BPopUpMenu** _menu, BMenuField** _menuField, uint32 key,
 	const char* label)
@@ -312,6 +369,12 @@ ModifierKeysWindow::_CreateMenuField(BPopUpMenu** _menu, BMenuField** _menuField
 }
 
 
+/**
+ * @brief Updates every popup so the marked item matches the current key map.
+ *
+ * Caps Lock is treated specially because it has only a single key,
+ * so its row never participates in the unmatched-marker logic.
+ */
 void
 ModifierKeysWindow::_MarkMenuItems()
 {
@@ -328,6 +391,15 @@ ModifierKeysWindow::_MarkMenuItems()
 }
 
 
+/**
+ * @brief Marks the menu item that matches @a left and @a right scancode pair.
+ *
+ * @param role   Identifier string for the role being processed.
+ * @param menu   Popup to update.
+ * @param left   Scancode currently bound to the left key for the role.
+ * @param right  Scancode currently bound to the right key for the role.
+ * @return       true if a menu item was marked, false if no match was found.
+ */
 bool
 ModifierKeysWindow::_MarkMenuItem(const char* role, BPopUpMenu* menu, uint32 left, uint32 right)
 {
@@ -353,7 +425,12 @@ ModifierKeysWindow::_MarkMenuItem(const char* role, BPopUpMenu* menu, uint32 lef
 }
 
 
-// get the string for a modifier key
+/**
+ * @brief Returns a localised display string for the given role index.
+ *
+ * @param key  Role index (MENU_ITEM_CAPS, ..., MENU_ITEM_DISABLED).
+ * @return     Translated string suitable for menu labels.
+ */
 const char*
 ModifierKeysWindow::_KeyToString(int32 key)
 {
@@ -387,7 +464,15 @@ ModifierKeysWindow::_KeyToString(int32 key)
 }
 
 
-// get the keycode for a modifier key
+/**
+ * @brief Maps a role index to the canonical scancode for that physical key.
+ *
+ * @param key    Role index.
+ * @param right  When true and the role has separate left/right keys, return
+ *               the right-side scancode.
+ * @return       Hardware scancode, kDisabled for the disabled role, or kUnset
+ *               if @a key is not recognised.
+ */
 int32
 ModifierKeysWindow::_KeyToKeyCode(int32 key, bool right)
 {
@@ -423,7 +508,9 @@ ModifierKeysWindow::_KeyToKeyCode(int32 key, bool right)
 }
 
 
-// validate duplicate keys
+/**
+ * @brief Marks any role whose key is duplicated and toggles the OK button.
+ */
 void
 ModifierKeysWindow::_ValidateDuplicateKeys()
 {
@@ -437,6 +524,14 @@ ModifierKeysWindow::_ValidateDuplicateKeys()
 }
 
 
+/**
+ * @brief Sets the duplicate-key indicator on @a field if @a mask is non-zero.
+ *
+ * @param field  Status menu field to flag.
+ * @param mask   Non-zero if the role is involved in a duplicate pairing.
+ * @note         The flag is never cleared here so callers must reset
+ *               state before invoking the duplicate scan.
+ */
 void
 ModifierKeysWindow::_ValidateDuplicateKey(StatusMenuField* field, uint32 mask)
 {
@@ -445,8 +540,14 @@ ModifierKeysWindow::_ValidateDuplicateKey(StatusMenuField* field, uint32 mask)
 }
 
 
-// return a mask marking which keys are duplicates of each other for
-// validation.
+/**
+ * @brief Returns a bit mask of roles whose keys collide with another role.
+ *
+ * Compares each role's left and right scancodes against every other
+ * role in turn; any match sets the bit for both involved roles.
+ *
+ * @return  Bit mask of CAPS_KEY/SHIFT_KEY/... values for colliding roles.
+ */
 uint32
 ModifierKeysWindow::_DuplicateKeys()
 {
@@ -539,6 +640,12 @@ ModifierKeysWindow::_DuplicateKeys()
 }
 
 
+/**
+ * @brief Re-marks the popups and re-runs duplicate-key validation.
+ *
+ * @note The order matters: the marking pass clears flags that the
+ *       duplicate pass then sets when needed.
+ */
 void
 ModifierKeysWindow::_UpdateStatus()
 {

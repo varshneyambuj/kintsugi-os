@@ -1,3 +1,28 @@
+/*
+ * Copyright 2026, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work originally distributed under permissive terms by the
+ * Haiku project. See RFC 1035 for the wire format implemented here.
+ */
+
+/** @file DNSQuery.h
+    @brief Minimal DNS resolver used by the Mail auto-config wizard to
+           look up MX records when no provider database entry exists. */
+
 #ifndef DNS_QUERY_H
 #define DNS_QUERY_H
 
@@ -10,14 +35,26 @@
 
 #include <arpa/inet.h>
 
+/** @brief DNS resource-record type code for MX (mail exchange) records. */
 #define MX_RECORD		15
 
+/**
+ * @brief Decoded MX record consisting of its preference value and the
+ *        target mail server's domain name.
+ */
 struct mx_record {
 	uint16	priority;
 	BString	serverName;
 };
 
 
+/**
+ * @brief Light-weight byte buffer with big-endian integer and DNS-style
+ *        string accessors used by DNSQuery.
+ *
+ * Like BNetBuffer but without per-field type or size headers, so the bytes
+ * laid down on the wire match the RFC 1035 layout exactly.
+ */
 class BRawNetBuffer {
 public:
 						BRawNetBuffer();
@@ -35,9 +72,14 @@ public:
 
 		status_t		SkipReading(off_t off);
 		
+		/** @brief Returns a raw pointer to the underlying byte storage. */
 		void			*Data(void) const { return (void*)fBuffer.Buffer(); }
+		/** @brief Returns the current allocated buffer size in bytes. */
 		size_t			Size(void) const { return fBuffer.BufferLength(); }
+		/** @brief Resizes the underlying buffer to @a size bytes. */
 		size_t			SetSize(off_t size) { return fBuffer.SetSize(size); }
+		/** @brief Manually rewinds or advances the next-write offset to
+		           @a pos. */
 		void			SetWritePosition(off_t pos) { fWritePosition = pos; }
 
 private:
@@ -50,6 +92,10 @@ private:
 };
 
 
+/**
+ * @brief Static helpers for parsing the system resolver configuration and
+ *        translating between dotted and length-prefixed DNS name formats.
+ */
 class DNSTools {
 public:
 		static status_t	GetDNSServers(BObjectList<BString, true>* serverList);
@@ -58,6 +104,10 @@ public:
 };
 
 // see also http://prasshhant.blogspot.com/2007/03/dns-query.html
+/**
+ * @brief Wire-format DNS message header (RFC 1035 section 4.1.1) used as
+ *        both the request and response top frame.
+ */
 struct dns_header {
 	dns_header()
 	{
@@ -84,7 +134,11 @@ struct dns_header {
 	uint16		add_count;			// number of resource entries
 };
 
-// resource record without resource data 
+// resource record without resource data
+/**
+ * @brief Header portion of a DNS resource record, decoded from the
+ *        response stream before the type-specific payload is read.
+ */
 struct resource_record_head {
 	BString	name;
 	uint16	type;
@@ -94,6 +148,13 @@ struct resource_record_head {
 };
 
 
+/**
+ * @brief Issues a single MX-record DNS query and parses the response.
+ *
+ * Uses the first nameserver from @c /system/settings/network/resolv.conf
+ * and a UDP datagram socket. Designed for one-shot use from the auto-
+ * configuration wizard rather than a long-running resolver.
+ */
 class DNSQuery {
 public:
 						DNSQuery();

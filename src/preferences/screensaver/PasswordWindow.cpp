@@ -1,12 +1,44 @@
 /*
- * Copyright 2003-2013 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jérôme Duval, jerome.duval@free.fr
- *		Julun, host.haiku@gmx.de
- *		Michael Phipps
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2013 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jérôme Duval, jerome.duval@free.fr
+ *       Julun, host.haiku@gmx.de
+ *       Michael Phipps
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file PasswordWindow.cpp
+ * @brief Modal dialog implementation for picking the screensaver password.
+ *
+ * Builds a small layout with two radio buttons (system or custom) and a
+ * pair of text controls for the custom password and confirmation. The
+ * dialog hides itself rather than quitting so the parent ScreenSaverWindow
+ * can re-open it without recreating the layout.
+ *
+ * @see ScreenSaverSettings
  */
 
 
@@ -33,12 +65,21 @@
 #define B_TRANSLATION_CONTEXT "ScreenSaver"
 
 
+/** @brief Width of the password text controls in default-spacing units. */
 static const uint32 kPasswordTextWidth = 12;
 
+/** @brief Message dispatched by the Done button. */
 static const uint32 kMsgDone = 'done';
+/** @brief Message dispatched when either password-mode radio button is toggled. */
 static const uint32 kMsgPasswordTypeChanged = 'pwtp';
 
 
+/**
+ * @brief Constructs the modal password window bound to the shared settings.
+ *
+ * @param settings ScreenSaverSettings whose lock method and password are
+ *                 read on entry and updated on Done.
+ */
 PasswordWindow::PasswordWindow(ScreenSaverSettings& settings)
 	:
 	BWindow(BRect(100, 100, 300, 200), B_TRANSLATE("Password Window"),
@@ -51,6 +92,14 @@ PasswordWindow::PasswordWindow(ScreenSaverSettings& settings)
 }
 
 
+/**
+ * @brief Builds the layout of the password window: two boxes and a button row.
+ *
+ * The system box hosts only the "use system password" radio. The custom
+ * box hosts the matching radio together with the password and confirm
+ * text controls (which hide typing). A Cancel/Done button row sits at the
+ * bottom; Done is the default button.
+ */
 void
 PasswordWindow::_Setup()
 {
@@ -131,6 +180,14 @@ PasswordWindow::_Setup()
 }
 
 
+/**
+ * @brief Synchronizes the radio buttons and text-control enable state with
+ *        the underlying ScreenSaverSettings.
+ *
+ * The system-password radio is checked when settings indicate the system
+ * password is in use; otherwise the custom radio is checked. The password
+ * and confirm text controls are enabled only in custom mode.
+ */
 void
 PasswordWindow::Update()
 {
@@ -145,6 +202,18 @@ PasswordWindow::Update()
 }
 
 
+/**
+ * @brief BWindow message hook: handles Done, Cancel, and mode toggles.
+ *
+ * On Done, the lock method is committed and (in custom mode) the typed
+ * password is hashed via @c crypt() and stored. A mismatched confirmation
+ * shows an alert and aborts. On Cancel, the text fields are cleared and
+ * the window hides without committing changes. Mode toggles update the
+ * settings and refresh the enable state.
+ *
+ * @param message Incoming message; unhandled messages fall through to
+ *                BWindow::MessageReceived().
+ */
 void
 PasswordWindow::MessageReceived(BMessage* message)
 {

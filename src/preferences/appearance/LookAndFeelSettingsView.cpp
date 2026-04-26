@@ -1,12 +1,41 @@
 /*
- *  Copyright 2010-2020 Haiku, Inc. All rights reserved.
- *  Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *	Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Alexander von Gluck <kallisti5@unixzen.com>
- *		John Scipione <jscipione@gmail.com>
- *		Ryan Leavengood <leavengood@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2020 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Alexander von Gluck <kallisti5@unixzen.com>
+ *       John Scipione <jscipione@gmail.com>
+ *       Ryan Leavengood <leavengood@gmail.com>
+ */
+
+
+/**
+ * @file LookAndFeelSettingsView.cpp
+ * @brief Implementation of the Look-and-feel tab in the Appearance preflet.
+ *
+ * Lets the user pick the window decorator add-on, the ControlLook
+ * add-on, and the scroll-bar arrow style. Updates are applied
+ * immediately; the parent window keeps a snapshot for Revert.
  */
 
 
@@ -49,23 +78,40 @@
 	// This was not renamed to keep from breaking translations
 
 
+/** @brief Message constant emitted when the decorator menu changes. */
 static const int32 kMsgSetDecor = 'deco';
+/** @brief Message constant emitted by the decorator About button. */
 static const int32 kMsgDecorInfo = 'idec';
 
+/** @brief Message constant emitted when the ControlLook menu changes. */
 static const int32 kMsgSetControlLook = 'ctlk';
+/** @brief Message constant emitted by the ControlLook About button. */
 static const int32 kMsgControlLookInfo = 'iclk';
 
+/** @brief Legacy message; kept for binary compatibility but unused here. */
 static const int32 kMsgDoubleScrollBarArrows = 'dsba';
 
+/** @brief Message constant for the single-arrow scroll-bar preview. */
 static const int32 kMsgArrowStyleSingle = 'mass';
+/** @brief Message constant for the double-arrow scroll-bar preview. */
 static const int32 kMsgArrowStyleDouble = 'masd';
 
+/** @brief Compiled-in default for the double-arrow scroll-bar setting. */
 static const bool kDefaultDoubleScrollBarArrowsSetting = false;
 
 
 //	#pragma mark - LookAndFeelSettingsView
 
 
+/**
+ * @brief Constructs the Look-and-feel tab and its menus.
+ *
+ * Reads the active decorator, ControlLook add-on, and scroll-bar arrow
+ * style; builds the corresponding popup menus and the two
+ * FakeScrollBar previews; and lays everything out in a grid.
+ *
+ * @param name Identifier passed to the BView base class.
+ */
 LookAndFeelSettingsView::LookAndFeelSettingsView(const char* name)
 	:
 	BView(name, 0),
@@ -155,11 +201,19 @@ LookAndFeelSettingsView::LookAndFeelSettingsView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; child views are owned by the BView hierarchy.
+ */
 LookAndFeelSettingsView::~LookAndFeelSettingsView()
 {
 }
 
 
+/**
+ * @brief Wires control targets and pre-marks the active arrow style.
+ *
+ * Called by the BView framework once the view enters its window.
+ */
 void
 LookAndFeelSettingsView::AttachedToWindow()
 {
@@ -182,6 +236,15 @@ LookAndFeelSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Dispatches decorator, ControlLook and arrow-style messages.
+ *
+ * Handles menu selections, About-dialog requests, and scroll-bar
+ * preview clicks. Decorator and ControlLook info are formatted into
+ * BAlert dialogs; arrow-style clicks toggle the global setting.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 LookAndFeelSettingsView::MessageReceived(BMessage* message)
 {
@@ -280,6 +343,13 @@ LookAndFeelSettingsView::MessageReceived(BMessage* message)
 //	#pragma mark - LookAndFeelSettingsView private methods
 
 
+/**
+ * @brief Activates the decorator with the given shortcut name.
+ *
+ * Forwards to the DecorInfo overload after looking up @a name.
+ *
+ * @param name Decorator shortcut name (file leaf without "Decorator").
+ */
 void
 LookAndFeelSettingsView::_SetDecor(const BString& name)
 {
@@ -287,6 +357,14 @@ LookAndFeelSettingsView::_SetDecor(const BString& name)
 }
 
 
+/**
+ * @brief Activates the given decorator and updates the menu mark.
+ *
+ * No-op if @a decorInfo is @c NULL or the decorator could not be set.
+ * Notifies the parent window so it can refresh Defaults/Revert.
+ *
+ * @param decorInfo Decorator descriptor to activate, or @c NULL.
+ */
 void
 LookAndFeelSettingsView::_SetDecor(DecorInfo* decorInfo)
 {
@@ -299,6 +377,12 @@ LookAndFeelSettingsView::_SetDecor(DecorInfo* decorInfo)
 }
 
 
+/**
+ * @brief Populates the decorator popup with installed decorators.
+ *
+ * Marks the entry corresponding to @c fCurrentDecor and skips any
+ * NULL entries returned by DecorInfoUtility.
+ */
 void
 LookAndFeelSettingsView::_BuildDecorMenu()
 {
@@ -325,6 +409,13 @@ LookAndFeelSettingsView::_BuildDecorMenu()
 }
 
 
+/**
+ * @brief Returns @a name with a trailing "Decorator" stripped off.
+ *
+ * @param name Full decorator name.
+ * @return Pointer to a BString-internal buffer; valid only for the
+ *         current scope.
+ */
 const char*
 LookAndFeelSettingsView::_DecorLabel(const BString& name)
 {
@@ -333,6 +424,15 @@ LookAndFeelSettingsView::_DecorLabel(const BString& name)
 }
 
 
+/**
+ * @brief Activates the ControlLook add-on at @a path system-wide.
+ *
+ * An empty @a path selects the built-in default ControlLook. The menu
+ * mark is updated and the parent window is notified.
+ *
+ * @param path Filesystem path to a ControlLook add-on, or empty string
+ *             for the default.
+ */
 void
 LookAndFeelSettingsView::_SetControlLook(const BString& path)
 {
@@ -350,6 +450,13 @@ LookAndFeelSettingsView::_SetControlLook(const BString& path)
 }
 
 
+/**
+ * @brief Populates the ControlLook popup with installed add-ons.
+ *
+ * Always inserts a "Default" entry first; then walks every
+ * @c B_FIND_PATH_ADD_ONS_DIRECTORY/control_look directory and adds an
+ * item for each file found.
+ */
 void
 LookAndFeelSettingsView::_BuildControlLookMenu()
 {
@@ -390,6 +497,13 @@ LookAndFeelSettingsView::_BuildControlLookMenu()
 }
 
 
+/**
+ * @brief Returns @a name with a trailing "ControlLook" stripped off.
+ *
+ * @param name Full ControlLook file leaf.
+ * @return Pointer to a BString-internal buffer; valid only for the
+ *         current scope.
+ */
 const char*
 LookAndFeelSettingsView::_ControlLookLabel(const char* name)
 {
@@ -398,6 +512,11 @@ LookAndFeelSettingsView::_ControlLookLabel(const char* name)
 }
 
 
+/**
+ * @brief Returns the system-wide double-arrow scroll-bar setting.
+ *
+ * @return @c true if double-arrow mode is currently active.
+ */
 bool
 LookAndFeelSettingsView::_DoubleScrollBarArrows()
 {
@@ -408,6 +527,15 @@ LookAndFeelSettingsView::_DoubleScrollBarArrows()
 }
 
 
+/**
+ * @brief Toggles the system double-arrow scroll-bar setting.
+ *
+ * No-op if @a doubleArrows already matches the current value. Updates
+ * the FakeScrollBar previews and notifies the parent window.
+ *
+ * @param doubleArrows @c true to enable double arrows, @c false to
+ *                     restore single arrows.
+ */
 void
 LookAndFeelSettingsView::_SetDoubleScrollBarArrows(bool doubleArrows)
 {
@@ -429,6 +557,12 @@ LookAndFeelSettingsView::_SetDoubleScrollBarArrows(bool doubleArrows)
 }
 
 
+/**
+ * @brief Reports whether any setting differs from compiled-in defaults.
+ *
+ * @return @c true if the decorator, ControlLook, or scroll-bar arrow
+ *         setting differs from the system default.
+ */
 bool
 LookAndFeelSettingsView::IsDefaultable()
 {
@@ -438,6 +572,9 @@ LookAndFeelSettingsView::IsDefaultable()
 }
 
 
+/**
+ * @brief Resets the decorator, ControlLook and arrow style to defaults.
+ */
 void
 LookAndFeelSettingsView::SetDefaults()
 {
@@ -447,6 +584,12 @@ LookAndFeelSettingsView::SetDefaults()
 }
 
 
+/**
+ * @brief Reports whether any setting differs from the saved snapshot.
+ *
+ * @return @c true if at least one of decorator, ControlLook or arrow
+ *         style differs from the value captured at construction.
+ */
 bool
 LookAndFeelSettingsView::IsRevertable()
 {
@@ -456,6 +599,11 @@ LookAndFeelSettingsView::IsRevertable()
 }
 
 
+/**
+ * @brief Restores decorator, ControlLook and arrow style from the snapshot.
+ *
+ * No-op when nothing has changed.
+ */
 void
 LookAndFeelSettingsView::Revert()
 {

@@ -1,9 +1,39 @@
 /*
- * Copyright 2017 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Brian Hill
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Brian Hill
+ */
+
+
+/**
+ * @file TaskTimer.cpp
+ * @brief Implementation of TaskTimer, the per-repository long-running watchdog.
+ *
+ * One TaskTimer is paired with each in-flight pkgman task. When a task
+ * exceeds the configured timeout the timer pops a stacked alert offering
+ * the user a chance to keep waiting or cancel the task; on completion the
+ * alert is replaced with a success message in the same screen position.
  */
 
 
@@ -17,9 +47,20 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "TaskTimer"
 
+/** @brief Rolling counter used to stack timeout alerts on screen. */
 static int32 sAlertStackCount = 0;
 
 
+/**
+ * @brief Constructs a timer for a given task and starts its looper.
+ *
+ * Sets up a self-targeted messenger for the BMessageRunner and a target
+ * BInvoker for the user-facing timeout alert.
+ *
+ * @param target Messenger used to forward kill requests back to the
+ *               TaskLooper.
+ * @param owner  Task this timer guards; passed back in kill replies.
+ */
 TaskTimer::TaskTimer(const BMessenger& target, Task* owner)
 	:
 	BLooper(),
@@ -42,6 +83,9 @@ TaskTimer::TaskTimer(const BMessenger& target, Task* owner)
 }
 
 
+/**
+ * @brief Closes any visible timeout alert and stops the underlying runner.
+ */
 TaskTimer::~TaskTimer()
 {
 	if (fTimeoutAlert) {
@@ -53,6 +97,11 @@ TaskTimer::~TaskTimer()
 }
 
 
+/**
+ * @brief Always allows the looper to quit on request.
+ *
+ * @return Always true.
+ */
 bool
 TaskTimer::QuitRequested()
 {
@@ -60,6 +109,16 @@ TaskTimer::QuitRequested()
 }
 
 
+/**
+ * @brief Handles timeout firing and the user's response to the alert.
+ *
+ * On TASK_TIMEOUT, while the timer is still considered running, an alert
+ * is opened offering "Keep trying" or "Cancel task". On
+ * TIMEOUT_ALERT_BUTTON_SELECTION the user's choice either rearms the
+ * timer or sends a TASK_KILL_REQUEST to the TaskLooper.
+ *
+ * @param message Incoming BMessage.
+ */
 void
 TaskTimer::MessageReceived(BMessage* message)
 {
@@ -121,6 +180,14 @@ TaskTimer::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Arms the timer and remembers the repository name for the alert.
+ *
+ * Reuses the existing BMessageRunner when present, resetting its interval;
+ * otherwise creates a new one configured for a single TASK_TIMEOUT firing.
+ *
+ * @param name Display name of the repository the guarded task is acting on.
+ */
 void
 TaskTimer::Start(const char* name)
 {
@@ -138,6 +205,16 @@ TaskTimer::Start(const char* name)
 }
 
 
+/**
+ * @brief Stops the timer and replaces any visible alert with a success one.
+ *
+ * Disarming consists of clearing the running flag and setting the runner
+ * interval to LLONG_MAX so it can be reused without firing. If the user
+ * was already looking at the timeout alert it is replaced in place with a
+ * "task completed" alert.
+ *
+ * @param name Repository name to mention in the success alert text.
+ */
 void
 TaskTimer::Stop(const char* name)
 {
@@ -169,6 +246,14 @@ TaskTimer::Stop(const char* name)
 }
 
 
+/**
+ * @brief Returns the next stacking offset index for a timeout alert.
+ *
+ * Wraps around after ten alerts so concurrent alerts cycle through a fixed
+ * grid of positions instead of marching off-screen indefinitely.
+ *
+ * @return Zero-based offset slot for the alert frame calculation.
+ */
 int32
 TaskTimer::_NextAlertStackCount()
 {

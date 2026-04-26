@@ -1,9 +1,41 @@
 /*
- * Copyright 2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author:
- *		Preetpal Kaur <preetpalok123@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ */
+
+
+/**
+ * @file InputKeyboard.cpp
+ * @brief Implementation of InputKeyboard, the keyboard preferences card.
+ *
+ * InputKeyboard is the BView the InputWindow shows when the user selects
+ * a keyboard input device. It hosts a KeyboardView (sliders for repeat
+ * rate and delay plus a typing test area) and the standard Defaults and
+ * Revert buttons; messages drive the underlying KeyboardSettings model.
+ *
+ * @see KeyboardView, KeyboardSettings
  */
 
 
@@ -26,6 +58,16 @@
 #define B_TRANSLATION_CONTEXT "InputKeyboard"
 
 
+/**
+ * @brief Constructs the keyboard settings card.
+ *
+ * Builds the inner KeyboardView, the Defaults and Revert buttons, and
+ * lays them out vertically with a horizontal separator. Initialises the
+ * sliders from the persisted KeyboardSettings.
+ *
+ * @param dev  BInputDevice for the selected keyboard. Currently unused;
+ *             reserved for per-device overrides.
+ */
 InputKeyboard::InputKeyboard(BInputDevice* dev)
 	:
 	BView("InputKeyboard", B_WILL_DRAW)
@@ -68,6 +110,18 @@ InputKeyboard::InputKeyboard(BInputDevice* dev)
 }
 
 
+/**
+ * @brief Translates user input into KeyboardSettings updates.
+ *
+ * Handles Defaults/Revert button presses, the repeat-rate slider, and the
+ * delay-until-repeat slider. The delay slider is snapped to the four
+ * canonical positions (250, 500, 750, 1000 ms) so it behaves like the
+ * legacy Keyboard preferences app. Updates the enabled state of the
+ * Defaults and Revert buttons after every change.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BView::MessageReceived.
+ */
 void
 InputKeyboard::MessageReceived(BMessage* message)
 {

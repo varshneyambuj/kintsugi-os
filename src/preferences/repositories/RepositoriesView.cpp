@@ -1,9 +1,40 @@
 /*
- * Copyright 2017 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Brian Hill
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Brian Hill
+ */
+
+
+/**
+ * @file RepositoriesView.cpp
+ * @brief Implementation of the main pane for the Repositories preflet.
+ *
+ * RepositoriesView owns the column list of configured package repositories
+ * along with the Add, Remove, Enable, and Disable controls. It mediates
+ * between the user, the persisted RepositoriesSettings file, the live
+ * package roster, and the asynchronous TaskLooper that runs pkgman
+ * enable/disable jobs in the background.
  */
 
 
@@ -50,6 +81,11 @@ static const BString kStatusCompletedText =
 	B_TRANSLATE_COMMENT("Changes completed", "Status view text");
 
 
+/**
+ * @brief Constructs the column list view used to display the repository rows.
+ *
+ * @param name View name passed through to BColumnListView.
+ */
 RepositoriesListView::RepositoriesListView(const char* name)
 	:
 	BColumnListView(name, B_NAVIGABLE, B_PLAIN_BORDER)
@@ -57,6 +93,14 @@ RepositoriesListView::RepositoriesListView(const char* name)
 }
 
 
+/**
+ * @brief Forwards the Delete key to the parent window for repository removal.
+ *
+ * Other key events fall through to the standard BColumnListView handler.
+ *
+ * @param bytes    UTF-8 bytes of the key event.
+ * @param numBytes Number of bytes in @a bytes.
+ */
 void
 RepositoriesListView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -71,6 +115,13 @@ RepositoriesListView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Builds the Repositories preflet pane and its child controls.
+ *
+ * Creates the three-column repository list, the inline status view, the
+ * Add/Remove/Enable/Disable buttons, and lays them out vertically. The
+ * TaskLooper is created lazily in AttachedToWindow().
+ */
 RepositoriesView::RepositoriesView()
 	:
 	BGroupView("RepositoriesView"),
@@ -187,6 +238,12 @@ RepositoriesView::RepositoriesView()
 }
 
 
+/**
+ * @brief Tears down the task looper and clears the list rows.
+ *
+ * Acquires the TaskLooper lock before posting Quit so any in-flight task
+ * processing finishes cleanly before destruction.
+ */
 RepositoriesView::~RepositoriesView()
 {
 	if (fTaskLooper) {
@@ -197,6 +254,12 @@ RepositoriesView::~RepositoriesView()
 }
 
 
+/**
+ * @brief Wires button targets and populates the initial list from settings.
+ *
+ * Called by the framework once every child view has been attached to the
+ * window. Buttons start disabled until a row is selected.
+ */
 void
 RepositoriesView::AllAttached()
 {
@@ -213,6 +276,11 @@ RepositoriesView::AllAttached()
 }
 
 
+/**
+ * @brief Spawns the TaskLooper now that this view has a valid messenger.
+ *
+ * @note Called by the framework when the view is attached to its window.
+ */
 void
 RepositoriesView::AttachedToWindow()
 {
@@ -220,6 +288,15 @@ RepositoriesView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Routes UI and task-completion messages to the right handler.
+ *
+ * Handles button presses (remove/enable/disable), list selection changes,
+ * task lifecycle events posted back from the TaskLooper, manual refresh
+ * requests, and the inline-status timeout that hides the "completed" text.
+ *
+ * @param message Incoming BMessage.
+ */
 void
 RepositoriesView::MessageReceived(BMessage* message)
 {
@@ -415,6 +492,13 @@ RepositoriesView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Marks every selected row as queued and posts a task to the looper.
+ *
+ * Each currently selected RepoRow is transitioned to
+ * STATE_IN_QUEUE_WAITING and a DO_TASK message carrying its row pointer is
+ * sent to the TaskLooper.
+ */
 void
 RepositoriesView::_AddSelectedRowsToQueue()
 {
@@ -429,6 +513,12 @@ RepositoriesView::_AddSelectedRowsToQueue()
 }
 
 
+/**
+ * @brief Reflects the start of a task on the affected row and status view.
+ *
+ * @param rowItem Row whose task has begun running.
+ * @param count   Total number of tasks currently in the queue.
+ */
 void
 RepositoriesView::_TaskStarted(RepoRow* rowItem, int16 count)
 {
@@ -442,6 +532,17 @@ RepositoriesView::_TaskStarted(RepoRow* rowItem, int16 count)
 }
 
 
+/**
+ * @brief Updates a row when its task finishes successfully.
+ *
+ * Transitions the row out of the queue, replaces a placeholder repository
+ * name with the real one returned by pkgman, persists the list, and
+ * resyncs the row's enabled state from the live RepositoryConfig.
+ *
+ * @param rowItem Row whose task completed.
+ * @param count   Remaining task count in the queue.
+ * @param newName Repository name learned from pkgman, or empty string.
+ */
 void
 RepositoriesView::_TaskCompleted(RepoRow* rowItem, int16 count, BString& newName)
 {
@@ -459,6 +560,12 @@ RepositoriesView::_TaskCompleted(RepoRow* rowItem, int16 count, BString& newName
 }
 
 
+/**
+ * @brief Resets the row state after a task has been cancelled by the user.
+ *
+ * @param rowItem Row whose task was cancelled.
+ * @param count   Remaining task count in the queue.
+ */
 void
 RepositoriesView::_TaskCanceled(RepoRow* rowItem, int16 count)
 {
@@ -471,6 +578,13 @@ RepositoriesView::_TaskCanceled(RepoRow* rowItem, int16 count)
 }
 
 
+/**
+ * @brief Briefly displays a "Changes completed" status when the queue drains.
+ *
+ * If there are still tasks pending, just refreshes the running-count label.
+ * Otherwise the completed label is shown for three seconds before the
+ * status view returns to its idle state.
+ */
 void
 RepositoriesView::_ShowCompletedStatusIfDone()
 {
@@ -487,6 +601,14 @@ RepositoriesView::_ShowCompletedStatusIfDone()
 }
 
 
+/**
+ * @brief Re-synchronises a row's enabled flag with the live RepositoryConfig.
+ *
+ * The row is considered enabled only when pkgman returns a configuration
+ * whose base URL matches the URL stored on the row.
+ *
+ * @param rowItem Row to refresh.
+ */
 void
 RepositoriesView::_UpdateFromRepoConfig(RepoRow* rowItem)
 {
@@ -502,6 +624,15 @@ RepositoriesView::_UpdateFromRepoConfig(RepoRow* rowItem)
 }
 
 
+/**
+ * @brief Adds a user-supplied repository URL to the list and triggers enable.
+ *
+ * Validates the URL, rejects duplicates, inserts a new placeholder row,
+ * selects it, and presses the Enable button so pkgman is asked to register
+ * the repository immediately.
+ *
+ * @param url Candidate repository URL entered by the user.
+ */
 void
 RepositoriesView::AddManualRepository(BString url)
 {
@@ -535,6 +666,11 @@ RepositoriesView::AddManualRepository(BString url)
 }
 
 
+/**
+ * @brief Removes and deletes every row currently in the list view.
+ *
+ * @return Always B_OK.
+ */
 status_t
 RepositoriesView::_EmptyList()
 {
@@ -548,6 +684,13 @@ RepositoriesView::_EmptyList()
 }
 
 
+/**
+ * @brief Populates the list with both saved and currently enabled repos.
+ *
+ * Reads the user's saved name/URL pairs first (so disabled-but-remembered
+ * entries appear), then merges in whatever pkgman currently considers
+ * enabled. The list ends up sorted by URL with auto-sized columns.
+ */
 void
 RepositoriesView::_InitList()
 {
@@ -569,6 +712,12 @@ RepositoriesView::_InitList()
 }
 
 
+/**
+ * @brief Resets every idle row's enabled flag and re-queries pkgman.
+ *
+ * Rows currently being processed by a task are left untouched so the status
+ * column does not flicker mid-operation.
+ */
 void
 RepositoriesView::_RefreshList()
 {
@@ -584,6 +733,14 @@ RepositoriesView::_RefreshList()
 }
 
 
+/**
+ * @brief Adds or updates rows for every repository pkgman currently knows.
+ *
+ * Queries the BPackageRoster for the live set of enabled repository names,
+ * fetches each one's configuration, and forwards the result to _AddRepo()
+ * which either creates a new row or refreshes an existing one. Errors are
+ * surfaced via BAlert so the user sees why the list might be incomplete.
+ */
 void
 RepositoriesView::_UpdateListFromRoster()
 {
@@ -619,6 +776,9 @@ RepositoriesView::_UpdateListFromRoster()
 }
 
 
+/**
+ * @brief Writes the current list of name/URL pairs back to settings.
+ */
 void
 RepositoriesView::_SaveList()
 {
@@ -634,6 +794,19 @@ RepositoriesView::_SaveList()
 }
 
 
+/**
+ * @brief Adds a new repository row, or updates an existing one with the URL.
+ *
+ * Rows are matched by URL: if the URL already exists the matching row's
+ * name and enabled state are updated and the existing row is returned.
+ * Otherwise a fresh RepoRow is appended.
+ *
+ * @param name    Repository display name.
+ * @param url     Repository base URL; must be a valid URL.
+ * @param enabled Initial enabled state for the row.
+ * @return Pointer to the new or matched RepoRow, or NULL when @a url is
+ *         not a valid URL.
+ */
 RepoRow*
 RepositoriesView::_AddRepo(BString name, BString url, bool enabled)
 {
@@ -661,6 +834,14 @@ RepositoriesView::_AddRepo(BString name, BString url, bool enabled)
 }
 
 
+/**
+ * @brief Tags rows that share a repository name with HasSiblings == true.
+ *
+ * Two rows are siblings when they carry the same name (typically the same
+ * repository advertised under two different URLs). The flag lets the
+ * enable handler force a full refresh after toggling, since enabling one
+ * URL may transparently disable a sibling.
+ */
 void
 RepositoriesView::_FindSiblings()
 {
@@ -689,6 +870,14 @@ RepositoriesView::_FindSiblings()
 }
 
 
+/**
+ * @brief Recomputes which Add/Remove/Enable/Disable buttons are usable.
+ *
+ * The button labels switch between singular ("Enable") and plural
+ * ("Enable all") forms based on the selection size, and the buttons are
+ * enabled or disabled depending on whether the selection mixes enabled
+ * and disabled rows or contains rows still being processed.
+ */
 void
 RepositoriesView::_UpdateButtons()
 {
@@ -743,6 +932,12 @@ RepositoriesView::_UpdateButtons()
 }
 
 
+/**
+ * @brief Updates the inline status text below the list with the running count.
+ *
+ * Displays "Changes pending: N" while N tasks are active and clears the
+ * label when no tasks are running.
+ */
 void
 RepositoriesView::_UpdateStatusView()
 {

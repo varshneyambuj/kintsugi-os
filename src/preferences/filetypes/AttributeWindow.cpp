@@ -1,6 +1,34 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file AttributeWindow.cpp
+ * @brief Implementation of the modal "Attribute" editor for a Tracker
+ *        attribute description on a MIME type. Edits the public/internal
+ *        names, type code, display-as identifier, alignment, width, and
+ *        visibility/editability flags, then writes the resulting
+ *        attribute table back via BMimeType::SetAttrInfo().
  */
 
 
@@ -33,14 +61,32 @@
 #define B_TRANSLATION_CONTEXT "Attribute Window"
 
 
+/** @brief Sent when any attribute editor field has been modified. */
 const uint32 kMsgAttributeUpdated = 'atup';
+/** @brief Sent when the user picks a type from the type pop-up. */
 const uint32 kMsgTypeChosen = 'typc';
+/** @brief Sent when the user picks a display-as identifier. */
 const uint32 kMsgDisplayAsChosen = 'dach';
+/** @brief Sent when the visibility check-box toggles. */
 const uint32 kMsgVisibilityChanged = 'vsch';
+/** @brief Sent when the user picks an alignment from the pop-up. */
 const uint32 kMsgAlignmentChosen = 'alnc';
+/** @brief Sent when the user accepts the dialog (Add / Done). */
 const uint32 kMsgAccept = 'acpt';
 
 
+/**
+ * @brief Compares two display-as identifiers ignoring any ":parameter"
+ *        suffix and case.
+ *
+ * Treats two NULL/empty values as equal and otherwise truncates each
+ * string at the first colon before doing a length-bounded
+ * case-insensitive compare.
+ *
+ * @param a  First identifier.
+ * @param b  Second identifier.
+ * @return   True when both refer to the same display-as kind.
+ */
 static bool
 compare_display_as(const char* a, const char* b)
 {
@@ -64,6 +110,15 @@ compare_display_as(const char* a, const char* b)
 }
 
 
+/**
+ * @brief Extracts the parameter portion of a display-as identifier of
+ *        the form "kind:parameter".
+ *
+ * @param special  Display-as identifier, possibly with parameter.
+ * @return         Pointer to the character after the first colon, or
+ *                 NULL if no colon is present. The returned pointer is
+ *                 owned by @a special.
+ */
 static const char*
 display_as_parameter(const char* special)
 {
@@ -78,6 +133,20 @@ display_as_parameter(const char* special)
 //	#pragma mark -
 
 
+/**
+ * @brief Builds the modal attribute editor dialog and seeds it from
+ *        @a attributeItem.
+ *
+ * Populates the type and alignment pop-ups, sets up the display-as
+ * pop-up and its "Special" parameter field, configures the width and
+ * name text controls (filtering disallowed characters), and parents the
+ * dialog onto @a target.
+ *
+ * @param target          FileTypesWindow that owns the modal subset.
+ * @param mimeType        MIME type whose attribute table will be updated.
+ * @param attributeItem   Existing item to edit, or NULL to add a new
+ *                        attribute (the dialog defaults to empty fields).
+ */
 AttributeWindow::AttributeWindow(FileTypesWindow* target, BMimeType& mimeType,
 		AttributeItem* attributeItem)
 	:
@@ -269,11 +338,19 @@ AttributeWindow::AttributeWindow(FileTypesWindow* target, BMimeType& mimeType,
 }
 
 
+/**
+ * @brief Destructor; layout-managed children are released by BWindow.
+ */
 AttributeWindow::~AttributeWindow()
 {
 }
 
 
+/**
+ * @brief Returns the type_code currently selected in the type pop-up.
+ *
+ * @return  Selected type code, or B_STRING_TYPE when no item is marked.
+ */
 type_code
 AttributeWindow::_CurrentType() const
 {
@@ -289,6 +366,12 @@ AttributeWindow::_CurrentType() const
 }
 
 
+/**
+ * @brief Returns the "Default" entry of the display-as pop-up, used as a
+ *        sentinel that is always available regardless of type.
+ *
+ * @return  First menu item of the display-as pop-up.
+ */
 BMenuItem*
 AttributeWindow::_DefaultDisplayAs() const
 {
@@ -296,6 +379,14 @@ AttributeWindow::_DefaultDisplayAs() const
 }
 
 
+/**
+ * @brief Updates the display-as pop-up so only entries that support the
+ *        current type are enabled, falling back to "Default" if the
+ *        selected display-as no longer matches.
+ *
+ * Also enables or disables the "Special" parameter text field according
+ * to whether a non-default display-as is currently chosen.
+ */
 void
 AttributeWindow::_CheckDisplayAs()
 {
@@ -326,6 +417,11 @@ AttributeWindow::_CheckDisplayAs()
 }
 
 
+/**
+ * @brief Enables the Accept button only when both name fields are
+ *        non-empty and the editor's contents differ from the snapshot
+ *        the dialog opened with.
+ */
 void
 AttributeWindow::_CheckAcceptable()
 {
@@ -348,6 +444,15 @@ AttributeWindow::_CheckAcceptable()
 }
 
 
+/**
+ * @brief Builds a fresh AttributeItem from the values currently shown in
+ *        the editor controls.
+ *
+ * The width is clamped to be non-negative and the display-as identifier
+ * may be combined with the "Special" parameter via a colon separator.
+ *
+ * @return  Newly allocated AttributeItem; caller takes ownership.
+ */
 AttributeItem*
 AttributeWindow::_NewItemFromCurrent()
 {
@@ -388,6 +493,18 @@ AttributeWindow::_NewItemFromCurrent()
 }
 
 
+/**
+ * @brief Drives editor live-validation, the visibility-cascade behaviour,
+ *        and persists the edited attribute to the MIME database on
+ *        Accept.
+ *
+ * On Accept the existing attribute table is read back, any entry with
+ * the old or new internal name is dropped, the freshly built item is
+ * appended, and the resulting list is written via
+ * BMimeType::SetAttrInfo().
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 AttributeWindow::MessageReceived(BMessage* message)
 {
@@ -481,6 +598,11 @@ AttributeWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Always permits the modal dialog to close.
+ *
+ * @return Always true.
+ */
 bool
 AttributeWindow::QuitRequested()
 {

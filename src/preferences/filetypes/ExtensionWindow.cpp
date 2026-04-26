@@ -1,6 +1,33 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file ExtensionWindow.cpp
+ * @brief Implementation of the modal "Extension" dialog and the helper
+ *        routines that merge or replace file-name extensions on a MIME
+ *        type. The on-disk extension list is stored as a "extensions"
+ *        BMessage field and read or written through BMimeType.
  */
 
 
@@ -27,10 +54,23 @@
 #define B_TRANSLATION_CONTEXT "Extension Window"
 
 
+/** @brief Sent by the text control whenever the extension text changes. */
 const uint32 kMsgExtensionUpdated = 'exup';
+/** @brief Sent when the user confirms the dialog (Add / Done). */
 const uint32 kMsgAccept = 'acpt';
 
 
+/**
+ * @brief Sort comparator for two C-string extensions.
+ *
+ * Performs a case-insensitive primary sort and uses a reverse case-sensitive
+ * tie-breaker so that lower-case spellings appear before mixed-case ones
+ * for the same letters.
+ *
+ * @param _a  Pointer to a const char* (qsort signature).
+ * @param _b  Pointer to a const char* (qsort signature).
+ * @return    Negative, zero, or positive in the usual qsort sense.
+ */
 static int
 compare_extensions(const void* _a, const void* _b)
 {
@@ -46,7 +86,26 @@ compare_extensions(const void* _a, const void* _b)
 }
 
 
-//! newExtensionsList contains all the entries (char*) which are to be added.
+/**
+ * @brief Merges the entries in @a newExtensionsList into @a type's
+ *        existing file-extension list, optionally dropping
+ *        @a removeExtension during the merge.
+ *
+ * Duplicates of the new entries that already appear in the type's list
+ * are filtered out, the result is sorted by compare_extensions, and the
+ * combined list is written back via BMimeType::SetFileExtensions().
+ *
+ * @note  The strings stored in @a newExtensionsList are not copied; the
+ *        caller must keep them alive until this call returns.
+ *
+ * @param type                Target MIME type.
+ * @param newExtensionsList   BList of `const char*` entries to add.
+ * @param removeExtension     Optional existing extension to drop. May be
+ *                            NULL.
+ * @return                    B_OK on success, or any status_t propagated
+ *                            from BMimeType::GetFileExtensions /
+ *                            SetFileExtensions.
+ */
 status_t
 merge_extensions(BMimeType& type, const BList& newExtensionsList,
 	const char* removeExtension)
@@ -95,6 +154,19 @@ merge_extensions(BMimeType& type, const BList& newExtensionsList,
 }
 
 
+/**
+ * @brief Replaces a single extension on @a type by removing
+ *        @a oldExtension and inserting @a newExtension.
+ *
+ * Convenience wrapper over merge_extensions() for the common one-edit
+ * case driven from the Extension dialog.
+ *
+ * @param type           Target MIME type.
+ * @param newExtension   Extension to add (without leading dot).
+ * @param oldExtension   Extension to remove. May be the same string as
+ *                       @a newExtension when no replacement is intended.
+ * @return               Result of merge_extensions().
+ */
 status_t
 replace_extension(BMimeType& type, const char* newExtension,
 	const char* oldExtension)
@@ -109,6 +181,19 @@ replace_extension(BMimeType& type, const char* newExtension,
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the modal extension editor for a given MIME type.
+ *
+ * Builds a layout with a single text control and Cancel/Accept buttons,
+ * filters disallowed characters from the input, strips any leading dot
+ * from @a extension for display, and parents the dialog onto @a target.
+ *
+ * @param target     FileTypesWindow that owns this modal subset window.
+ * @param type       MIME type whose extensions are being edited.
+ * @param extension  Initial extension text. Empty/NULL produces an
+ *                   "Add" dialog; a non-empty value produces an
+ *                   "edit existing" dialog.
+ */
 ExtensionWindow::ExtensionWindow(FileTypesWindow* target, BMimeType& type,
 		const char* extension)
 	: BWindow(BRect(100, 100, 350, 200), B_TRANSLATE("Extension"),
@@ -160,11 +245,21 @@ ExtensionWindow::ExtensionWindow(FileTypesWindow* target, BMimeType& type,
 }
 
 
+/**
+ * @brief Destructor; layout-managed children are released by BWindow.
+ */
 ExtensionWindow::~ExtensionWindow()
 {
 }
 
 
+/**
+ * @brief Handles live-validation of the extension text and the final
+ *        accept action that persists the change via replace_extension().
+ *
+ * @param message  Incoming BMessage; recognised what codes are
+ *                 kMsgExtensionUpdated and kMsgAccept.
+ */
 void
 ExtensionWindow::MessageReceived(BMessage* message)
 {

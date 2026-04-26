@@ -1,12 +1,43 @@
 /*
- * Copyright 2006-2010, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Adrien Destugues <pulkomandy@gmail.com>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Oliver Tappe <zooey@hirschkaefer.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Adrien Destugues <pulkomandy@gmail.com>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ */
+
+
+/**
+ * @file LanguageListView.cpp
+ * @brief Drag-and-drop enabled outline list view for language selection.
+ *
+ * Implements the available, preferred, and conventions list views used
+ * in the Locale preferences pane. Custom drawing dims disabled
+ * languages, optional country flags appear next to entries, and a
+ * gradient drop-target indicator gives drag feedback during
+ * cross-list drag-and-drop reordering.
  */
 
 
@@ -26,13 +57,22 @@
 #include <Window.h>
 
 
+/** @brief Maximum drag-bitmap height before items are truncated and faded. */
 #define MAX_DRAG_HEIGHT		200.0
+/** @brief Alpha value applied to the drag-bitmap pixels for translucency. */
 #define ALPHA				170
 
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "LanguageListView"
 
 
+/**
+ * @brief Constructs a list item carrying a language id and code.
+ *
+ * @param text          Display label (already in display form).
+ * @param id            Locale id such as "en_US".
+ * @param languageCode  Bare language code such as "en".
+ */
 LanguageListItem::LanguageListItem(const char* text, const char* id,
 	const char* languageCode)
 	:
@@ -43,6 +83,11 @@ LanguageListItem::LanguageListItem(const char* text, const char* id,
 }
 
 
+/**
+ * @brief Copy constructor producing an independent item with the same metadata.
+ *
+ * @param other  Source item to copy.
+ */
 LanguageListItem::LanguageListItem(const LanguageListItem& other)
 	:
 	BStringItem(other.Text()),
@@ -52,6 +97,13 @@ LanguageListItem::LanguageListItem(const LanguageListItem& other)
 }
 
 
+/**
+ * @brief Renders the item without any text inset.
+ *
+ * @param owner     List view drawing this item.
+ * @param frame     Item frame.
+ * @param complete  Whether to repaint the entire frame.
+ */
 void
 LanguageListItem::DrawItem(BView* owner, BRect frame, bool complete)
 {
@@ -59,6 +111,16 @@ LanguageListItem::DrawItem(BView* owner, BRect frame, bool complete)
 }
 
 
+/**
+ * @brief Renders the item with the label shifted right by @a textOffset pixels.
+ *
+ * Disabled items are drawn dimmed with an "[already chosen]" suffix.
+ *
+ * @param owner       List view drawing this item.
+ * @param frame       Item frame.
+ * @param complete    Whether to repaint the entire frame.
+ * @param textOffset  Extra horizontal offset before the label, in pixels.
+ */
 void
 LanguageListItem::DrawItemWithTextOffset(BView* owner, BRect frame,
 	bool complete, float textOffset)
@@ -108,6 +170,14 @@ LanguageListItem::DrawItemWithTextOffset(BView* owner, BRect frame,
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a list item that also carries a country flag icon.
+ *
+ * @param text          Display label.
+ * @param id            Locale id.
+ * @param languageCode  Bare language code.
+ * @param countryCode   ISO country code used to load the flag icon.
+ */
 LanguageListItemWithFlag::LanguageListItemWithFlag(const char* text,
 	const char* id, const char* languageCode, const char* countryCode)
 	:
@@ -118,6 +188,11 @@ LanguageListItemWithFlag::LanguageListItemWithFlag(const char* text,
 }
 
 
+/**
+ * @brief Copy constructor that clones the embedded flag bitmap.
+ *
+ * @param other  Source item to copy.
+ */
 LanguageListItemWithFlag::LanguageListItemWithFlag(
 	const LanguageListItemWithFlag& other)
 	:
@@ -128,12 +203,26 @@ LanguageListItemWithFlag::LanguageListItemWithFlag(
 }
 
 
+/**
+ * @brief Releases the cached flag bitmap.
+ */
 LanguageListItemWithFlag::~LanguageListItemWithFlag()
 {
 	delete fIcon;
 }
 
 
+/**
+ * @brief Updates measurements and lazily loads the country flag icon.
+ *
+ * Allocates a square bitmap whose side equals the item height and
+ * asks the locale roster to fill it with the country flag. On
+ * failure the icon is dropped and the item falls back to text-only
+ * rendering.
+ *
+ * @param owner  List view that owns this item.
+ * @param font   Font used to compute the item height.
+ */
 void
 LanguageListItemWithFlag::Update(BView* owner, const BFont* font)
 {
@@ -155,6 +244,15 @@ LanguageListItemWithFlag::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief Renders the item with the country flag drawn before the text.
+ *
+ * Falls back to text-only drawing when the flag icon failed to load.
+ *
+ * @param owner     List view drawing this item.
+ * @param frame     Item frame.
+ * @param complete  Whether to repaint the entire frame.
+ */
 void
 LanguageListItemWithFlag::DrawItem(BView* owner, BRect frame, bool complete)
 {
@@ -180,6 +278,12 @@ LanguageListItemWithFlag::DrawItem(BView* owner, BRect frame, bool complete)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an empty language outline list with drag and delete support disabled.
+ *
+ * @param name  BView name for the list.
+ * @param type  Selection mode (single, multiple, ...).
+ */
 LanguageListView::LanguageListView(const char* name, list_view_type type)
 	:
 	BOutlineListView(name, type),
@@ -192,11 +296,21 @@ LanguageListView::LanguageListView(const char* name, list_view_type type)
 }
 
 
+/**
+ * @brief Destroys the list. Items remain owned by the base BOutlineListView.
+ */
 LanguageListView::~LanguageListView()
 {
 }
 
 
+/**
+ * @brief Returns the item whose locale id matches @a id.
+ *
+ * @param id      Locale id to match (e.g. "en_US").
+ * @param _index  Optional output: full-list index of the match.
+ * @return        Pointer to the item, or NULL if no match was found.
+ */
 LanguageListItem*
 LanguageListView::ItemForLanguageID(const char* id, int32* _index) const
 {
@@ -215,6 +329,13 @@ LanguageListView::ItemForLanguageID(const char* id, int32* _index) const
 }
 
 
+/**
+ * @brief Returns the item whose bare language code matches @a code.
+ *
+ * @param code    Language code to match (e.g. "en").
+ * @param _index  Optional output: full-list index of the match.
+ * @return        Pointer to the item, or NULL if no match was found.
+ */
 LanguageListItem*
 LanguageListView::ItemForLanguageCode(const char* code, int32* _index) const
 {
@@ -233,6 +354,11 @@ LanguageListView::ItemForLanguageCode(const char* code, int32* _index) const
 }
 
 
+/**
+ * @brief Replaces the message posted when the user presses Delete.
+ *
+ * @param message  Owned by the list after this call; pass NULL to disable.
+ */
 void
 LanguageListView::SetDeleteMessage(BMessage* message)
 {
@@ -241,6 +367,11 @@ LanguageListView::SetDeleteMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Replaces the template message posted when the user starts a drag.
+ *
+ * @param message  Owned by the list after this call; pass NULL to disable.
+ */
 void
 LanguageListView::SetDragMessage(BMessage* message)
 {
@@ -249,6 +380,11 @@ LanguageListView::SetDragMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Switches between per-row and whole-view drop indicators.
+ *
+ * @param isGlobal  When true, draw a single indicator around the whole view.
+ */
 void
 LanguageListView::SetGlobalDropTargetIndicator(bool isGlobal)
 {
@@ -256,6 +392,9 @@ LanguageListView::SetGlobalDropTargetIndicator(bool isGlobal)
 }
 
 
+/**
+ * @brief Scrolls to the selected item once the list is hooked into a window.
+ */
 void
 LanguageListView::AttachedToWindow()
 {
@@ -264,6 +403,15 @@ LanguageListView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Forwards drop messages to the configured Messenger.
+ *
+ * Augments dropped messages with the drop index and a pointer to
+ * this view, then sends them to the BWindow Messenger() so the
+ * preferences window can react.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 LanguageListView::MessageReceived(BMessage* message)
 {
@@ -278,6 +426,15 @@ LanguageListView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Draws the list and the drop-target indicator gradient on top.
+ *
+ * For per-row indicators, fills the highlighted frame with a
+ * gradient. For whole-view indicators, only the inset border ring is
+ * filled, leaving the row contents intact.
+ *
+ * @param updateRect  Region requested for redraw.
+ */
 void
 LanguageListView::Draw(BRect updateRect)
 {
@@ -306,6 +463,19 @@ LanguageListView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Builds a fading drag bitmap of the selected items and starts the drag.
+ *
+ * The drag carries a copy of the configured drag template plus one
+ * "index" entry per selected row, plus a pointer to this view. When
+ * the selection is taller than the maximum drag bitmap, only the
+ * topmost rows are drawn and an alpha fade is applied at the bottom.
+ *
+ * @param point        Mouse-down position.
+ * @param dragIndex    Index under the cursor when the drag began.
+ * @param wasSelected  Unused.
+ * @return             true if a drag was successfully started.
+ */
 bool
 LanguageListView::InitiateDrag(BPoint point, int32 dragIndex,
 	bool /*wasSelected*/)
@@ -421,6 +591,18 @@ LanguageListView::InitiateDrag(BPoint point, int32 dragIndex,
 }
 
 
+/**
+ * @brief Updates the drop-target highlight as the cursor moves with a drag in flight.
+ *
+ * Computes the row beneath the cursor (offset by half a row to make
+ * the gap between rows feel like a target), invalidates only the
+ * region whose highlight changed, then forwards the event to the
+ * base class for normal hover handling.
+ *
+ * @param where        Cursor position in view coordinates.
+ * @param transit      Standard BView transit code.
+ * @param dragMessage  Drag in flight, or NULL for plain hover.
+ */
 void
 LanguageListView::MouseMoved(BPoint where, uint32 transit,
 	const BMessage* dragMessage)
@@ -479,6 +661,11 @@ LanguageListView::MouseMoved(BPoint where, uint32 transit,
 }
 
 
+/**
+ * @brief Clears any leftover drop-target highlight at the end of a click.
+ *
+ * @param point  Release position.
+ */
 void
 LanguageListView::MouseUp(BPoint point)
 {
@@ -490,6 +677,14 @@ LanguageListView::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Sends the configured delete message when the user presses Delete.
+ *
+ * Other keys are passed through to the base outline list.
+ *
+ * @param bytes     UTF-8 bytes of the pressed key.
+ * @param numBytes  Length of @a bytes.
+ */
 void
 LanguageListView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -502,6 +697,11 @@ LanguageListView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Returns true if @a message originated from a LanguageListView source.
+ *
+ * @param message  Incoming drag message.
+ */
 bool
 LanguageListView::_AcceptsDragMessage(const BMessage* message) const
 {

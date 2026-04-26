@@ -1,8 +1,39 @@
 /*
- * Copyright 2010-2011, Ryan Leavengood. All Rights Reserved.
- * Copyright 2004-2009, pinc Software. All Rights Reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2011, Ryan Leavengood. All Rights Reserved.
+ *   Copyright 2004-2009, pinc Software. All Rights Reserved.
+ *   Distributed under the terms of the MIT license.
  */
+
+
+/**
+ * @file ntp.cpp
+ * @brief SNTP client implementation; sends one request and applies the
+ *        returned timestamp to the system clock.
+ *
+ * Implements RFC 1305 mode 3 (client) over UDP. Resolves the host, sends
+ * an NTP packet, waits up to three seconds for a reply, parses the
+ * transmit timestamp, and pushes the result through set_real_time_clock().
+ */
+
 
 #include "ntp.h"
 
@@ -30,10 +61,16 @@
  * "Network Time Protocol (Version 3)" in appendix A.
  */
 
+/**
+ * @brief 32-bit signed fixed-point value used in NTP packets.
+ */
 struct fixed32 {
 	int16	integer;
 	uint16	fraction;
 
+	/**
+	 * @brief Stores @a integer and @a fraction in network byte order.
+	 */
 	void
 	SetTo(int16 integer, uint16 fraction = 0)
 	{
@@ -41,14 +78,22 @@ struct fixed32 {
 		this->fraction = htons(fraction);
 	}
 
+	/** @brief Returns the integer part in host byte order. */
 	int16 Integer() { return htons(integer); }
+	/** @brief Returns the fractional part in host byte order. */
 	uint16 Fraction() { return htons(fraction); }
 };
 
+/**
+ * @brief 64-bit unsigned fixed-point value used in NTP timestamps.
+ */
 struct ufixed64 {
 	uint32	integer;
 	uint32	fraction;
 
+	/**
+	 * @brief Stores @a integer and @a fraction in network byte order.
+	 */
 	void
 	SetTo(uint32 integer, uint32 fraction = 0)
 	{
@@ -56,10 +101,15 @@ struct ufixed64 {
 		this->fraction = htonl(fraction);
 	}
 
+	/** @brief Returns the integer part in host byte order. */
 	uint32 Integer() { return htonl(integer); }
+	/** @brief Returns the fractional part in host byte order. */
 	uint32 Fraction() { return htonl(fraction); }
 };
 
+/**
+ * @brief Wire format of an NTP version-3 packet.
+ */
 struct ntp_data {
 	uint8		mode : 3;
 	uint8		version : 3;
@@ -84,6 +134,7 @@ struct ntp_data {
 #define NTP_PORT		123
 #define NTP_VERSION_3	3
 
+/** @brief Leap-second indicator values (RFC 1305 appendix A). */
 enum ntp_leap_warnings {
 	LEAP_NO_WARNING = 0,
 	LEAP_LAST_MINUTE_61_SECONDS,
@@ -91,6 +142,7 @@ enum ntp_leap_warnings {
 	LEAP_CLOCK_NOT_IN_SYNC,
 };
 
+/** @brief NTP association mode codes (RFC 1305 appendix A). */
 enum ntp_modes {
 	MODE_RESERVED = 0,
 	MODE_SYMMETRIC_ACTIVE,
@@ -102,9 +154,13 @@ enum ntp_modes {
 };
 
 
+/** @brief NTP epoch is 1900-01-01 UTC; UNIX epoch is 1970-01-01 UTC. */
 const uint32 kSecondsBetween1900And1970 = 2208988800UL;
 
 
+/**
+ * @brief Returns the current real-time clock value in NTP epoch seconds.
+ */
 uint32
 seconds_since_1900(void)
 {
@@ -112,6 +168,23 @@ seconds_since_1900(void)
 }
 
 
+/**
+ * @brief Performs a single SNTP exchange and applies the returned time.
+ *
+ * Resolves @a hostname, opens a UDP socket, sends a client-mode NTP packet
+ * with the current time as the transmit timestamp, and waits up to three
+ * seconds for a reply via select(). On a valid reply, converts the
+ * server-side transmit timestamp from NTP epoch to UNIX epoch and pushes it
+ * to set_real_time_clock().
+ *
+ * @param hostname    Server hostname or IP.
+ * @param errorString Output: human-readable error description on failure.
+ * @param errorCode   Output: errno-style code on failure (when known).
+ * @retval B_OK              On success.
+ * @retval B_ENTRY_NOT_FOUND When the hostname could not be resolved.
+ * @retval B_BAD_VALUE       When the server returned an invalid timestamp.
+ * @retval B_ERROR           On socket / send / recv / select failure.
+ */
 status_t
 ntp_update_time(const char* hostname, const char** errorString,
 	int32* errorCode)

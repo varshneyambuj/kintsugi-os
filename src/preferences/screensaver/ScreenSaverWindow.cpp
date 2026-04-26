@@ -1,14 +1,52 @@
 /*
- * Copyright 2003-2016 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval, jerome.duval@free.fr
- *		Filip Maryjański, widelec@morphos.pl
- *		Puck Meerburg, puck@puckipedia.nl
- *		Michael Phipps
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2016 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval, jerome.duval@free.fr
+ *       Filip Maryjański, widelec@morphos.pl
+ *       Puck Meerburg, puck@puckipedia.nl
+ *       Michael Phipps
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file ScreenSaverWindow.cpp
+ * @brief Implementation of the ScreenSaver preflet window and its tabs.
+ *
+ * Hosts two tabs:
+ *   - General (FadeView): timeout slider, DPMS turn-off, password lock,
+ *     and the two ScreenCornerSelectors for "fade now" and "never fade"
+ *     hot corners.
+ *   - Screensavers (ModulesView): list of installed add-ons with a live
+ *     preview, a Test button, and the per-saver settings UI.
+ *
+ * Settings are persisted through ScreenSaverSettings; the modules view
+ * watches the add-on directories via the node monitor so that newly
+ * installed savers appear without a relaunch.
+ *
+ * @see ScreenSaverSettings
  */
 
 
@@ -61,31 +99,57 @@
 #define B_TRANSLATION_CONTEXT "ScreenSaver"
 
 
+/** @brief Spacing between the painted monitor and the controls below it. */
 const uint32 kPreviewMonitorGap = 16;
+/** @brief Minimum width allotted to the per-saver settings box. */
 const uint32 kMinSettingsWidth = 230;
+/** @brief Minimum height allotted to the per-saver settings box. */
 const uint32 kMinSettingsHeight = 120;
 
+/** @brief Message dispatched when the user picks a saver in the list view. */
 const int32 kMsgSaverSelected = 'SSEL';
+/** @brief Message dispatched when the password-lock checkbox is toggled. */
 const int32 kMsgPasswordCheckBox = 'PWCB';
+/** @brief Message dispatched when the run-after slider stops moving. */
 const int32 kMsgRunSliderChanged = 'RSch';
+/** @brief Live update message from the run-after slider while dragging. */
 const int32 kMsgRunSliderUpdate = 'RSup';
+/** @brief Message dispatched when the password-after slider stops moving. */
 const int32 kMsgPasswordSliderChanged = 'PWch';
+/** @brief Live update message from the password-after slider while dragging. */
 const int32 kMsgPasswordSliderUpdate = 'PWup';
+/** @brief Message dispatched by the "Password..." button. */
 const int32 kMsgChangePassword = 'PWBT';
+/** @brief Message dispatched when the master "Enable screensaver" checkbox is toggled. */
 const int32 kMsgEnableScreenSaverBox = 'ESCH';
 
+/** @brief Message dispatched when the "Turn off screen" checkbox is toggled. */
 const int32 kMsgTurnOffCheckBox = 'TUOF';
+/** @brief Message dispatched when the turn-off slider stops moving. */
 const int32 kMsgTurnOffSliderChanged = 'TUch';
+/** @brief Live update message from the turn-off slider while dragging. */
 const int32 kMsgTurnOffSliderUpdate = 'TUup';
 
+/** @brief Message dispatched when the "fade now" hot corner changes. */
 const int32 kMsgFadeCornerChanged = 'fdcc';
+/** @brief Message dispatched when the "never fade" hot corner changes. */
 const int32 kMsgNeverFadeCornerChanged = 'nfcc';
 
+/** @brief Default window width, scaled by the preferred font size. */
 const float kWindowWidth = 446.0f;
+/** @brief Default window height, scaled by the preferred font size. */
 const float kWindowHeight = 325.0f;
+/** @brief Reference item-spacing assumed by the layout when the font is at 12pt. */
 const float kDefaultItemSpacingAt12pt = 12.0f * 0.85;
 
 
+/**
+ * @brief BSlider that maps an integer index to a humanized duration label.
+ *
+ * The slider values are indices into @c kTimeInUnits (seconds). The
+ * label is updated whenever Value() changes, formatted via
+ * @c BDurationFormat.
+ */
 class TimeSlider : public BSlider {
 public:
 								TimeSlider(const char* name,
@@ -104,6 +168,13 @@ private:
 };
 
 
+/**
+ * @brief BTabView that intercepts mouse-down events to coordinate with the
+ *        modules tab.
+ *
+ * Switching to the modules tab triggers a saver re-open; switching away
+ * causes the running preview saver to close.
+ */
 class TabView : public BTabView {
 public:
 								TabView();
@@ -112,6 +183,13 @@ public:
 };
 
 
+/**
+ * @brief BView hosting the General tab: timeouts, DPMS, password, and corners.
+ *
+ * The view owns no settings of its own; it reads from and writes back to
+ * the shared ScreenSaverSettings on every interaction so changes persist
+ * even if the window is force-closed.
+ */
 class FadeView : public BView {
 public:
 								FadeView(const char* name,
@@ -147,6 +225,14 @@ private:
 };
 
 
+/**
+ * @brief BView hosting the Screensavers tab: list, preview, and per-saver UI.
+ *
+ * Watches the add-on directories with the node monitor so newly installed
+ * savers appear automatically. The current saver runs in a child preview
+ * view via a ScreenSaverRunner; testing launches @c screen_blanker as a
+ * separate process.
+ */
 class ModulesView : public BView {
 public:
 								ModulesView(const char* name,
@@ -198,6 +284,7 @@ private:
 //	#pragma mark - TimeSlider
 
 
+/** @brief Tabulated durations (seconds) corresponding to slider indices. */
 static const int32 kTimeInUnits[] = {
 	30,    60,   90,
 	120,   150,  180,
@@ -210,10 +297,18 @@ static const int32 kTimeInUnits[] = {
 	14400, 18000
 };
 
+/** @brief Number of entries in @c kTimeInUnits. */
 static const int32 kTimeUnitCount
 	= sizeof(kTimeInUnits) / sizeof(kTimeInUnits[0]);
 
 
+/**
+ * @brief Constructs a TimeSlider with the given change and live-update messages.
+ *
+ * @param name           Internal BView name.
+ * @param changedMessage Message sent when the user releases the thumb.
+ * @param updateMessage  Message sent continuously while dragging.
+ */
 TimeSlider::TimeSlider(const char* name, uint32 changedMessage,
 	uint32 updateMessage)
 	:
@@ -226,11 +321,19 @@ TimeSlider::TimeSlider(const char* name, uint32 changedMessage,
 }
 
 
+/**
+ * @brief Destroys the time slider; no extra resources are held.
+ */
 TimeSlider::~TimeSlider()
 {
 }
 
 
+/**
+ * @brief Sets the slider's index and updates its label to a humanized duration.
+ *
+ * @param value New index into @c kTimeInUnits.
+ */
 void
 TimeSlider::SetValue(int32 value)
 {
@@ -245,6 +348,13 @@ TimeSlider::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Selects the slider position closest to a given duration.
+ *
+ * @param useconds Duration in microseconds; only exact matches against
+ *                 @c kTimeInUnits select a slot. Non-matching durations
+ *                 leave the slider unchanged.
+ */
 void
 TimeSlider::SetTime(bigtime_t useconds)
 {
@@ -257,6 +367,11 @@ TimeSlider::SetTime(bigtime_t useconds)
 }
 
 
+/**
+ * @brief Returns the slider's current value as a microsecond duration.
+ *
+ * @return @c kTimeInUnits[Value()] expressed in microseconds.
+ */
 bigtime_t
 TimeSlider::Time() const
 {
@@ -264,6 +379,12 @@ TimeSlider::Time() const
 }
 
 
+/**
+ * @brief Formats @a useconds into a human-readable label using BDurationFormat.
+ *
+ * @param useconds Duration in microseconds.
+ * @param string   Output BString receiving the formatted label.
+ */
 void
 TimeSlider::_TimeToString(bigtime_t useconds, BString& string)
 {
@@ -275,6 +396,16 @@ TimeSlider::_TimeToString(bigtime_t useconds, BString& string)
 //	#pragma mark - FadeView
 
 
+/**
+ * @brief Builds the General tab layout: enable box, timing grid, hot corners.
+ *
+ * Constructs all sub-controls eagerly. The "Turn off screen" controls are
+ * drawn whether DPMS is supported or not; AttachedToWindow() decides
+ * which subset is visible based on the current screen capabilities.
+ *
+ * @param name     Internal BView name.
+ * @param settings Shared ScreenSaverSettings model.
+ */
 FadeView::FadeView(const char* name, ScreenSaverSettings& settings)
 	:
 	BView(name, B_WILL_DRAW),
@@ -405,6 +536,13 @@ FadeView::FadeView(const char* name, ScreenSaverSettings& settings)
 }
 
 
+/**
+ * @brief BView AttachedToWindow hook: wires targets and seeds initial state.
+ *
+ * Points all sub-controls at this view as their target, copies values
+ * from ScreenSaverSettings into the controls, and refreshes color and
+ * DPMS-dependent state.
+ */
 void
 FadeView::AttachedToWindow()
 {
@@ -432,6 +570,16 @@ FadeView::AttachedToWindow()
 }
 
 
+/**
+ * @brief BView message hook: applies slider clamping and persistence.
+ *
+ * The three sliders maintain a global ordering: run-after must not exceed
+ * turn-off, and password-after must not be smaller than run-after. After
+ * resolving any clamping, UpdateStatus() is called and the settings are
+ * saved.
+ *
+ * @param message Incoming message.
+ */
 void
 FadeView::MessageReceived(BMessage *message)
 {
@@ -484,6 +632,15 @@ FadeView::MessageReceived(BMessage *message)
 }
 
 
+/**
+ * @brief Re-evaluates DPMS support and adjusts the turn-off controls.
+ *
+ * Queries the current screen for DPMS capabilities (off, stand-by,
+ * suspend) and stores the resulting flag set in @c fTurnOffScreenFlags.
+ * The turn-off checkbox is enabled only when the master enable is on and
+ * at least one DPMS mode is supported; the corresponding slider replaces
+ * the "not supported" message accordingly.
+ */
 void
 FadeView::UpdateTurnOffScreen()
 {
@@ -515,6 +672,18 @@ FadeView::UpdateTurnOffScreen()
 }
 
 
+/**
+ * @brief Refreshes enable states and pushes current values into the model.
+ *
+ * Disables the turn-off, password, and run-after controls when the master
+ * enable is off. Computes the DPMS off-time as the difference between
+ * the turn-off slider and the run-after slider, and writes all current
+ * values back to ScreenSaverSettings. Window updates are paused during
+ * the work to avoid flicker.
+ *
+ * @todo Tell the password window to update its state when the password
+ *       slider changes.
+ */
 void
 FadeView::UpdateStatus()
 {
@@ -548,6 +717,13 @@ FadeView::UpdateStatus()
 }
 
 
+/**
+ * @brief Refreshes the static-text colors after a system color change.
+ *
+ * The two corner-selector caption views use plain text rendered in the
+ * panel text color; this routine re-applies the current ui_color so the
+ * labels track the system theme.
+ */
 void
 FadeView::_UpdateColors()
 {
@@ -560,6 +736,16 @@ FadeView::_UpdateColors()
 //	#pragma mark - ModulesView
 
 
+/**
+ * @brief Builds the Screensavers tab layout: list, preview, settings box.
+ *
+ * Creates the list view, scroll view, Test button, settings box (with a
+ * minimum size derived from the default item spacing), and PreviewView,
+ * then arranges them in two columns.
+ *
+ * @param name     Internal BView name.
+ * @param settings Shared ScreenSaverSettings model.
+ */
 ModulesView::ModulesView(const char* name, ScreenSaverSettings& settings)
 	:
 	BView(name, B_WILL_DRAW),
@@ -601,6 +787,13 @@ ModulesView::ModulesView(const char* name, ScreenSaverSettings& settings)
 }
 
 
+/**
+ * @brief Destroys the modules view, stops node watching, and releases
+ *        owned widgets.
+ *
+ * @note The list view is owned by the scroll view (and BView ownership)
+ *       and is therefore not deleted explicitly here.
+ */
 ModulesView::~ModulesView()
 {
 	stop_watching(this);
@@ -611,6 +804,12 @@ ModulesView::~ModulesView()
 }
 
 
+/**
+ * @brief BView DetachedFromWindow hook: persists state and tears down the
+ *        running saver.
+ *
+ * Triggered when the tab is being replaced or the window is closing.
+ */
 void
 ModulesView::DetachedFromWindow()
 {
@@ -621,6 +820,9 @@ ModulesView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief BView AttachedToWindow hook: routes list and button messages here.
+ */
 void
 ModulesView::AttachedToWindow()
 {
@@ -629,6 +831,10 @@ ModulesView::AttachedToWindow()
 }
 
 
+/**
+ * @brief BView AllAttached hook: populates the saver list once the
+ *        attachment is complete.
+ */
 void
 ModulesView::AllAttached()
 {
@@ -636,6 +842,20 @@ ModulesView::AllAttached()
 }
 
 
+/**
+ * @brief BView message hook: handles selection, testing, and node monitor.
+ *
+ * Recognized messages:
+ *   - @c kMsgSaverSelected: closes the previous saver, opens the new one,
+ *     persists the choice.
+ *   - @c kMsgTestSaver: launches @c screen_blanker as a separate process,
+ *     falling back to a hard-coded path when the roster lookup fails.
+ *   - @c B_NODE_MONITOR: maintains the saver list as add-on directories change.
+ *   - @c B_SOME_APP_QUIT: re-opens the in-window preview after the test
+ *     process exits.
+ *
+ * @param message Incoming message.
+ */
 void
 ModulesView::MessageReceived(BMessage* message)
 {
@@ -753,6 +973,11 @@ ModulesView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Saves the current saver's per-module state into ScreenSaverSettings.
+ *
+ * No-op when no saver is loaded.
+ */
 void
 ModulesView::SaveState()
 {
@@ -766,6 +991,9 @@ ModulesView::SaveState()
 }
 
 
+/**
+ * @brief Removes and deletes every item from the saver list view.
+ */
 void
 ModulesView::EmptyScreenSaverList()
 {
@@ -775,6 +1003,15 @@ ModulesView::EmptyScreenSaverList()
 }
 
 
+/**
+ * @brief Populates the saver list from add-on directories and selects
+ *        the previously chosen saver.
+ *
+ * Always inserts a "Blackness" pseudo-saver as the first entry. Then
+ * iterates the user and system add-on directories (both packaged and
+ * non-packaged), watches each directory for change notifications, and
+ * appends any matching add-on. The list is sorted case-insensitively.
+ */
 void
 ModulesView::PopulateScreenSaverList()
 {
@@ -836,7 +1073,13 @@ ModulesView::PopulateScreenSaverList()
 }
 
 
-//! Sorting function for ScreenSaverItems
+/**
+ * @brief Sorting predicate for ScreenSaverItem entries.
+ *
+ * @param left  Pointer to a ScreenSaverItem* (BList entry).
+ * @param right Pointer to a ScreenSaverItem* (BList entry).
+ * @return Result of @c strcasecmp on the items' display labels.
+ */
 int
 ModulesView::_CompareScreenSaverItems(const void* left, const void* right)
 {
@@ -847,6 +1090,9 @@ ModulesView::_CompareScreenSaverItems(const void* left, const void* right)
 }
 
 
+/**
+ * @brief Returns the BScreenSaver currently driven by the runner, or NULL.
+ */
 BScreenSaver*
 ModulesView::ScreenSaver()
 {
@@ -857,6 +1103,14 @@ ModulesView::ScreenSaver()
 }
 
 
+/**
+ * @brief Tears down the running preview: removes views, stops the runner,
+ *        and unloads the add-on.
+ *
+ * The runner is deleted last because it is responsible for unloading the
+ * add-on, and the BScreenSaver pointer would dangle if the add-on
+ * unloaded before the StopConfig() call returns.
+ */
 void
 ModulesView::_CloseSaver()
 {
@@ -884,6 +1138,15 @@ ModulesView::_CloseSaver()
 }
 
 
+/**
+ * @brief Spins up a fresh preview view, settings view, and runner.
+ *
+ * If the saver fails to start (for example "Blackness" or a missing
+ * add-on), a black preview is shown. When the saver exposes no settings,
+ * a default placeholder view is inserted by
+ * @c BPrivate::BuildDefaultSettingsView() so the settings box is never
+ * empty.
+ */
 void
 ModulesView::_OpenSaver()
 {
@@ -932,6 +1195,16 @@ ModulesView::_OpenSaver()
 }
 
 
+/**
+ * @brief Inserts a newly discovered screensaver into the sorted list.
+ *
+ * Preserves the current selection across the insertion so that the user's
+ * choice is not silently lost when an add-on appears.
+ *
+ * @param name Display label of the new add-on.
+ * @param path Pointer to a BPath rooted at the add-on directory; the
+ *             function appends @a name to it before recording the path.
+ */
 void
 ModulesView::_AddNewScreenSaverToList(const char* name, BPath* path)
 {
@@ -951,6 +1224,15 @@ ModulesView::_AddNewScreenSaverToList(const char* name, BPath* path)
 }
 
 
+/**
+ * @brief Removes a screensaver from the list when its add-on is gone.
+ *
+ * If the deleted item happened to be the selected one, the selection
+ * collapses to the first list entry; otherwise the previous selection is
+ * preserved.
+ *
+ * @param name Display label of the add-on to remove.
+ */
 void
 ModulesView::_RemoveScreenSaverFromList(const char* name)
 {
@@ -988,6 +1270,9 @@ ModulesView::_RemoveScreenSaverFromList(const char* name)
 //	#pragma mark - TabView
 
 
+/**
+ * @brief Constructs the tab view with width-from-label sizing.
+ */
 TabView::TabView()
 	:
 	BTabView("tab_view", B_WIDTH_FROM_LABEL)
@@ -995,6 +1280,17 @@ TabView::TabView()
 }
 
 
+/**
+ * @brief BTabView MouseDown hook: keeps the saver runner consistent across
+ *        tab switches.
+ *
+ * When the user clicks the General tab while the Modules tab is active,
+ * the running saver is closed (so it does not steal cycles in the
+ * background). When the user clicks the Modules tab, a synthetic
+ * @c kMsgSaverSelected is sent so the preview is rebuilt.
+ *
+ * @param where Mouse location in view coordinates.
+ */
 void
 TabView::MouseDown(BPoint where)
 {
@@ -1026,6 +1322,14 @@ TabView::MouseDown(BPoint where)
 //	#pragma mark - ScreenSaverWindow
 
 
+/**
+ * @brief Constructs the preflet window, loads settings, and builds the tabs.
+ *
+ * Computes minimum dimensions from the system control spacing and font
+ * metrics so the layout stays usable on high-DPI displays. Spawns the
+ * separate PasswordWindow up front so that opening it later is just a
+ * Show().
+ */
 ScreenSaverWindow::ScreenSaverWindow()
 	:
 	BWindow(BRect(50.0f, 50.0f, 50.0f + kWindowWidth, 50.0f + kWindowHeight),
@@ -1087,6 +1391,14 @@ ScreenSaverWindow::ScreenSaverWindow()
 }
 
 
+/**
+ * @brief Saves state and tears down the modules tab before destruction.
+ *
+ * The window is hidden first so the user does not see an empty pane
+ * while the modules view is detached. The modules tab is removed and
+ * deleted explicitly so its DetachedFromWindow() runs while the window
+ * is still alive (which it needs to flush state to disk).
+ */
 ScreenSaverWindow::~ScreenSaverWindow()
 {
 	Hide();
@@ -1101,6 +1413,13 @@ ScreenSaverWindow::~ScreenSaverWindow()
 }
 
 
+/**
+ * @brief BWindow message hook: handles the password-edit and refresh messages.
+ *
+ * @param message Incoming message; @c kMsgChangePassword centers and
+ *                shows the password window, @c kMsgUpdateList rebuilds
+ *                the modules list.
+ */
 void
 ScreenSaverWindow::MessageReceived(BMessage* message)
 {
@@ -1121,6 +1440,12 @@ ScreenSaverWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief BWindow ScreenChanged hook: forwards to FadeView for DPMS reprobe.
+ *
+ * @param frame      New screen frame (unused).
+ * @param colorSpace New color space (unused).
+ */
 void
 ScreenSaverWindow::ScreenChanged(BRect frame, color_space colorSpace)
 {
@@ -1128,6 +1453,11 @@ ScreenSaverWindow::ScreenChanged(BRect frame, color_space colorSpace)
 }
 
 
+/**
+ * @brief BWindow QuitRequested hook: asks the application to quit.
+ *
+ * @return Always @c true; the window is allowed to close.
+ */
 bool
 ScreenSaverWindow::QuitRequested()
 {

@@ -1,9 +1,39 @@
 /*
- * Copyright 2005-2011, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2011, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Doerfler, axeld@pinc-software.de
+ */
+
+
+/**
+ * @file ScreenMode.cpp
+ * @brief Implementation of the ScreenMode helper used by ScreenWindow.
+ *
+ * Talks to app_server through @c BScreen to enumerate display modes,
+ * apply new modes (per-workspace or globally), and revert to the original
+ * mode the app started with. Also resolves EDID monitor info and the PNP-ID
+ * vendor lookup table generated in Vendors.h.
  */
 
 
@@ -44,6 +74,12 @@
  * rm Vendors.h.tmp
  */
 
+/**
+ * @brief Pair of a three-letter EDID PNP-ID and its manufacturer name.
+ *
+ * Equality is case-insensitive on the @c id field; the function-call
+ * operator provides a strict ordering used by @c std::find.
+ */
 struct pnp_id {
 	const char* id;
 	const char* manufacturer;
@@ -55,11 +91,18 @@ struct pnp_id {
 	};
 };
 
+/** @brief Static table of EDID PNP-IDs to vendor names; generated upstream. */
 static const struct pnp_id kPNPIDs[] = {
 #include "Vendors.h"
 };
 
 
+/**
+ * @brief Decode the combine mode from the flags and dimensions of @a mode.
+ *
+ * @param mode display_mode reported by app_server.
+ * @return     The corresponding @c combine_mode value.
+ */
 static combine_mode
 get_combine_mode(const display_mode& mode)
 {
@@ -76,6 +119,15 @@ get_combine_mode(const display_mode& mode)
 }
 
 
+/**
+ * @brief Compute the displayable refresh rate for @a mode.
+ *
+ * Rounds the result to one decimal digit because the underlying pixel
+ * clock value cannot be tuned exactly and is subject to driver rounding.
+ *
+ * @param mode display_mode to inspect.
+ * @return     Refresh rate in Hz, rounded to 0.1 Hz.
+ */
 static float
 get_refresh_rate(const display_mode& mode)
 {
@@ -86,7 +138,16 @@ get_refresh_rate(const display_mode& mode)
 }
 
 
-/*!	Helper to sort modes by resolution */
+/**
+ * @brief @c qsort callback that orders display_modes by resolution then refresh.
+ *
+ * Combine modes are normalized (halved) before comparison so the visible
+ * width and height drive the ordering rather than the raw virtual size.
+ *
+ * @param _mode1 Pointer to the first @c display_mode (cast from @c void*).
+ * @param _mode2 Pointer to the second @c display_mode.
+ * @return Negative, zero, or positive, following @c qsort conventions.
+ */
 static int
 compare_mode(const void* _mode1, const void* _mode2)
 {
@@ -126,6 +187,11 @@ compare_mode(const void* _mode1, const void* _mode2)
 //	#pragma mark -
 
 
+/**
+ * @brief Return the bits-per-pixel implied by the @c space field.
+ *
+ * @return 8/15/16/24/32 for the recognized color spaces, 0 otherwise.
+ */
 int32
 screen_mode::BitsPerPixel() const
 {
@@ -140,6 +206,7 @@ screen_mode::BitsPerPixel() const
 }
 
 
+/** @brief Equality, defined as the negation of operator!=(). */
 bool
 screen_mode::operator==(const screen_mode &other) const
 {
@@ -147,6 +214,13 @@ screen_mode::operator==(const screen_mode &other) const
 }
 
 
+/**
+ * @brief Field-wise inequality covering all visible mode parameters.
+ *
+ * @param other Mode to compare against.
+ * @return      True when any of width/height/space/refresh/combine or
+ *              the multi-monitor flags differ.
+ */
 bool
 screen_mode::operator!=(const screen_mode &other) const
 {
@@ -159,6 +233,15 @@ screen_mode::operator!=(const screen_mode &other) const
 }
 
 
+/**
+ * @brief Populate this struct from an app_server @c display_mode.
+ *
+ * Extracts width / height / color space / combine mode / refresh rate
+ * and leaves the multi-monitor flags zeroed; the caller is expected to
+ * fill them in via @c GetSwapDisplays() etc.
+ *
+ * @param mode Source display_mode to derive the fields from.
+ */
 void
 screen_mode::SetTo(const display_mode& mode)
 {
@@ -182,6 +265,14 @@ screen_mode::SetTo(const display_mode& mode)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a ScreenMode bound to @a window.
+ *
+ * Pre-fetches the supported mode list from app_server and sorts it by
+ * resolution and refresh rate so menus look orderly.
+ *
+ * @param window BWindow used to obtain the corresponding @c BScreen.
+ */
 ScreenMode::ScreenMode(BWindow* window)
 	:
 	fWindow(window),
@@ -199,12 +290,25 @@ ScreenMode::ScreenMode(BWindow* window)
 }
 
 
+/** @brief Free the cached display-mode list. */
 ScreenMode::~ScreenMode()
 {
 	free(fModeList);
 }
 
 
+/**
+ * @brief Apply @a mode to the given workspace, recording the original first.
+ *
+ * Captures the pre-change modes for later @c Revert() the first time it is
+ * called, then writes the multi-monitor settings (swap, panel, TV) and asks
+ * app_server to set the resolved display_mode.
+ *
+ * @param mode      Desired screen mode.
+ * @param workspace Target workspace, or @c ~0 for the current one.
+ * @retval B_OK              On success.
+ * @retval B_ENTRY_NOT_FOUND When no matching display_mode could be resolved.
+ */
 status_t
 ScreenMode::Set(const screen_mode& mode, int32 workspace)
 {
@@ -229,6 +333,17 @@ ScreenMode::Set(const screen_mode& mode, int32 workspace)
 }
 
 
+/**
+ * @brief Retrieve the current screen mode of @a workspace.
+ *
+ * Reads both the display_mode and the multi-monitor accelerant flags and
+ * fills @a mode with their combined view.
+ *
+ * @param mode      Out: the populated screen_mode.
+ * @param workspace Workspace to query, or @c ~0 for the current one.
+ * @retval B_OK     On success.
+ * @retval B_ERROR  When the display_mode could not be queried.
+ */
 status_t
 ScreenMode::Get(screen_mode& mode, int32 workspace) const
 {
@@ -255,6 +370,17 @@ ScreenMode::Get(screen_mode& mode, int32 workspace) const
 }
 
 
+/**
+ * @brief Return the originally-active screen mode of @a workspace.
+ *
+ * Useful for the Revert button: callers can compare the live mode against
+ * the original snapshot taken when the app started.
+ *
+ * @param mode      Out: original mode for the given workspace.
+ * @param workspace Workspace index, or @c ~0 for the current workspace.
+ * @retval B_OK         On success.
+ * @retval B_BAD_INDEX  If @a workspace is out of range.
+ */
 status_t
 ScreenMode::GetOriginalMode(screen_mode& mode, int32 workspace) const
 {
@@ -270,6 +396,16 @@ ScreenMode::GetOriginalMode(screen_mode& mode, int32 workspace) const
 }
 
 
+/**
+ * @brief Apply a raw @c display_mode, bypassing the @c screen_mode wrapper.
+ *
+ * Used by callers who already have a fully-populated display_mode and want
+ * to force exactly that mode without re-resolving width/height/refresh.
+ *
+ * @param mode      The display_mode to apply.
+ * @param workspace Target workspace, or @c ~0 for the current one.
+ * @return          @c B_OK on success; otherwise an error from app_server.
+ */
 status_t
 ScreenMode::Set(const display_mode& mode, int32 workspace)
 {
@@ -288,6 +424,13 @@ ScreenMode::Set(const display_mode& mode, int32 workspace)
 }
 
 
+/**
+ * @brief Read the raw @c display_mode active in @a workspace.
+ *
+ * @param mode      Out: receives the active display_mode.
+ * @param workspace Workspace to query, or @c ~0 for the current one.
+ * @return          @c B_OK on success; otherwise an error from app_server.
+ */
 status_t
 ScreenMode::Get(display_mode& mode, int32 workspace) const
 {
@@ -303,6 +446,18 @@ ScreenMode::Get(display_mode& mode, int32 workspace) const
 /*!	This method assumes that you already reverted to the correct number
 	of workspaces.
 */
+/**
+ * @brief Restore every workspace to its original display mode.
+ *
+ * Iterates over all workspaces in count_workspaces() order and writes back
+ * the modes captured by @c UpdateOriginalModes(). Multi-monitor flags are
+ * only restored for the current workspace because the accelerant tunnel
+ * does not support per-workspace flags.
+ *
+ * @retval B_OK     On success.
+ * @retval B_ERROR  When @c UpdateOriginalModes() has never been called.
+ * @note  Caller must first restore the original workspace count.
+ */
 status_t
 ScreenMode::Revert()
 {
@@ -334,6 +489,12 @@ ScreenMode::Revert()
 }
 
 
+/**
+ * @brief Snapshot the current per-workspace modes for later @c Revert().
+ *
+ * Idempotent: @c Revert() depends on this being called at least once,
+ * usually right before the first @c Set().
+ */
 void
 ScreenMode::UpdateOriginalModes()
 {
@@ -348,6 +509,15 @@ ScreenMode::UpdateOriginalModes()
 }
 
 
+/**
+ * @brief Stub indicating universal color-space support.
+ *
+ * @param mode  Mode being queried (unused).
+ * @param space Color space being queried (unused).
+ * @return      Always true.
+ * @note  Real filtering happens in ScreenWindow which iterates the
+ *        available mode list and tests each entry directly.
+ */
 bool
 ScreenMode::SupportsColorSpace(const screen_mode& mode, color_space space)
 {
@@ -355,6 +525,18 @@ ScreenMode::SupportsColorSpace(const screen_mode& mode, color_space space)
 }
 
 
+/**
+ * @brief Compute the lower and upper refresh-rate bounds for @a mode.
+ *
+ * Asks app_server for the pixel-clock limits of the equivalent
+ * display_mode and converts them to Hz using the total horizontal
+ * and vertical pixel counts.
+ *
+ * @param mode Mode whose limits should be retrieved.
+ * @param min  Out: minimum supported refresh rate in Hz.
+ * @param max  Out: maximum supported refresh rate in Hz.
+ * @return     @c B_OK on success; otherwise @c B_ERROR.
+ */
 status_t
 ScreenMode::GetRefreshLimits(const screen_mode& mode, float& min, float& max)
 {
@@ -375,6 +557,16 @@ ScreenMode::GetRefreshLimits(const screen_mode& mode, float& min, float& max)
 }
 
 
+/**
+ * @brief Look up the human-readable vendor name for a PNP-ID.
+ *
+ * Performs a case-insensitive binary search in the sorted @c kPNPIDs table
+ * generated from the UEFI PNP-ID export.
+ *
+ * @param id Three-letter PNP-ID from an EDID block.
+ * @return   Pointer to the vendor name (statically allocated), or NULL when
+ *           the code is unknown.
+ */
 const char*
 ScreenMode::GetManufacturerFromID(const char* id) const
 {
@@ -392,6 +584,19 @@ ScreenMode::GetManufacturerFromID(const char* id) const
 }
 
 
+/**
+ * @brief Fetch EDID monitor info, augmented with a vendor lookup and cleanup.
+ *
+ * Replaces the three-letter EDID vendor code with the human-readable
+ * vendor name (when the code is known), strips redundant vendor strings
+ * from @c info.name, and patches in a default vertical-frequency range
+ * when the EDID block omits it (common on older CRTs).
+ *
+ * @param info             Out: receives the monitor info.
+ * @param _diagonalInches  Optional out: diagonal screen size in inches.
+ * @return                 @c B_OK on success; otherwise an error from
+ *                         @c BScreen::GetMonitorInfo().
+ */
 status_t
 ScreenMode::GetMonitorInfo(monitor_info& info, float* _diagonalInches)
 {
@@ -432,6 +637,12 @@ ScreenMode::GetMonitorInfo(monitor_info& info, float* _diagonalInches)
 }
 
 
+/**
+ * @brief Forward-fill @a info from the underlying accelerant.
+ *
+ * @param info Out: receives the accelerant device info.
+ * @return     Whatever @c BScreen::GetDeviceInfo() returns.
+ */
 status_t
 ScreenMode::GetDeviceInfo(accelerant_device_info& info)
 {
@@ -440,6 +651,12 @@ ScreenMode::GetDeviceInfo(accelerant_device_info& info)
 }
 
 
+/**
+ * @brief Return the @a index-th cached mode as a @c screen_mode.
+ *
+ * @param index Zero-based index into the cached mode list.
+ * @return      A populated @c screen_mode; clamped to the bounds of the list.
+ */
 screen_mode
 ScreenMode::ModeAt(int32 index)
 {
@@ -450,6 +667,14 @@ ScreenMode::ModeAt(int32 index)
 }
 
 
+/**
+ * @brief Return the raw @c display_mode at @a index in the cached list.
+ *
+ * Out-of-range indices are clamped to the nearest valid entry.
+ *
+ * @param index Zero-based index.
+ * @return      Reference to the cached display_mode.
+ */
 const display_mode&
 ScreenMode::DisplayModeAt(int32 index)
 {
@@ -462,6 +687,7 @@ ScreenMode::DisplayModeAt(int32 index)
 }
 
 
+/** @brief Number of cached display modes available for selection. */
 int32
 ScreenMode::CountModes()
 {
@@ -472,6 +698,18 @@ ScreenMode::CountModes()
 /*!	Searches for a similar mode in the reported mode list, and if that does not
 	find a matching mode, it will compute the mode manually using the GTF.
 */
+/**
+ * @brief Resolve a @c screen_mode to a concrete @c display_mode.
+ *
+ * First scans the driver-reported list for an exact resolution / color
+ * space match within 0.6% of the requested refresh rate, tweaking the
+ * pixel clock so the actual rate matches the request. Falls back to the
+ * VESA Generalized Timing Formula when no driver mode is close enough.
+ *
+ * @param mode         The high-level mode to resolve.
+ * @param displayMode  Out: receives the matching display_mode on success.
+ * @return             True when a mode was resolved; false otherwise.
+ */
 bool
 ScreenMode::_GetDisplayMode(const screen_mode& mode, display_mode& displayMode)
 {

@@ -1,10 +1,38 @@
 /*
- * Copyright 2002-2010, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Siebenmarck
- *		Axel Dörfler
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2010, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Oliver Siebenmarck
+ *       Axel Dörfler
+ */
+
+
+/**
+ * @file DataTranslationsSettings.cpp
+ * @brief Persistence of the DataTranslations window position across runs.
+ *
+ * Reads and writes a flattened BMessage in the user settings directory so the
+ * preferences window reopens at the location it last had on screen.
  */
 
 
@@ -19,9 +47,16 @@
 #include <Path.h>
 
 
+/** @brief Process-wide singleton instance returned by Instance(). */
 static DataTranslationsSettings sDataTranslationsSettings;
 
 
+/**
+ * @brief Loads the persisted window corner from the user settings file.
+ *
+ * Falls back to BPoint(-1, -1), which the window treats as "use default
+ * placement", when the settings file is missing or unreadable.
+ */
 DataTranslationsSettings::DataTranslationsSettings()
 {
 	BPath path;
@@ -43,6 +78,11 @@ DataTranslationsSettings::DataTranslationsSettings()
 }
 
 
+/**
+ * @brief Persists the current window corner to the settings file on shutdown.
+ *
+ * Silently ignores failures to locate or open the settings directory.
+ */
 DataTranslationsSettings::~DataTranslationsSettings()
 {
 	BPath path;
@@ -59,6 +99,11 @@ DataTranslationsSettings::~DataTranslationsSettings()
 }
 
 
+/**
+ * @brief Records the new top-left window corner to be saved on exit.
+ *
+ * @param corner  Screen-space coordinate of the window's left-top corner.
+ */
 void
 DataTranslationsSettings::SetWindowCorner(BPoint corner)
 {
@@ -66,6 +111,11 @@ DataTranslationsSettings::SetWindowCorner(BPoint corner)
 }
 
 
+/**
+ * @brief Returns the process-wide singleton settings instance.
+ *
+ * @return Pointer to the shared DataTranslationsSettings; never NULL.
+ */
 DataTranslationsSettings*
 DataTranslationsSettings::Instance()
 {

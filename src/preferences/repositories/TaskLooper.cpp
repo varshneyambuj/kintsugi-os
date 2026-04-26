@@ -1,9 +1,42 @@
 /*
- * Copyright 2017 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Brian Hill
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Brian Hill
+ */
+
+
+/**
+ * @file TaskLooper.cpp
+ * @brief Asynchronous task runner for repository enable/disable jobs.
+ *
+ * The TaskLooper accepts DO_TASK requests from the preflet UI, spawns a
+ * worker thread that drives the appropriate BPackageKit request
+ * (AddRepository or DropRepository, plus a refresh on enable), and posts
+ * lifecycle messages back to the UI when each task starts, completes,
+ * fails with errors, or is killed by the timer-driven cancel path. The
+ * embedded JobStateListener captures pkgman job log lines so error alerts
+ * can include detailed context.
  */
 
 
@@ -24,21 +57,32 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "TaskLooper"
 
+/** @brief Prefix written before result lines in the captured job log. */
 static const BString kLogResultIndicator = "***";
+/** @brief Localized status word appended on JobSucceeded(). */
 static const BString kCompletedText =
 	B_TRANSLATE_COMMENT("Completed", "Completed task status message");
+/** @brief Localized status word appended on JobFailed(). */
 static const BString kFailedText =
 	B_TRANSLATE_COMMENT("Failed", "Failed task status message");
+/** @brief Localized status word appended on JobAborted(). */
 static const BString kAbortedText =
 	B_TRANSLATE_COMMENT("Aborted", "Aborted task status message");
+/** @brief Header used before the human-readable error string in the log. */
 static const BString kDescriptionText =
 	B_TRANSLATE_COMMENT("Description", "Failed task error description");
+/** @brief Header prefix used when appending the job log to alert details. */
 static const BString kDetailsText =
 	B_TRANSLATE_COMMENT("Details", "Job log details header");
 
 using BSupportKit::BJob;
 
 
+/**
+ * @brief Records the title of a started job in the listener's log buffer.
+ *
+ * @param job Job that has just started.
+ */
 void
 JobStateListener::JobStarted(BJob* job)
 {
@@ -46,6 +90,11 @@ JobStateListener::JobStarted(BJob* job)
 }
 
 
+/**
+ * @brief Appends a success marker for the just-completed job.
+ *
+ * @param job Job that has succeeded (unused, captured for interface parity).
+ */
 void
 JobStateListener::JobSucceeded(BJob* job)
 {
@@ -54,6 +103,11 @@ JobStateListener::JobSucceeded(BJob* job)
 }
 
 
+/**
+ * @brief Appends a failure marker plus optional description for the job.
+ *
+ * @param job Job that failed; its result code and ErrorString() are logged.
+ */
 void
 JobStateListener::JobFailed(BJob* job)
 {
@@ -70,6 +124,12 @@ JobStateListener::JobFailed(BJob* job)
 }
 
 
+/**
+ * @brief Appends an abort marker plus optional description for the job.
+ *
+ * @param job Job that was aborted; its result code and ErrorString() are
+ *            logged.
+ */
 void
 JobStateListener::JobAborted(BJob* job)
 {
@@ -86,6 +146,12 @@ JobStateListener::JobAborted(BJob* job)
 }
 
 
+/**
+ * @brief Returns every captured log line joined with newlines.
+ *
+ * @return Multi-line string of captured job events suitable for an alert
+ *         body.
+ */
 BString
 JobStateListener::GetJobLog()
 {
@@ -93,6 +159,12 @@ JobStateListener::GetJobLog()
 }
 
 
+/**
+ * @brief Constructs the task looper, starts running it, and caches a
+ *        messenger pointing back at itself.
+ *
+ * @param target Messenger that will receive task lifecycle messages.
+ */
 TaskLooper::TaskLooper(const BMessenger& target)
 	:
 	BLooper("TaskLooper"),
@@ -103,6 +175,12 @@ TaskLooper::TaskLooper(const BMessenger& target)
 }
 
 
+/**
+ * @brief Refuses to quit while there are still queued tasks pending.
+ *
+ * @return True only when the message queue is empty so the caller will
+ *         retry once outstanding work is consumed.
+ */
 bool
 TaskLooper::QuitRequested()
 {
@@ -110,6 +188,16 @@ TaskLooper::QuitRequested()
 }
 
 
+/**
+ * @brief Processes DO_TASK, completion, and kill-request messages.
+ *
+ * On DO_TASK a new Task is constructed, a worker thread spawned to run the
+ * pkgman request, and a TaskTimer started so the user can cancel a long
+ * job. The completion and kill cases relay status to fReplyTarget and
+ * destroy the matching Task.
+ *
+ * @param message Incoming BMessage from either the UI or a worker thread.
+ */
 void
 TaskLooper::MessageReceived(BMessage* message)
 {
@@ -213,6 +301,11 @@ TaskLooper::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Removes a task from the queue, stops its timer, and deletes it.
+ *
+ * @param task Task to remove. Must currently be in fTaskQueue.
+ */
 void
 TaskLooper::_RemoveAndDelete(Task* task)
 {
@@ -226,6 +319,17 @@ TaskLooper::_RemoveAndDelete(Task* task)
 }
 
 
+/**
+ * @brief Worker-thread entry point that performs a single repository task.
+ *
+ * Drives either a DropRepositoryRequest (for disable) or an
+ * AddRepositoryRequest followed by a RefreshRepositoryRequest (for enable).
+ * Posts TASK_COMPLETED, TASK_COMPLETED_WITH_ERRORS, or TASK_CANCELED back
+ * to the owning TaskLooper depending on the result.
+ *
+ * @param data Pointer to the Task structure (cast from void*).
+ * @return Always 0; status is communicated via the reply message.
+ */
 status_t
 TaskLooper::_DoTask(void* data)
 {
@@ -329,6 +433,12 @@ TaskLooper::_DoTask(void* data)
 }
 
 
+/**
+ * @brief Appends a "Details:" section with the captured job log to @a details.
+ *
+ * @param details  Error message buffer to extend in place.
+ * @param listener Listener whose accumulated job log is appended.
+ */
 void
 TaskLooper::_AppendErrorDetails(BString& details, JobStateListener* listener)
 {

@@ -1,13 +1,47 @@
 /*
- * Copyright 2002-2017 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jerome Duval, jerome.duval@free.fr
- *		Jonas Sundström, jonas@kirilla.se
- *		John Scipione, jscipione@gmail.com
- *		Brian Hill, supernova@warpmail.net
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2017 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jerome Duval, jerome.duval@free.fr
+ *       Jonas Sundström, jonas@kirilla.se
+ *       John Scipione, jscipione@gmail.com
+ *       Brian Hill, supernova@warpmail.net
+ */
+
+
+/**
+ * @file BackgroundsView.cpp
+ * @brief Implementation of the main view of the Backgrounds preference app.
+ *
+ * BackgroundsView orchestrates picking a wallpaper for the desktop or a
+ * Tracker folder: it maintains a per-folder cache of images, drives the
+ * Workspace / Image / Placement menus, exposes a draggable preview, and
+ * persists the result to the target node's @c be:bgndimginfo attribute
+ * via BackgroundImage::SetBackgroundImage(). It also notifies Tracker
+ * and the Screen preflet when the desktop background or color changes.
+ *
+ * @see BackgroundImage
  */
 
 
@@ -44,29 +78,54 @@
 #define B_TRANSLATION_CONTEXT "Main View"
 
 
+/** @brief Message constant emitted by the Apply button. */
 static const uint32 kMsgApplySettings = 'aply';
+/** @brief Message constant emitted by the Revert button. */
 static const uint32 kMsgRevertSettings = 'rvrt';
 
+/** @brief Message constant for desktop color picker changes. */
 static const uint32 kMsgUpdateColor = 'upcl';
+/** @brief Workspace menu: "All workspaces" entry. */
 static const uint32 kMsgAllWorkspaces = 'alwk';
+/** @brief Workspace menu: "Current workspace" entry. */
 static const uint32 kMsgCurrentWorkspace = 'crwk';
+/** @brief Workspace menu: "Default folder" entry. */
 static const uint32 kMsgDefaultFolder = 'dffl';
+/** @brief Workspace menu: "Other folder..." entry. */
 static const uint32 kMsgOtherFolder = 'otfl';
+/** @brief Image menu: "None" / "Default" entry. */
 static const uint32 kMsgNoImage = 'noim';
+/** @brief Image menu: "Other..." entry. */
 static const uint32 kMsgOtherImage = 'otim';
+/** @brief Image menu: a specific cached image was picked. */
 static const uint32 kMsgImageSelected = 'imsl';
+/** @brief Workspace menu: a recent folder was picked. */
 static const uint32 kMsgFolderSelected = 'flsl';
 
+/** @brief Placement menu: kCentered. */
 static const uint32 kMsgCenterPlacement = 'cnpl';
+/** @brief Placement menu: kAtOffset (manual X/Y). */
 static const uint32 kMsgManualPlacement = 'mnpl';
+/** @brief Placement menu: kScaledToFit. */
 static const uint32 kMsgScalePlacement = 'scpl';
+/** @brief Placement menu: kTiled. */
 static const uint32 kMsgTilePlacement = 'tlpl';
+/** @brief Toggle for the Tracker icon-label outline. */
 static const uint32 kMsgIconLabelOutline = 'ilol';
 
+/** @brief Edits to the manual X/Y placement text controls. */
 static const uint32 kMsgImagePlacement = 'xypl';
+/** @brief The preview was dragged; sync the X/Y text controls. */
 static const uint32 kMsgUpdatePreviewPlacement = 'pvpl';
 
 
+/**
+ * @brief Constructs the Backgrounds view and lays out every control.
+ *
+ * Initialises the preview area, the workspace, image and placement
+ * menus, the X/Y placement text controls, the icon-label-outline check
+ * box, the desktop-color picker, and the Apply/Revert buttons.
+ */
 BackgroundsView::BackgroundsView()
 	:
 	BBox("BackgroundsView"),
@@ -252,6 +311,12 @@ BackgroundsView::BackgroundsView()
 }
 
 
+/**
+ * @brief Destructor; deletes the open and folder file panels.
+ *
+ * @note The order matters: the last panel destroyed saves the panel
+ *       state to disk.
+ */
 BackgroundsView::~BackgroundsView()
 {
 	// The order matter. The last panel saves the state
@@ -260,6 +325,14 @@ BackgroundsView::~BackgroundsView()
 }
 
 
+/**
+ * @brief Wires control targets, restores settings, and centers the window.
+ *
+ * Called by the BView framework once every child view has been
+ * attached to the window. Loads cached settings and the desktop
+ * folder, restores the saved window position when present, and
+ * disables Apply/Revert until the user makes a change.
+ */
 void
 BackgroundsView::AllAttached()
 {
@@ -304,6 +377,16 @@ BackgroundsView::AllAttached()
 }
 
 
+/**
+ * @brief Dispatches workspace, image, placement, color, and apply messages.
+ *
+ * Color drops on the picker fill the picker swatch directly. Workspace
+ * and image-menu changes load the corresponding folder into the view;
+ * placement and color changes only repaint the preview. Apply and
+ * Revert serialise / restore the on-disk state.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 BackgroundsView::MessageReceived(BMessage* message)
 {
@@ -437,6 +520,12 @@ BackgroundsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Loads the desktop directory as the current background target.
+ *
+ * Resolves @c B_DESKTOP_DIRECTORY into @c fCurrentRef and forwards to
+ * @c _LoadFolder() with @c isDesktop == @c true.
+ */
 void
 BackgroundsView::_LoadDesktopFolder()
 {
@@ -450,6 +539,12 @@ BackgroundsView::_LoadDesktopFolder()
 }
 
 
+/**
+ * @brief Loads the Tracker DefaultFolderTemplate as the target.
+ *
+ * Edits there propagate to every Tracker folder that does not have a
+ * folder-specific background set.
+ */
 void
 BackgroundsView::_LoadDefaultFolder()
 {
@@ -465,6 +560,11 @@ BackgroundsView::_LoadDefaultFolder()
 }
 
 
+/**
+ * @brief Loads a recently used Tracker folder as the target.
+ *
+ * @param path Absolute filesystem path of the recent folder.
+ */
 void
 BackgroundsView::_LoadRecentFolder(BPath path)
 {
@@ -475,6 +575,15 @@ BackgroundsView::_LoadRecentFolder(BPath path)
 }
 
 
+/**
+ * @brief Reads the background metadata of @c fCurrentRef into @c fCurrent.
+ *
+ * Replaces any previously loaded BackgroundImage and refreshes the
+ * preview and menu state via @c _UpdateWithCurrent().
+ *
+ * @param isDesktop Pass @c true when @c fCurrentRef is the desktop
+ *                  folder.
+ */
 void
 BackgroundsView::_LoadFolder(bool isDesktop)
 {
@@ -491,6 +600,14 @@ BackgroundsView::_LoadFolder(bool isDesktop)
 }
 
 
+/**
+ * @brief Repopulates the menus and controls from @c fCurrent.
+ *
+ * Enables placement modes that only apply to the desktop, refreshes
+ * the image menu with the current image cache contents, and synchronises
+ * the X/Y placement text controls and the color picker with the
+ * current image record.
+ */
 void
 BackgroundsView::_UpdateWithCurrent(void)
 {
@@ -576,6 +693,17 @@ BackgroundsView::_UpdateWithCurrent(void)
 }
 
 
+/**
+ * @brief Serialises the current selections back to disk.
+ *
+ * Builds or mutates a BackgroundImageInfo record matching the current
+ * controls (workspace, image, mode, offset, label-outline) and writes
+ * it through BackgroundImage::SetBackgroundImage(). For the desktop
+ * the picker color is also pushed to the screen via BScreen.
+ *
+ * @note Reports errors via a BAlert; callers may safely ignore the
+ *       return value.
+ */
 void
 BackgroundsView::_Save()
 {
@@ -670,6 +798,13 @@ BackgroundsView::_Save()
 }
 
 
+/**
+ * @brief Asks Tracker to repaint the affected windows.
+ *
+ * For the desktop, sends a single B_RESTORE_BACKGROUND_IMAGE to
+ * Tracker. For folder backgrounds, walks every Tracker pose-view
+ * window and selectively notifies the ones whose path matches.
+ */
 void
 BackgroundsView::_NotifyServer()
 {
@@ -748,6 +883,11 @@ BackgroundsView::_NotifyServer()
 }
 
 
+/**
+ * @brief Posts UPDATE_DESKTOP_COLOR_MSG to the Screen preflet, if running.
+ *
+ * No-op if the Screen application is not present.
+ */
 void
 BackgroundsView::_NotifyScreenPreflet()
 {
@@ -757,6 +897,15 @@ BackgroundsView::_NotifyScreenPreflet()
 }
 
 
+/**
+ * @brief Worker thread that runs both notifier helpers.
+ *
+ * Executed off the looper thread so the Apply button stays responsive
+ * while Tracker walks its windows.
+ *
+ * @param data Pointer to the originating BackgroundsView.
+ * @return Always B_OK.
+ */
 int32
 BackgroundsView::_NotifyThread(void* data)
 {
@@ -768,6 +917,13 @@ BackgroundsView::_NotifyThread(void* data)
 }
 
 
+/**
+ * @brief Persists the window position and recent-folder list to disk.
+ *
+ * Writes a BMessage to @c B_USER_SETTINGS_DIRECTORY/SETTINGS_FILE
+ * containing the window corner, both file-panel directories, and
+ * every recent folder accumulated in @c fPathList.
+ */
 void
 BackgroundsView::SaveSettings(void)
 {
@@ -805,6 +961,12 @@ BackgroundsView::SaveSettings(void)
 }
 
 
+/**
+ * @brief Restores the window position and recent-folder list from disk.
+ *
+ * Counterpart to SaveSettings(). Pre-marks "Current workspace" in the
+ * workspace popup so the menu opens in a sensible default state.
+ */
 void
 BackgroundsView::_LoadSettings()
 {
@@ -847,6 +1009,12 @@ BackgroundsView::_LoadSettings()
 }
 
 
+/**
+ * @brief Refreshes menus and preview when the workspace changes.
+ *
+ * @param oldWorkspaces Bitmask of the workspaces that were active.
+ * @param active        @c true when the new workspace is becoming active.
+ */
 void
 BackgroundsView::WorkspaceActivated(uint32 oldWorkspaces, bool active)
 {
@@ -854,6 +1022,13 @@ BackgroundsView::WorkspaceActivated(uint32 oldWorkspaces, bool active)
 }
 
 
+/**
+ * @brief Repaints the preview view to match the current selections.
+ *
+ * Enables or disables the placement menu and the manual X/Y text
+ * controls based on the selected image. When manual placement is
+ * active the preview becomes draggable.
+ */
 void
 BackgroundsView::_UpdatePreview()
 {
@@ -915,6 +1090,12 @@ BackgroundsView::_UpdatePreview()
 }
 
 
+/**
+ * @brief Maps the marked placement-menu item to a BackgroundImage::Mode.
+ *
+ * @return The Mode enum corresponding to the marked menu item;
+ *         defaults to kAtOffset when nothing else matches.
+ */
 BackgroundImage::Mode
 BackgroundsView::_FindPlacementMode()
 {
@@ -936,6 +1117,13 @@ BackgroundsView::_FindPlacementMode()
 }
 
 
+/**
+ * @brief Recomputes the enabled state of the Apply and Revert buttons.
+ *
+ * Compares every control against the active BackgroundImageInfo;
+ * any divergence (color, mode, image, label-outline, X/Y offset)
+ * marks the dialog as dirty.
+ */
 void
 BackgroundsView::_UpdateButtons()
 {
@@ -981,6 +1169,15 @@ BackgroundsView::_UpdateButtons()
 }
 
 
+/**
+ * @brief Adds dropped images to the cache or switches to dropped folders.
+ *
+ * Files are added through AddImage(). Folders other than the desktop
+ * are remembered as recent entries; dropping the desktop folder simply
+ * marks "Current workspace" in the workspace menu.
+ *
+ * @param message Drop message carrying one or more "refs" entries.
+ */
 void
 BackgroundsView::RefsReceived(BMessage* message)
 {
@@ -1047,6 +1244,13 @@ BackgroundsView::RefsReceived(BMessage* message)
 }
 
 
+/**
+ * @brief BObjectList::EachElement callback that matches paths case-insensitively.
+ *
+ * @param currentPath Element being inspected.
+ * @param newPath     Pointer to a BPath supplied as the user data.
+ * @return @a currentPath if it matches @a newPath, otherwise @c NULL.
+ */
 static BPath*
 FindPath(BPath* currentPath, void* newPath)
 {
@@ -1056,6 +1260,16 @@ FindPath(BPath* currentPath, void* newPath)
 }
 
 
+/**
+ * @brief Adds @a path to the workspace popup as a recent-folder entry.
+ *
+ * Caps the list at @c fRecentFoldersLimit entries (oldest entry pops
+ * off the front). When @a notifyApp is @c true, posts kMsgFolderSelected
+ * so the view immediately switches to the dropped folder.
+ *
+ * @param path      Recent folder path.
+ * @param notifyApp Pass @c true to immediately load @a path.
+ */
 void
 BackgroundsView::_AddRecentFolder(BPath path, bool notifyApp)
 {
@@ -1094,6 +1308,13 @@ BackgroundsView::_AddRecentFolder(BPath path, bool notifyApp)
 }
 
 
+/**
+ * @brief Adds a bitmap to the per-view image cache, deduplicated by path.
+ *
+ * @param path Source path of the bitmap.
+ * @return Non-negative existing index when @a path is already cached;
+ *         a negative encoded value @c -(newIndex + 1) otherwise.
+ */
 int32
 BackgroundsView::AddImage(BPath path)
 {
@@ -1110,6 +1331,12 @@ BackgroundsView::AddImage(BPath path)
 }
 
 
+/**
+ * @brief Returns the cached Image at @a imageIndex, or @c NULL on overflow.
+ *
+ * @param imageIndex Zero-based cache index.
+ * @return Image pointer owned by the view, or @c NULL when out of range.
+ */
 Image*
 BackgroundsView::GetImage(int32 imageIndex)
 {
@@ -1117,6 +1344,15 @@ BackgroundsView::GetImage(int32 imageIndex)
 }
 
 
+/**
+ * @brief Finds the BGImageMenuItem whose @c ImageIndex() equals @a imageIndex.
+ *
+ * Negative indices are treated as "None" / "Default" and resolve to
+ * the first item of the image popup.
+ *
+ * @param imageIndex Cached image index, or a negative sentinel.
+ * @return Matching menu item, or @c NULL.
+ */
 BGImageMenuItem*
 BackgroundsView::_FindImageItem(const int32 imageIndex)
 {
@@ -1134,6 +1370,14 @@ BackgroundsView::_FindImageItem(const int32 imageIndex)
 }
 
 
+/**
+ * @brief Inserts @a item into the image popup in alphabetical order.
+ *
+ * Adds a separator before the first cached image when one is missing.
+ *
+ * @param item Menu item to insert; ownership is transferred to the menu.
+ * @return @c true on successful insertion.
+ */
 bool
 BackgroundsView::_AddItem(BGImageMenuItem* item)
 {
@@ -1154,6 +1398,14 @@ BackgroundsView::_AddItem(BGImageMenuItem* item)
 }
 
 
+/**
+ * @brief Switches the preview frame between desktop and folder skins.
+ *
+ * Each FramePart is told whether it is rendering a desktop or a
+ * folder window, then the view is invalidated.
+ *
+ * @param isDesktop @c true to use the desktop appearance.
+ */
 void
 BackgroundsView::_SetDesktop(bool isDesktop)
 {
@@ -1170,6 +1422,12 @@ BackgroundsView::_SetDesktop(bool isDesktop)
 }
 
 
+/**
+ * @brief Returns whether a saved window position was applied at startup.
+ *
+ * @return @c true if the constructor successfully restored a previously
+ *         saved window corner.
+ */
 bool
 BackgroundsView::FoundPositionSetting()
 {
@@ -1180,6 +1438,12 @@ BackgroundsView::FoundPositionSetting()
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the preview control with a fixed aspect ratio.
+ *
+ * The control is sized to the screen's aspect ratio so the preview
+ * faithfully represents how the bitmap will tile or scale.
+ */
 Preview::Preview()
 	:
 	BControl("PreView", NULL, NULL, B_WILL_DRAW | B_SUBPIXEL_PRECISE)
@@ -1194,6 +1458,12 @@ Preview::Preview()
 }
 
 
+/**
+ * @brief Preserves the view color set before attachment.
+ *
+ * BControl::AttachedToWindow() resets the view color, so this override
+ * captures it beforehand and restores it.
+ */
 void
 Preview::AttachedToWindow()
 {
@@ -1203,6 +1473,15 @@ Preview::AttachedToWindow()
 }
 
 
+/**
+ * @brief Begins a manual placement drag when the preview is enabled.
+ *
+ * Captures the starting mouse position and the current screen scale,
+ * locks pointer events to this view, and switches the cursor to the
+ * "grabbing" appearance.
+ *
+ * @param point Mouse press location in view coordinates.
+ */
 void
 Preview::MouseDown(BPoint point)
 {
@@ -1225,6 +1504,13 @@ Preview::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Ends a manual placement drag.
+ *
+ * Restores the "grab" cursor and clears the tracking state.
+ *
+ * @param point Mouse release location in view coordinates.
+ */
 void
 Preview::MouseUp(BPoint point)
 {
@@ -1236,6 +1522,17 @@ Preview::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Updates the placement offset while the user drags the preview.
+ *
+ * Clamps the new offset to the screen's virtual size and posts
+ * kMsgUpdatePreviewPlacement to the parent so the X/Y text controls
+ * stay in sync.
+ *
+ * @param point   Current mouse location in view coordinates.
+ * @param transit Transit flag passed by the framework.
+ * @param message Optional drag message.
+ */
 void
 Preview::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 {
@@ -1299,6 +1596,16 @@ Preview::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a menu item that remembers its cached image index.
+ *
+ * @param label      Item label.
+ * @param imageIndex Index into BackgroundsView's image cache, or -1
+ *                   for the "None" / "Default" pseudo-item.
+ * @param message    Bound message; ownership is passed to BMenuItem.
+ * @param shortcut   Optional keyboard shortcut.
+ * @param modifiers  Modifier mask for @a shortcut.
+ */
 BGImageMenuItem::BGImageMenuItem(const char* label, int32 imageIndex,
 	BMessage* message, char shortcut, uint32 modifiers)
 	: BMenuItem(label, message, shortcut, modifiers),
@@ -1310,6 +1617,13 @@ BGImageMenuItem::BGImageMenuItem(const char* label, int32 imageIndex,
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs one of the eight decorative frame parts.
+ *
+ * @param part FRAME_TOP_LEFT, FRAME_TOP, FRAME_TOP_RIGHT,
+ *             FRAME_LEFT_SIDE, FRAME_RIGHT_SIDE, FRAME_BOTTOM_LEFT,
+ *             FRAME_BOTTOM, or FRAME_BOTTOM_RIGHT.
+ */
 FramePart::FramePart(int32 part)
 	:
 	BView(NULL, B_WILL_DRAW | B_FRAME_EVENTS),
@@ -1320,6 +1634,14 @@ FramePart::FramePart(int32 part)
 }
 
 
+/**
+ * @brief Renders the appropriate desktop or folder frame fragment.
+ *
+ * The desktop appearance draws a stylised monitor frame; the folder
+ * appearance draws a window-tab silhouette.
+ *
+ * @param rect The view bounds at draw time.
+ */
 void
 FramePart::Draw(BRect rect)
 {
@@ -1508,6 +1830,12 @@ FramePart::Draw(BRect rect)
 }
 
 
+/**
+ * @brief Switches the frame fragment between desktop and folder skins.
+ *
+ * @param isDesktop @c true to use the desktop monitor skin, @c false
+ *                  to use the folder window-tab skin.
+ */
 void
 FramePart::SetDesktop(bool isDesktop)
 {
@@ -1518,6 +1846,12 @@ FramePart::SetDesktop(bool isDesktop)
 }
 
 
+/**
+ * @brief Updates explicit min/max sizes and alignment for the frame part.
+ *
+ * Different parts contribute different amounts to the preview frame
+ * depending on their role (corner, edge, or center).
+ */
 void
 FramePart::_SetSizeAndAlignment()
 {

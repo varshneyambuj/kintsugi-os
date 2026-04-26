@@ -1,8 +1,37 @@
 /*
- * Copyright 2007-2016 Haiku, Inc. All rights reserved.
- * Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2016 Haiku, Inc. All rights reserved.
+ *   Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ConfigWindow.cpp
+ * @brief Implements ConfigWindow, the Mail preferences app's main window.
+ *
+ * Manages the editable in-memory copy of the user's BMailAccountSettings,
+ * dispatches selection changes to AccountConfigView/ProtocolSettingsView/
+ * FiltersConfigView, and writes settings out to disk and to the
+ * BMailDaemon when the user applies them.
  */
 
 
@@ -63,23 +92,47 @@ using std::nothrow;
 //#define HAVE_APPLY_BUTTON
 
 
+/** @brief Posted when the user right-clicks a row in the accounts
+           listview; carries point and index for the popup menu. */
 const uint32 kMsgAccountsRightClicked = 'arcl';
+/** @brief Posted when the listview selection changes. */
 const uint32 kMsgAccountSelected = 'acsl';
+/** @brief Posted when the Add button is clicked; opens AutoConfigWindow. */
 const uint32 kMsgAddAccount = 'adac';
+/** @brief Posted when the Remove button is clicked or DEL is pressed in
+           the listview. */
 const uint32 kMsgRemoveAccount = 'rmac';
 
+/** @brief Reserved for future use to switch the auto-check interval
+           between minutes/hours/days. */
 const uint32 kMsgIntervalUnitChanged = 'iuch';
 
+/** @brief Posted by the "Show notifications" pop-up to live-update the
+           status window mode in the running daemon. */
 const uint32 kMsgShowStatusWindowChanged = 'shst';
+/** @brief Reserved for future status-window appearance change. */
 const uint32 kMsgStatusLookChanged = 'lkch';
+/** @brief Reserved for future status-window workspace change. */
 const uint32 kMsgStatusWorkspaceChanged = 'wsch';
 
+/** @brief Posted when the Apply button is clicked. */
 const uint32 kMsgSaveSettings = 'svst';
+/** @brief Posted when the Revert button is clicked. */
 const uint32 kMsgRevertSettings = 'rvst';
+/** @brief Reserved for future cancel-without-saving flow. */
 const uint32 kMsgCancelSettings = 'cnst';
 
 
 
+/**
+ * @brief Constructs a listview row for one of the four item types tied to
+ *        @a account.
+ *
+ * @param label    Visible text for the row.
+ * @param account  Backing settings; not owned, shared with siblings.
+ * @param type     Discriminator used by the parent window when this row
+ *                 is selected.
+ */
 AccountItem::AccountItem(const char* label, BMailAccountSettings* account,
 	item_types type)
 	:
@@ -90,6 +143,14 @@ AccountItem::AccountItem(const char* label, BMailAccountSettings* account,
 }
 
 
+/**
+ * @brief Forces the bold system font for account-header rows so they read
+ *        as section titles.
+ *
+ * @param owner  Listview that owns this item.
+ * @param font   Font selected by the listview; replaced with
+ *               @c be_bold_font for ACCOUNT_ITEM rows.
+ */
 void
 AccountItem::Update(BView* owner, const BFont* font)
 {
@@ -100,6 +161,14 @@ AccountItem::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief Draws the row, swapping in @c be_bold_font for account-header
+ *        rows around the inherited BStringItem draw.
+ *
+ * @param owner     Listview that triggered the draw.
+ * @param rect      Frame to paint into.
+ * @param complete  Whether the listview wants the entire row redrawn.
+ */
 void
 AccountItem::DrawItem(BView* owner, BRect rect, bool complete)
 {
@@ -115,8 +184,20 @@ AccountItem::DrawItem(BView* owner, BRect rect, bool complete)
 //	#pragma mark -
 
 
+/**
+ * @brief Single-selection BListView specialisation that turns DEL/BS into
+ *        @c kMsgRemoveAccount and right-clicks into
+ *        @c kMsgAccountsRightClicked targeted at the parent window.
+ */
 class AccountsListView : public BListView {
 public:
+	/**
+	 * @brief Constructs an accounts listview that posts custom messages to
+	 *        @a target.
+	 *
+	 * @param target  Handler that receives the right-click and key-driven
+	 *                remove notifications.
+	 */
 	AccountsListView(BHandler* target)
 		:
 		BListView(NULL, B_SINGLE_SELECTION_LIST),
@@ -124,6 +205,13 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Forwards Delete/Backspace as @c kMsgRemoveAccount before
+	 *        delegating to BListView for normal navigation handling.
+	 *
+	 * @param bytes     UTF-8 bytes for the keystroke.
+	 * @param numBytes  Length of @a bytes.
+	 */
 	void
 	KeyDown(const char *bytes, int32 numBytes)
 	{
@@ -136,6 +224,13 @@ public:
 		BListView::KeyDown(bytes,numBytes);
 	}
 
+	/**
+	 * @brief Detects a right-click on a row and posts
+	 *        @c kMsgAccountsRightClicked carrying the screen point and row
+	 *        index.
+	 *
+	 * @param point  Mouse-down location in view coordinates.
+	 */
 	void
 	MouseDown(BPoint point)
 	{
@@ -164,8 +259,18 @@ private:
 };
 
 
+/**
+ * @brief Tiny view that paints a single BBitmap with alpha-overlay
+ *        compositing; used to render the app icon on the empty howto pane.
+ */
 class BitmapView : public BView {
 	public:
+		/**
+		 * @brief Adopts @a bitmap and sizes the view to its bounds.
+		 *
+		 * @param bitmap  Bitmap to display; ownership is transferred to
+		 *                this view.
+		 */
 		BitmapView(BBitmap *bitmap)
 			:
 			BView(NULL, B_WILL_DRAW)
@@ -177,16 +282,24 @@ class BitmapView : public BView {
 			SetExplicitSize(bitmap->Bounds().Size());
 		}
 
+		/** @brief Releases the owned bitmap. */
 		~BitmapView()
 		{
 			delete fBitmap;
 		}
 
+		/** @brief Adopts the parent panel colors so the view blends with
+		           the surrounding pane. */
 		virtual void AttachedToWindow()
 		{
 			AdoptParentColors();
 		}
 
+		/**
+		 * @brief Draws the owned bitmap clipped to @a updateRect.
+		 *
+		 * @param updateRect  Region the system asks us to repaint.
+		 */
 		virtual void Draw(BRect updateRect)
 		{
 			DrawBitmap(fBitmap, updateRect, updateRect);
@@ -200,6 +313,10 @@ class BitmapView : public BView {
 //	#pragma mark -
 
 
+/**
+ * @brief Builds the two-tab layout (Accounts / Settings), loads the
+ *        on-disk settings, and centers the window on screen.
+ */
 ConfigWindow::ConfigWindow()
 	:
 	BWindow(BRect(100, 100, 600, 540), B_TRANSLATE_SYSTEM_NAME("E-mail"),
@@ -341,6 +458,13 @@ ConfigWindow::ConfigWindow()
 }
 
 
+/**
+ * @brief Drains the in-memory account lists, releasing all owned
+ *        BMailAccountSettings objects.
+ *
+ * @note Anything still in @c fToDeleteAccounts is freed here even though
+ *       its on-disk file was already removed during the most recent save.
+ */
 ConfigWindow::~ConfigWindow()
 {
 	while (fAccounts.CountItems() > 0)
@@ -350,6 +474,13 @@ ConfigWindow::~ConfigWindow()
 }
 
 
+/**
+ * @brief Builds the placeholder pane shown on the right when no row is
+ *        selected: app icon plus translated how-to text.
+ *
+ * @return New BView with a BTextView and an optional BitmapView; caller
+ *         takes ownership when adding it to the layout.
+ */
 BView*
 ConfigWindow::_BuildHowToView()
 {
@@ -403,6 +534,13 @@ ConfigWindow::_BuildHowToView()
 }
 
 
+/**
+ * @brief Reloads accounts and general settings from disk, replacing any
+ *        unsaved in-memory state.
+ *
+ * @note Errors retrieving general settings are reported on stderr but do
+ *       not abort the load.
+ */
 void
 ConfigWindow::_LoadSettings()
 {
@@ -423,6 +561,11 @@ ConfigWindow::_LoadSettings()
 }
 
 
+/**
+ * @brief Snapshots the current on-disk BMailAccounts into @c fAccounts as
+ *        editable copies and inserts the corresponding rows into the
+ *        listview.
+ */
 void
 ConfigWindow::_LoadAccounts()
 {
@@ -437,6 +580,14 @@ ConfigWindow::_LoadAccounts()
 }
 
 
+/**
+ * @brief Writes account and general settings to disk, deletes any
+ *        accounts the user removed, and notifies the running mail_daemon.
+ *
+ * Honours @c fSaveSettings: when @c false the function still cleans up
+ * deleted accounts and notifies the daemon, but it skips the actual
+ * writes. Starts or stops the daemon to match the new auto-start flag.
+ */
 void
 ConfigWindow::_SaveSettings()
 {
@@ -510,6 +661,11 @@ ConfigWindow::_SaveSettings()
 }
 
 
+/**
+ * @brief Saves any pending changes and quits the BApplication.
+ *
+ * @return Always @c true; the close is unconditional.
+ */
 bool
 ConfigWindow::QuitRequested()
 {
@@ -520,6 +676,17 @@ ConfigWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Routes BMessages from the listview, the toolbar buttons, and the
+ *        general-settings tab into the appropriate slots.
+ *
+ * Notable behaviours: the right-click handler intentionally falls through
+ * to the selection handler so popping the context menu also moves the
+ * selection; @c kMsgSaveSettings flips @c fSaveSettings before delegating
+ * to _SaveSettings(); B_COLORS_UPDATED retints the howto text view live.
+ *
+ * @param msg  Incoming BMessage.
+ */
 void
 ConfigWindow::MessageReceived(BMessage *msg)
 {
@@ -670,6 +837,15 @@ ConfigWindow::MessageReceived(BMessage *msg)
 }
 
 
+/**
+ * @brief Creates a fresh BMailAccountSettings, registers it with this
+ *        window, and inserts the listview rows for it.
+ *
+ * Used by the AutoConfigWindow wizard once the user clicks Finish.
+ *
+ * @return The newly created account, or @c NULL on allocation failure.
+ *         Ownership stays with this window.
+ */
 BMailAccountSettings*
 ConfigWindow::AddAccount()
 {
@@ -682,6 +858,13 @@ ConfigWindow::AddAccount()
 }
 
 
+/**
+ * @brief Refreshes the listview header label for @a account so name edits
+ *        on the detail pane are reflected immediately.
+ *
+ * @param account  Account whose label needs to be repainted; @c NULL is a
+ *                 no-op.
+ */
 void
 ConfigWindow::AccountUpdated(BMailAccountSettings* account)
 {
@@ -700,6 +883,18 @@ ConfigWindow::AccountUpdated(BMailAccountSettings* account)
 }
 
 
+/**
+ * @brief Pulls general settings (auto-check interval, status-window mode)
+ *        out of @a settings and reflects them in the Settings tab.
+ *
+ * Sends a synthetic @c kMsgShowStatusWindowChanged so the running
+ * mail_daemon picks up the live update.
+ *
+ * @param settings  Source settings; must not be @c NULL.
+ * @retval B_OK         All values applied.
+ * @retval B_BAD_VALUE  @a settings was @c NULL.
+ * @retval (other)      Whatever BMailSettings::InitCheck() returned.
+ */
 status_t
 ConfigWindow::_SetToGeneralSettings(BMailSettings* settings)
 {
@@ -735,6 +930,12 @@ ConfigWindow::_SetToGeneralSettings(BMailSettings* settings)
 }
 
 
+/**
+ * @brief Discards in-memory edits and reloads everything from disk.
+ *
+ * Pops an alert if the general settings could not be re-read; account
+ * lists are always rebuilt from scratch.
+ */
 void
 ConfigWindow::_RevertToLastSettings()
 {
@@ -770,6 +971,15 @@ ConfigWindow::_RevertToLastSettings()
 }
 
 
+/**
+ * @brief Appends the four child rows for @a account (header, inbound,
+ *        outbound, filters) to the listview.
+ *
+ * Inbound and outbound rows are disabled when their direction is turned
+ * off in the account settings.
+ *
+ * @param account  Account to surface in the listview.
+ */
 void
 ConfigWindow::_AddAccountToView(BMailAccountSettings* account)
 {
@@ -797,6 +1007,16 @@ ConfigWindow::_AddAccountToView(BMailAccountSettings* account)
 }
 
 
+/**
+ * @brief Removes @a account from the visible list and queues it for
+ *        deletion at the next save.
+ *
+ * The account is moved to @c fToDeleteAccounts so its on-disk file can be
+ * unlinked when the user applies changes.
+ *
+ * @param account  Account to remove; ownership transfers to
+ *                 @c fToDeleteAccounts.
+ */
 void
 ConfigWindow::_RemoveAccount(BMailAccountSettings* account)
 {
@@ -806,6 +1026,12 @@ ConfigWindow::_RemoveAccount(BMailAccountSettings* account)
 }
 
 
+/**
+ * @brief Strips every listview row that points at @a account and clears
+ *        the detail pane if the account was being shown.
+ *
+ * @param account  Account whose rows should be deleted.
+ */
 void
 ConfigWindow::_RemoveAccountFromListView(BMailAccountSettings* account)
 {
@@ -824,6 +1050,14 @@ ConfigWindow::_RemoveAccountFromListView(BMailAccountSettings* account)
 }
 
 
+/**
+ * @brief Switches the right-hand pane to match @a item's row type.
+ *
+ * Saves any pending changes on the previously selected account first by
+ * calling AccountUpdated() before swapping in the new pane.
+ *
+ * @param item  Listview row that became selected.
+ */
 void
 ConfigWindow::_AccountSelected(AccountItem* item)
 {
@@ -857,6 +1091,13 @@ ConfigWindow::_AccountSelected(AccountItem* item)
 }
 
 
+/**
+ * @brief Tears down whatever pane currently fills the detail area and
+ *        installs @a view in its place.
+ *
+ * @param view  New pane; @c NULL is permitted and leaves the area empty.
+ *              Ownership is transferred to the layout.
+ */
 void
 ConfigWindow::_ReplaceConfigView(BView* view)
 {

@@ -1,10 +1,31 @@
 /*
- * Copyright 2004-2015, Haiku Inc. All rights reserved.
- * Copyright 2001, Dr. Zoidberg Enterprises. All rights reserved.
- * Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>
+ * Copyright 2026, Kintsugi OS Contributors. All rights reserved.
  *
- * Distributed under the terms of the MIT License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2004-2015, Haiku Inc.;
+ * Copyright 2001, Dr. Zoidberg Enterprises;
+ * Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>.
  */
+
+/** @file ConfigWindow.h
+    @brief Top-level Mail preferences window: maintains the account list
+           and the right-hand details pane that shows account, protocol,
+           or filter settings depending on which row is selected. */
+
 #ifndef CONFIG_WINDOW_H
 #define CONFIG_WINDOW_H
 
@@ -27,6 +48,11 @@ class BTextView;
 class CenterContainer;
 
 
+/**
+ * @brief Discriminator for AccountItem's place in the listview hierarchy:
+ *        an account header, its inbound/outbound rows, or its filters
+ *        row.
+ */
 enum item_types {
 	ACCOUNT_ITEM = 0,
 	INBOUND_ITEM,
@@ -35,6 +61,13 @@ enum item_types {
 };
 
 
+/**
+ * @brief List item representing one row in the accounts listview.
+ *
+ * Account-header rows render in bold; the four item types share a single
+ * BMailAccountSettings pointer which the parent window uses to select the
+ * appropriate detail pane.
+ */
 class AccountItem : public BStringItem {
 public:
 								AccountItem(const char* label,
@@ -44,7 +77,11 @@ public:
 			void				Update(BView* owner, const BFont* font);
 			void				DrawItem(BView* owner, BRect rect,
 									bool complete);
+			/** @brief Returns the BMailAccountSettings this row belongs
+			           to; shared with the row's siblings. */
 			BMailAccountSettings* Account() { return fAccount; }
+			/** @brief Returns the item kind so the parent window can pick
+			           the right detail pane. */
 			item_types			Type() { return fType; }
 
 private:
@@ -53,6 +90,11 @@ private:
 };
 
 
+/**
+ * @brief Main Mail preferences window: hosts the account listview, the
+ *        general settings tab, the apply/revert buttons, and the dynamic
+ *        detail pane.
+ */
 class ConfigWindow : public BWindow {
 public:
 								ConfigWindow();

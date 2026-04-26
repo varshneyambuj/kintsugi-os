@@ -1,6 +1,36 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ApplicationTypeWindow.cpp
+ * @brief Editor for an installed application's MIME-type registration.
+ *
+ * Lets the user inspect and modify the BMessage-shaped record stored in a
+ * binary's resources: signature, application flags, icon, supported
+ * types, and version info. Writes are committed back via BAppFileInfo on
+ * Save.
  */
 
 
@@ -46,24 +76,46 @@
 #define B_TRANSLATION_CONTEXT "Application Type Window"
 
 
+/** @brief Posted by the File menu's Save item. */
 const uint32 kMsgSave = 'save';
+/** @brief Live notification from the signature text control. */
 const uint32 kMsgSignatureChanged = 'sgch';
+/** @brief Posted when the "Application flags" check box is toggled. */
 const uint32 kMsgToggleAppFlags = 'tglf';
+/** @brief Posted whenever any of the launch-flag radio buttons or the
+           args-only/background check boxes change. */
 const uint32 kMsgAppFlagsChanged = 'afch';
 
+/** @brief Posted when the application's own icon view is edited. */
 const uint32 kMsgIconChanged = 'icch';
+/** @brief Posted when an icon for one of the supported MIME types is
+           edited. */
 const uint32 kMsgTypeIconsChanged = 'tich';
 
+/** @brief Posted when any version-info text control changes. */
 const uint32 kMsgVersionInfoChanged = 'tvch';
 
+/** @brief Listview selection-change message in the supported types
+           pane. */
 const uint32 kMsgTypeSelected = 'tpsl';
+/** @brief Add-supported-type button click. */
 const uint32 kMsgAddType = 'adtp';
+/** @brief Reply from TypeListWindow carrying the chosen type. */
 const uint32 kMsgTypeAdded = 'tpad';
+/** @brief Remove-supported-type button click. */
 const uint32 kMsgRemoveType = 'rmtp';
+/** @brief Reserved for future use when the sister window confirms a
+           removal. */
 const uint32 kMsgTypeRemoved = 'tprm';
 
 
-//! TextView that filters the tab key to be able to tab-navigate while editing
+/**
+ * @brief BTextView subclass that intercepts the Tab key so it advances
+ *        keyboard focus instead of inserting a tab character.
+ *
+ * Optionally posts a "changed" message to the window after every text
+ * mutation so the parent can recompute the dirty flag.
+ */
 class TabFilteringTextView : public BTextView {
 public:
 								TabFilteringTextView(const char* name,
@@ -83,6 +135,10 @@ private:
 };
 
 
+/**
+ * @brief List row representing one MIME type the application declares it
+ *        can open, paired with its custom icon.
+ */
 class SupportedTypeItem : public BStringItem {
 public:
 								SupportedTypeItem(const char* type);
@@ -102,6 +158,10 @@ private:
 };
 
 
+/**
+ * @brief DropTargetListView that accepts file drops and synthesises new
+ *        supported-type rows from the dragged files' MIME types.
+ */
 class SupportedTypeListView : public DropTargetListView {
 public:
 								SupportedTypeListView(const char* name,
@@ -119,6 +179,14 @@ public:
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the text view with optional change-notification.
+ *
+ * @param name                 BView name forwarded to BTextView.
+ * @param changedMessageWhat   Message what code posted to the window after
+ *                             every mutation; @c 0 disables the
+ *                             notification.
+ */
 TabFilteringTextView::TabFilteringTextView(const char* name,
 	uint32 changedMessageWhat)
 	:
@@ -129,11 +197,22 @@ TabFilteringTextView::TabFilteringTextView(const char* name,
 }
 
 
+/** @brief Trivial destructor; the optional change message is owned by the
+           BTextView base. */
 TabFilteringTextView::~TabFilteringTextView()
 {
 }
 
 
+/**
+ * @brief Inserts @a text at @a offset and posts the optional changed
+ *        notification.
+ *
+ * @param text    Bytes to insert.
+ * @param length  Length of @a text in bytes.
+ * @param offset  Insertion offset measured in bytes from the start.
+ * @param runs    Optional formatting array passed through unchanged.
+ */
 void
 TabFilteringTextView::InsertText(const char* text, int32 length, int32 offset,
 	const text_run_array* runs)
@@ -144,6 +223,13 @@ TabFilteringTextView::InsertText(const char* text, int32 length, int32 offset,
 }
 
 
+/**
+ * @brief Deletes the byte range and posts the optional changed
+ *        notification.
+ *
+ * @param fromOffset  Start of the range, inclusive.
+ * @param toOffset    End of the range, exclusive.
+ */
 void
 TabFilteringTextView::DeleteText(int32 fromOffset, int32 toOffset)
 {
@@ -153,6 +239,13 @@ TabFilteringTextView::DeleteText(int32 fromOffset, int32 toOffset)
 }
 
 
+/**
+ * @brief Routes Tab keystrokes through BView so focus traversal works,
+ *        leaving every other key to the BTextView default.
+ *
+ * @param bytes  UTF-8 bytes for the keystroke.
+ * @param count  Length of @a bytes.
+ */
 void
 TabFilteringTextView::KeyDown(const char* bytes, int32 count)
 {
@@ -163,6 +256,12 @@ TabFilteringTextView::KeyDown(const char* bytes, int32 count)
 }
 
 
+/**
+ * @brief Records the wrapping scroll view so its border highlight tracks
+ *        focus.
+ *
+ * @param scroller  Outer BScrollView that contains this text view.
+ */
 void
 TabFilteringTextView::TargetedByScrollView(BScrollView* scroller)
 {
@@ -170,6 +269,13 @@ TabFilteringTextView::TargetedByScrollView(BScrollView* scroller)
 }
 
 
+/**
+ * @brief Forwards focus changes and toggles the scroll view's highlighted
+ *        border.
+ *
+ * @param focused  @c true if the view is gaining focus, @c false if it
+ *                 is losing focus.
+ */
 void
 TabFilteringTextView::MakeFocus(bool focused)
 {
@@ -183,6 +289,14 @@ TabFilteringTextView::MakeFocus(bool focused)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a row for the MIME type @a type.
+ *
+ * Replaces the default label with the type's localised short description
+ * when one is registered, falling back to the raw type string otherwise.
+ *
+ * @param type  Full MIME type identifier.
+ */
 SupportedTypeItem::SupportedTypeItem(const char* type)
 	: BStringItem(type),
 	fType(type)
@@ -195,11 +309,19 @@ SupportedTypeItem::SupportedTypeItem(const char* type)
 }
 
 
+/** @brief Trivial destructor; the embedded Icon owns its own data. */
 SupportedTypeItem::~SupportedTypeItem()
 {
 }
 
 
+/**
+ * @brief Replaces this row's icon by copy, or clears it when @a icon is
+ *        @c NULL.
+ *
+ * @param icon  Source icon copied into the row; @c NULL to remove the
+ *              icon.
+ */
 void
 SupportedTypeItem::SetIcon(::Icon* icon)
 {
@@ -210,6 +332,13 @@ SupportedTypeItem::SetIcon(::Icon* icon)
 }
 
 
+/**
+ * @brief Loads this row's icon from the per-type icon stored on the file
+ *        @a ref.
+ *
+ * @param ref   Application binary whose resources hold the icon.
+ * @param type  Specific MIME type whose icon should be read.
+ */
 void
 SupportedTypeItem::SetIcon(entry_ref& ref, const char* type)
 {
@@ -217,6 +346,15 @@ SupportedTypeItem::SetIcon(entry_ref& ref, const char* type)
 }
 
 
+/**
+ * @brief BList-style comparator that orders rows by display label and
+ *        breaks ties on the underlying type string.
+ *
+ * @param _a  Pointer to a SupportedTypeItem pointer.
+ * @param _b  Pointer to a SupportedTypeItem pointer.
+ * @return Negative when @a a sorts before @a b, positive when after, zero
+ *         when equal.
+ */
 /*static*/
 int
 SupportedTypeItem::Compare(const void* _a, const void* _b)
@@ -235,6 +373,14 @@ SupportedTypeItem::Compare(const void* _a, const void* _b)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the listview, forwarding all parameters to
+ *        DropTargetListView.
+ *
+ * @param name   View name.
+ * @param type   Selection mode (single or multiple).
+ * @param flags  Standard BView creation flags.
+ */
 SupportedTypeListView::SupportedTypeListView(const char* name,
 	list_view_type type, uint32 flags)
 	:
@@ -243,11 +389,21 @@ SupportedTypeListView::SupportedTypeListView(const char* name,
 }
 
 
+/** @brief Trivial destructor. */
 SupportedTypeListView::~SupportedTypeListView()
 {
 }
 
 
+/**
+ * @brief Handles drops by adding each dragged file's MIME type as a new
+ *        unique row, then re-sorting alphabetically.
+ *
+ * @param message  Incoming BMessage; only drop messages are intercepted,
+ *                 others fall through to the base class.
+ * @todo Identify the file when it has no MIME type so we can still suggest
+ *       a type to add.
+ */
 void
 SupportedTypeListView::MessageReceived(BMessage* message)
 {
@@ -287,6 +443,13 @@ SupportedTypeListView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Reports whether the listview should accept @a message as a drag.
+ *
+ * @param message  Drag message; only those carrying @c B_REF_TYPE refs
+ *                 are accepted.
+ * @return @c true when at least one entry_ref is present.
+ */
 bool
 SupportedTypeListView::AcceptsDrag(const BMessage* message)
 {
@@ -298,6 +461,18 @@ SupportedTypeListView::AcceptsDrag(const BMessage* message)
 //	#pragma mark -
 
 
+/**
+ * @brief Lays out the editor and pre-fills it from the resources of the
+ *        application at @a entry.
+ *
+ * Restores the previously saved frame from @a settings if present,
+ * subscribes to MIME-database change notifications, and gives focus to
+ * the signature field.
+ *
+ * @param settings  Persisted preferences; consulted for the
+ *                  @c "app_type_next_frame" rect.
+ * @param entry     Application binary to edit.
+ */
 ApplicationTypeWindow::ApplicationTypeWindow(const BMessage& settings, const BEntry& entry)
 	:
 	BWindow(_Frame(settings), B_TRANSLATE("Application type"), B_TITLED_WINDOW,
@@ -520,11 +695,20 @@ ApplicationTypeWindow::ApplicationTypeWindow(const BMessage& settings, const BEn
 }
 
 
+/** @brief Stops watching the MIME database before tearing the window
+           down. */
 ApplicationTypeWindow::~ApplicationTypeWindow()
 {
 	BMimeType::StopWatching(this);
 }
 
+/**
+ * @brief Returns the saved window frame from @a settings, or a default
+ *        rect when no value is stored.
+ *
+ * @param settings  Persisted preferences.
+ * @return Frame rect to use for the window.
+ */
 BRect
 ApplicationTypeWindow::_Frame(const BMessage& settings) const
 {
@@ -535,6 +719,13 @@ ApplicationTypeWindow::_Frame(const BMessage& settings) const
 	return BRect(100.0f, 110.0f, 250.0f, 340.0f);
 }
 
+/**
+ * @brief Builds the localised window title based on the application's
+ *        leaf name.
+ *
+ * @param entry  Application binary.
+ * @return Window title, e.g. "<NAME> application type".
+ */
 BString
 ApplicationTypeWindow::_Title(const BEntry& entry)
 {
@@ -548,6 +739,15 @@ ApplicationTypeWindow::_Title(const BEntry& entry)
 }
 
 
+/**
+ * @brief Loads the contents of @a entry into every editable field and
+ *        snapshots the original values so dirty detection works.
+ *
+ * Silently returns if the file or its BAppFileInfo cannot be opened so
+ * the rest of the window stays usable.
+ *
+ * @param entry  Application binary to edit.
+ */
 void
 ApplicationTypeWindow::_SetTo(const BEntry& entry)
 {
@@ -688,6 +888,10 @@ ApplicationTypeWindow::_SetTo(const BEntry& entry)
 }
 
 
+/**
+ * @brief Greys out the launch-flag controls when the master "Application
+ *        flags" check box is off.
+ */
 void
 ApplicationTypeWindow::_UpdateAppFlagsEnabled()
 {
@@ -701,6 +905,14 @@ ApplicationTypeWindow::_UpdateAppFlagsEnabled()
 }
 
 
+/**
+ * @brief Configures @a control to accept only ASCII digits.
+ *
+ * Used for the version-number controls so non-numeric input cannot reach
+ * the BAppFileInfo encoder.
+ *
+ * @param control  Text control to constrain in place.
+ */
 void
 ApplicationTypeWindow::_MakeNumberTextControl(BTextControl* control)
 {
@@ -715,6 +927,15 @@ ApplicationTypeWindow::_MakeNumberTextControl(BTextControl* control)
 }
 
 
+/**
+ * @brief Writes every editable field back into the application binary's
+ *        BAppFileInfo.
+ *
+ * Order matters: signature first, then flags (or removal), version info,
+ * the application icon, supported types, and finally per-type icons. On
+ * success the cached @c fOriginalInfo and dirty flags are reset so the
+ * Save menu item disables itself.
+ */
 void
 ApplicationTypeWindow::_Save()
 {
@@ -775,6 +996,13 @@ ApplicationTypeWindow::_Save()
 }
 
 
+/**
+ * @brief Recomputes the dirty bitmap and enables the Save menu item if
+ *        anything changed.
+ *
+ * @param flags  Bitmask of @c CHECK_* properties that just changed and
+ *               need re-evaluation.
+ */
 void
 ApplicationTypeWindow::_CheckSaveMenuItem(uint32 flags)
 {
@@ -783,6 +1011,14 @@ ApplicationTypeWindow::_CheckSaveMenuItem(uint32 flags)
 }
 
 
+/**
+ * @brief Field-wise inequality test for the @c version_info struct.
+ *
+ * @param a  Left operand.
+ * @param b  Right operand.
+ * @return @c true when any field differs, @c false when both records
+ *         compare equal.
+ */
 bool
 operator!=(const version_info& a, const version_info& b)
 {
@@ -793,6 +1029,16 @@ operator!=(const version_info& a, const version_info& b)
 }
 
 
+/**
+ * @brief Computes which @c CHECK_* properties currently differ from their
+ *        snapshot in @c fOriginalInfo.
+ *
+ * For each bit set in @a _flags the corresponding property is re-tested;
+ * unset bits keep their previous dirty-bit value.
+ *
+ * @param _flags  Properties to re-evaluate.
+ * @return Updated dirty bitmap.
+ */
 uint32
 ApplicationTypeWindow::_NeedsSaving(uint32 _flags) const
 {
@@ -849,6 +1095,17 @@ ApplicationTypeWindow::_NeedsSaving(uint32 _flags) const
 // #pragma mark -
 
 
+/**
+ * @brief Reads the launch-flag radio buttons and check boxes into a
+ *        @c B_*_LAUNCH bitmap.
+ *
+ * @param flags  Output: composite bitmap of B_SINGLE_LAUNCH /
+ *               B_MULTIPLE_LAUNCH / B_EXCLUSIVE_LAUNCH plus
+ *               B_ARGV_ONLY and B_BACKGROUND_APP.
+ * @return @c true when the master "Application flags" check box is on
+ *         and @a flags is meaningful; @c false when flags should not be
+ *         persisted at all.
+ */
 bool
 ApplicationTypeWindow::_Flags(uint32& flags) const
 {
@@ -871,6 +1128,12 @@ ApplicationTypeWindow::_Flags(uint32& flags) const
 }
 
 
+/**
+ * @brief Builds the BMessage representation of the supported-types list
+ *        in the order the listview currently shows them.
+ *
+ * @return BMessage containing one @c "types" string per row.
+ */
 BMessage
 ApplicationTypeWindow::_SupportedTypes() const
 {
@@ -886,6 +1149,13 @@ ApplicationTypeWindow::_SupportedTypes() const
 }
 
 
+/**
+ * @brief Reads the four version-number controls plus the variety menu and
+ *        descriptions into a @c version_info.
+ *
+ * @return Populated version_info ready to be passed to
+ *         BAppFileInfo::SetVersionInfo().
+ */
 version_info
 ApplicationTypeWindow::_VersionInfo() const
 {
@@ -906,6 +1176,18 @@ ApplicationTypeWindow::_VersionInfo() const
 // #pragma mark -
 
 
+/**
+ * @brief Routes BMessages from the menu, the toolbar, the supported-type
+ *        listview, and the MIME database watcher.
+ *
+ * Most cases just flag the appropriate dirty bit via _CheckSaveMenuItem();
+ * the supported-type add/remove cases manipulate the listview rows and
+ * push the change through.
+ *
+ * @param message  Incoming BMessage.
+ * @todo Add support for B_SIMPLE_DATA-dragged refs and react to
+ *       B_META_MIME_CHANGED notifications.
+ */
 void
 ApplicationTypeWindow::MessageReceived(BMessage* message)
 {
@@ -1054,6 +1336,13 @@ ApplicationTypeWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Prompts to save when there are unsaved changes, then persists
+ *        the final frame and notifies the application.
+ *
+ * @return @c true when the window should actually close; @c false if the
+ *         user picked Cancel from the save-prompt alert.
+ */
 bool
 ApplicationTypeWindow::QuitRequested()
 {

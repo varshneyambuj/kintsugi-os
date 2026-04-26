@@ -1,11 +1,28 @@
 /*
- * Copyright 2007 Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- *		Ryan Leavengood, leavengood@gmail.com
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2007, Haiku.
+ * Original authors: Oliver Ruiz Dorantes, Ryan Leavengood.
  */
+
+/** @file CalibWin.h
+    @brief Placeholder calibration window class for joystick preferences. */
+
 #ifndef _CALIB_WIN_H
 #define _CALIB_WIN_H
 
@@ -22,12 +39,19 @@ class BBox;
 /*
 	All this code is here is just to not have an empty view at
 	Clicking the Calibrate function.
-	
+
 	All controls in this view needs to be created and placed dynamically according
 	with the Joystick descriptors
 */
 
 
+/**
+ * @brief Placeholder calibration window.
+ *
+ * Owns a static set of dummy buttons and labels so the calibration entry
+ * point has something to display. The intent is for the controls to be
+ * rebuilt dynamically from the joystick descriptor.
+ */
 class CalibWin : public BWindow
 {
 	public:

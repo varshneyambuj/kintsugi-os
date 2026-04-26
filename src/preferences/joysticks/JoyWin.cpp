@@ -1,12 +1,46 @@
 /*
- * Copyright 2007-2009 Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Ruiz Dorantes	oliver.ruiz.dorantes_at_gmail.com
- *		Ryan Leavengood			leavengood@gmail.com
- *		Fredrik Modéen 			fredrik@modeen.se
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2009 Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *       Ryan Leavengood, leavengood@gmail.com
+ *       Fredrik Modéen, fredrik@modeen.se
  */
+
+
+/**
+ * @file JoyWin.cpp
+ * @brief Main window of the Joysticks preference panel.
+ *
+ * JoyWin presents two side-by-side lists: one of game ports detected on the
+ * machine and one of known controller descriptors found under the joystick
+ * data directory. The user can probe a port for an attached controller,
+ * disable a port, or open a calibration window. Selections are persisted as
+ * symlinks under the joystick settings directory.
+ *
+ * @see PortItem, MessageWin, CalibWin
+ */
+
 
 #include "JoyWin.h"
 #include "MessageWin.h"
@@ -40,11 +74,22 @@
 #include <FindDirectory.h>
 #include <Joystick.h>
 
+/** @brief Devfs directory containing per-port joystick device nodes. */
 #define JOYSTICKPATH "/dev/joystick/"
+/** @brief System directory shipped with controller descriptor files. */
 #define JOYSTICKFILEPATH "/boot/system/data/joysticks/"
+/** @brief User settings directory holding port-to-controller symlinks. */
 #define JOYSTICKFILESETTINGS "/boot/home/config/settings/joysticks/"
+/** @brief Reusable alert text shown when no game port is selected. */
 #define SELECTGAMEPORTFIRST "Select a game port first"
 
+/**
+ * @brief Shows a single-button informational alert.
+ *
+ * @param string Message text to display in the alert.
+ *
+ * @return The button index returned by BAlert::Go() (always 0 here).
+ */
 static int
 ShowMessage(char* string)
 {
@@ -53,6 +98,16 @@ ShowMessage(char* string)
 	return alert->Go();
 }
 
+/**
+ * @brief Constructs the main JoyWin and populates its lists.
+ *
+ * Sets up the game-port and controller list views, action buttons, and the
+ * disable checkbox; then enumerates devices via BJoystick and known
+ * descriptor files under JOYSTICKFILEPATH.
+ *
+ * @param frame Initial window frame.
+ * @param title Window title.
+ */
 JoyWin::JoyWin(BRect frame, const char *title)
 	: BWindow(frame, title, B_DOCUMENT_WINDOW_LOOK, B_NORMAL_WINDOW_FEEL,
 		B_NOT_ZOOMABLE), fSystemUsedSelect(false),
@@ -124,6 +179,10 @@ JoyWin::JoyWin(BRect frame, const char *title)
 }
 
 
+/**
+ * @brief Destructor; asks the application to terminate when the window is
+ *        gone.
+ */
 JoyWin::~JoyWin()
 {
 	//delete fFileTempProbeJoystick;
@@ -131,6 +190,15 @@ JoyWin::~JoyWin()
 }
 
 
+/**
+ * @brief Dispatches BMessages from the controls in this window.
+ *
+ * Handles port and controller selection events, the disable checkbox, the
+ * Probe and Calibrate buttons, and list invocations. Unknown messages are
+ * forwarded to the BWindow base class.
+ *
+ * @param message Incoming BMessage whose @c what code drives the dispatch.
+ */
 void
 JoyWin::MessageReceived(BMessage *message)
 {
@@ -266,6 +334,11 @@ JoyWin::MessageReceived(BMessage *message)
 }
 
 
+/**
+ * @brief Persists pending changes before allowing the window to close.
+ *
+ * @return The default BWindow::QuitRequested() result.
+ */
 bool
 JoyWin::QuitRequested()
 {
@@ -275,6 +348,21 @@ JoyWin::QuitRequested()
 
 
 //---------------------- Private ---------------------------------//
+/**
+ * @brief Recursively adds files under @a rootPath to @a list as PortItems.
+ *
+ * Used to populate the controller list from the system descriptor
+ * directory. Only regular files are added; subdirectories are walked.
+ *
+ * @param list      Target list view receiving newly created PortItems.
+ * @param command   Reserved for command association (currently unused).
+ * @param rootPath  Filesystem path used as the prefix to strip from entries.
+ * @param rootEntry Optional starting BEntry; when NULL the walk begins at
+ *                  @a rootPath.
+ *
+ * @retval B_OK    Walk completed successfully.
+ * @retval B_ERROR Both @a rootEntry and @a rootPath were NULL.
+ */
 status_t
 JoyWin::_AddToList(BListView *list, uint32 command, const char* rootPath,
 	BEntry *rootEntry)
@@ -304,6 +392,11 @@ JoyWin::_AddToList(BListView *list, uint32 command, const char* rootPath,
 }
 
 
+/**
+ * @brief Opens the placeholder calibration window.
+ *
+ * @return B_OK once the window has been allocated and shown.
+ */
 status_t
 JoyWin::_Calibrate()
 {
@@ -316,6 +409,21 @@ JoyWin::_Calibrate()
 }
 
 
+/**
+ * @brief Probes a game port for any known controller descriptor.
+ *
+ * Asks the user for confirmation, then iterates the controller list and
+ * displays the search progress in a transient MessageWin. Always shows the
+ * "no compatible joystick" alert at the end because real probing is not yet
+ * implemented.
+ *
+ * @param path Device name of the port to probe (no leading
+ *             /dev/joystick/ prefix).
+ *
+ * @retval B_OK  Probe completed (whether or not anything matched).
+ * @retval other Whatever @c _ShowProbeMesage() returned when the user
+ *               cancelled the prompt.
+ */
 status_t
 JoyWin::_PerformProbe(const char* path)
 {
@@ -354,6 +462,17 @@ JoyWin::_PerformProbe(const char* path)
 }
 
 
+/**
+ * @brief Persists the list of disabled ports.
+ *
+ * Builds the disabled-joysticks file content but currently does not write
+ * it; serialization is left as a TODO.
+ *
+ * @return Always B_OK.
+ *
+ * @todo Save the string as @c disabled_joysticks under
+ *       @c /boot/home/config/settings.
+ */
 status_t
 JoyWin::_ApplyChanges()
 {
@@ -364,6 +483,14 @@ JoyWin::_ApplyChanges()
 }
 
 
+/**
+ * @brief Reads the disabled-joysticks settings file at startup.
+ *
+ * @return Always B_OK.
+ *
+ * @todo Read @c /boot/home/config/settings/disabled_joysticks and apply the
+ *       disabled state to matching port items.
+ */
 status_t
 JoyWin::_GetSettings()
 {
@@ -373,6 +500,14 @@ JoyWin::_GetSettings()
 }
 
 
+/**
+ * @brief Tests whether a settings symlink for @a path already exists.
+ *
+ * @param path Port name to look up under JOYSTICKFILESETTINGS.
+ *
+ * @retval B_OK    The settings file exists and is readable.
+ * @retval B_ERROR No matching file was found.
+ */
 status_t
 JoyWin::_CheckJoystickExist(const char* path)
 {
@@ -389,6 +524,17 @@ JoyWin::_CheckJoystickExist(const char* path)
 }
 
 
+/**
+ * @brief Displays a confirmation dialog before probing a port.
+ *
+ * Warns the user that probing may, in theory, lock up the machine. Only
+ * proceed if the user clicks Probe.
+ *
+ * @param device Port device name shown in the message body.
+ *
+ * @retval B_OK    User chose to proceed with probing.
+ * @retval B_ERROR User cancelled or pressed Escape.
+ */
 status_t
 JoyWin::_ShowProbeMesage(const char* device)
 {
@@ -410,6 +556,16 @@ JoyWin::_ShowProbeMesage(const char* device)
 
 
 //Used when a files/joysticks are no were to be found
+/**
+ * @brief Prompts the user when a port has no associated descriptor file.
+ *
+ * Offers to autodetect the connected joystick.
+ *
+ * @param port Port device name shown in the message.
+ *
+ * @retval B_OK    User chose Probe to autodetect.
+ * @retval B_ERROR User chose Stop.
+ */
 status_t
 JoyWin::_ShowCantFindFileMessage(const char* port)
 {
@@ -429,6 +585,10 @@ JoyWin::_ShowCantFindFileMessage(const char* port)
 }
 
 
+/**
+ * @brief Shows the alert displayed when no compatible joystick is detected
+ *        on the probed port.
+ */
 void
 JoyWin::_ShowNoCompatibleJoystickMessage()
 {
@@ -441,6 +601,12 @@ JoyWin::_ShowNoCompatibleJoystickMessage()
 	alert->Go();
 }
 
+/**
+ * @brief Shows an alert reporting that @a joy is not connected to @a port.
+ *
+ * @param joy  Name of the controller the user expected to use.
+ * @param port Game port the controller was expected to be on.
+ */
 void
 JoyWin::_ShowNoDeviceConnectedMessage(const char* joy, const char* port)
 {
@@ -454,6 +620,15 @@ JoyWin::_ShowNoDeviceConnectedMessage(const char* joy, const char* port)
 
 
 // Use this function to get a string of disabled ports
+/**
+ * @brief Builds the textual content of the disabled-joysticks settings
+ *        file.
+ *
+ * Iterates the port list and adds a @c disable line for every port that is
+ * marked as disabled in the UI.
+ *
+ * @return A BString ready to be written to the settings file.
+ */
 BString
 JoyWin::_BuildDisabledJoysticksFile()
 {
@@ -471,6 +646,13 @@ JoyWin::_BuildDisabledJoysticksFile()
 }
 
 
+/**
+ * @brief Returns the currently selected PortItem in @a list.
+ *
+ * @param list List view to query.
+ *
+ * @return The selected PortItem, or NULL if nothing is selected.
+ */
 PortItem*
 JoyWin::_GetSelectedItem(BListView* list)
 {
@@ -484,6 +666,13 @@ JoyWin::_GetSelectedItem(BListView* list)
 }
 
 
+/**
+ * @brief Strips any directory prefix from @a port, returning the basename.
+ *
+ * @param port File path or port label.
+ *
+ * @return Bare name with leading directories removed.
+ */
 BString
 JoyWin::_FixPathToName(const char* port)
 {
@@ -493,6 +682,15 @@ JoyWin::_FixPathToName(const char* port)
 }
 
 
+/**
+ * @brief Updates the enabled state of every PortItem in a list.
+ *
+ * Clears the current selection and then forces every item's enabled flag to
+ * @a enable.
+ *
+ * @param list   List view to walk.
+ * @param enable New enabled state to apply to every item.
+ */
 void
 JoyWin::_SelectDeselectJoystick(BListView* list, bool enable)
 {
@@ -510,6 +708,14 @@ JoyWin::_SelectDeselectJoystick(BListView* list, bool enable)
 }
 
 
+/**
+ * @brief Searches @a view for a PortItem whose label matches @a item.
+ *
+ * @param view List view to scan.
+ * @param item Item carrying the label to match against.
+ *
+ * @return Index of the matching item or -1 when no match is found.
+ */
 int32
 JoyWin::_FindStringItemInList(BListView *view, PortItem *item)
 {
@@ -526,6 +732,18 @@ JoyWin::_FindStringItemInList(BListView *view, PortItem *item)
 }
 
 
+/**
+ * @brief Resolves the target of a settings symlink.
+ *
+ * Looks up @c symLinkPath/item->Text() and, if it is a symlink, returns the
+ * absolute path it points at.
+ *
+ * @param symLinkPath Directory containing the symlink.
+ * @param item        PortItem whose label is used as the file name.
+ *
+ * @return Absolute target path, or a NULL BString if the entry is not a
+ *         symlink.
+ */
 BString
 JoyWin::_FindFilePathForSymLink(const char* symLinkPath, PortItem *item)
 {
@@ -544,6 +762,15 @@ JoyWin::_FindFilePathForSymLink(const char* symLinkPath, PortItem *item)
 }
 
 
+/**
+ * @brief Attempts to open a BJoystick on the named device.
+ *
+ * @param name Joystick device path passed to BJoystick::Open().
+ *
+ * @return The status_t reported by BJoystick::Open().
+ *
+ * @note The temporary BJoystick is leaked. Provided as a probe helper.
+ */
 status_t
 JoyWin::_FindStick(const char* name)
 {
@@ -552,6 +779,19 @@ JoyWin::_FindStick(const char* name)
 }
 
 
+/**
+ * @brief Tries to read a controller descriptor file by name.
+ *
+ * Currently only opens the file and reports any error; descriptor parsing
+ * is left as a TODO and the function always returns the empty string.
+ *
+ * @param name    Descriptor file basename.
+ * @param strPath Directory where descriptors are stored.
+ *
+ * @return Always the empty string.
+ *
+ * @todo Parse the descriptor and try to open the matching joystick.
+ */
 const char*
 JoyWin::_FindSettingString(const char* name, const char* strPath)
 {

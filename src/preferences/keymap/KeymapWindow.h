@@ -1,14 +1,29 @@
 /*
- * Copyright 2004-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Alexandre Deckner, alex@zappotek.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval
- *		John Scipione, jscipione@gmai.com
- *		Sandor Vroemisse
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2004-2014 Haiku, Inc.
+ * Original authors: Alexandre Deckner, Axel Dörfler, Jérôme Duval,
+ *                   John Scipione, Sandor Vroemisse.
  */
+
+/** @file KeymapWindow.h
+    @brief Top-level window for the Keymap preferences applet. */
+
 #ifndef KEYMAP_WINDOW_H
 #define KEYMAP_WINDOW_H
 
@@ -29,6 +44,15 @@ class KeyboardLayoutView;
 class KeymapListItem;
 
 
+/**
+ * @brief Main window of the Keymap preferences applet.
+ *
+ * Hosts the system and user keymap lists, the editable
+ * KeyboardLayoutView, the dead-key menu, the layout/font menus, and
+ * the Defaults/Revert buttons. Owns the active, applied, and
+ * previous keymap snapshots so the user can preview, apply, revert,
+ * or save changes via Open/Save-As panels.
+ */
 class KeymapWindow : public BWindow {
 public:
 								KeymapWindow();

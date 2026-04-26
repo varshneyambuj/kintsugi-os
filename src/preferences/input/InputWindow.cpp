@@ -1,10 +1,43 @@
 /*
- * Copyright 2019-2020, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Preetpal Kaur <preetpalok123@gmail.com>
- *		Adrien Destugues <pulkomandy@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019-2020, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ *       Adrien Destugues <pulkomandy@gmail.com>
+ */
+
+
+/**
+ * @file InputWindow.cpp
+ * @brief Implementation of InputWindow, the top-level Input preference window.
+ *
+ * InputWindow shows a BListView of input devices on the left and a
+ * BCardView holding the matching settings card on the right (Mouse,
+ * Touchpad, or Keyboard). It listens for B_INPUT_DEVICES_CHANGED to add
+ * or remove cards as devices are hot-plugged. Per-device messages are
+ * dispatched to the visible card.
+ *
+ * @see InputApplication, DeviceListItemView
  */
 
 
@@ -32,6 +65,16 @@
 #define B_TRANSLATION_CONTEXT "InputWindow"
 
 
+/**
+ * @brief Constructs the Input preferences window.
+ *
+ * Builds the device list inside a fancy-bordered BScrollView, the BCardView
+ * that hosts the per-device settings cards, and a 1:3 horizontal layout
+ * for the two. Calls FindDevice() to populate the list with currently
+ * attached input devices.
+ *
+ * @param rect  Initial screen rectangle for the window.
+ */
 InputWindow::InputWindow(BRect rect)
 	:
 	BWindow(rect, B_TRANSLATE_SYSTEM_NAME("Input"), B_TITLED_WINDOW,
@@ -58,6 +101,18 @@ InputWindow::InputWindow(BRect rect)
 }
 
 
+/**
+ * @brief Routes selection changes and per-device messages to the right card.
+ *
+ * ITEM_SELECTED switches the BCardView to the matching index. Mouse,
+ * touchpad, and keyboard messages are forwarded to the currently visible
+ * card so each settings page only sees messages it can handle.
+ * B_INPUT_DEVICES_CHANGED triggers AddDevice/remove dispatch as devices
+ * are hot-plugged.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BWindow::MessageReceived.
+ */
 void
 InputWindow::MessageReceived(BMessage* message)
 {
@@ -138,6 +193,12 @@ InputWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Centres the window on screen and starts watching device hot-plug.
+ *
+ * Calls watch_input_devices(this, true) so that subsequent add/remove
+ * notifications are delivered to MessageReceived().
+ */
 void
 InputWindow::Show()
 {
@@ -147,6 +208,9 @@ InputWindow::Show()
 }
 
 
+/**
+ * @brief Hides the window and stops watching for device hot-plug events.
+ */
 void
 InputWindow::Hide()
 {
@@ -155,6 +219,15 @@ InputWindow::Hide()
 }
 
 
+/**
+ * @brief Populates the device list from the current input device set.
+ *
+ * Calls get_input_devices() and walks the resulting BList, handing each
+ * BInputDevice to AddDevice().
+ *
+ * @return B_OK on success or an error code propagated from
+ *         get_input_devices().
+ */
 status_t
 InputWindow::FindDevice()
 {
@@ -178,6 +251,17 @@ InputWindow::FindDevice()
 }
 
 
+/**
+ * @brief Adds a settings card and a list row for a single input device.
+ *
+ * Inspects the device type and name to build the appropriate card:
+ * touchpad pointer devices get a TouchpadPrefView, other pointing devices
+ * get an InputMouse, keyboards get an InputKeyboard. Devices of unknown
+ * type are deleted to release the kit-allocated BInputDevice.
+ *
+ * @param dev  BInputDevice to add. Ownership is transferred to either
+ *             this view or to delete on the unhandled path.
+ */
 void
 InputWindow::AddDevice(BInputDevice* dev)
 {

@@ -1,7 +1,38 @@
 /*
- * Copyright 2005-2010, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2009-2010, Adrien Destugues <pulkomandy@gmail.com>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2009-2010, Adrien Destugues <pulkomandy@gmail.com>.
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file LocaleWindow.cpp
+ * @brief Implementation of LocaleWindow, the main Locale preferences frame.
+ *
+ * Builds the available, preferred, and formatting-conventions list
+ * views, wires them together with drag-and-drop, and synchronises the
+ * preferred-language list with the LocaleRoster. Also captures the
+ * pre-edit conventions and preferred-language list so the Revert
+ * button can restore them.
  */
 
 
@@ -50,6 +81,13 @@ static const uint32 kMsgDefaults = 'dflt';
 static const uint32 kMsgPreferredLanguagesChanged = 'lang';
 
 
+/**
+ * @brief Locale-aware comparator for LanguageListItem list ordering.
+ *
+ * @param _a  First item.
+ * @param _b  Second item.
+ * @return    Standard comparator result usable with BList::SortItems().
+ */
 static int
 compare_typed_list_items(const BListItem* _a, const BListItem* _b)
 {
@@ -64,6 +102,14 @@ compare_typed_list_items(const BListItem* _a, const BListItem* _b)
 
 // #pragma mark -
 
+/**
+ * @brief Constructs the Locale window and assembles its tabbed UI.
+ *
+ * Discovers the available languages and country-specific formatting
+ * conventions through the locale roster, fills the available,
+ * preferred, and conventions lists, and snapshots the conventions
+ * selection that was active when the window opened.
+ */
 LocaleWindow::LocaleWindow()
 	:
 	BWindow(BRect(0, 0, 0, 0), B_TRANSLATE_SYSTEM_NAME("Locale"), B_TITLED_WINDOW,
@@ -280,11 +326,23 @@ LocaleWindow::LocaleWindow()
 }
 
 
+/**
+ * @brief Destroys the window. Owned controls are released by the layout system.
+ */
 LocaleWindow::~LocaleWindow()
 {
 }
 
 
+/**
+ * @brief Dispatches every locale-related message arriving at the window.
+ *
+ * Handles drags between the available and preferred lists,
+ * Defaults/Revert clicks, conventions selection, the language
+ * invocation/delete shortcuts, and the filesystem-translation toggle.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 LocaleWindow::MessageReceived(BMessage* message)
 {
@@ -458,6 +516,9 @@ LocaleWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Allows the window to close unconditionally.
+ */
 bool
 LocaleWindow::QuitRequested()
 {
@@ -465,6 +526,9 @@ LocaleWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Shows the window and scrolls the conventions list to the active row.
+ */
 void
 LocaleWindow::Show()
 {
@@ -478,6 +542,9 @@ LocaleWindow::Show()
 }
 
 
+/**
+ * @brief Enables Revert when either the format view or the language list has unsaved edits.
+ */
 void
 LocaleWindow::_SettingsChanged()
 {
@@ -485,6 +552,9 @@ LocaleWindow::_SettingsChanged()
 }
 
 
+/**
+ * @brief Disables the Revert button after edits are rolled back or applied.
+ */
 void
 LocaleWindow::_SettingsReverted()
 {
@@ -492,6 +562,9 @@ LocaleWindow::_SettingsReverted()
 }
 
 
+/**
+ * @brief Returns true when the active preferred-languages list differs from the snapshot.
+ */
 bool
 LocaleWindow::_IsReversible() const
 {
@@ -502,6 +575,9 @@ LocaleWindow::_IsReversible() const
 }
 
 
+/**
+ * @brief Persists the preferred-language list and refreshes enable states.
+ */
 void
 LocaleWindow::_PreferredLanguagesChanged()
 {
@@ -520,6 +596,12 @@ LocaleWindow::_PreferredLanguagesChanged()
 }
 
 
+/**
+ * @brief Greys out languages already present in the preferred list and vice versa.
+ *
+ * Brackets the entire scan in DisableUpdates/EnableUpdates so the
+ * list flickers at most once even when many items toggle.
+ */
 void
 LocaleWindow::_EnableDisableLanguages()
 {
@@ -546,6 +628,12 @@ LocaleWindow::_EnableDisableLanguages()
 }
 
 
+/**
+ * @brief Reloads the preferred-language list from the roster.
+ *
+ * @param setInitial  When true, also captures the loaded list as the
+ *                    Revert snapshot.
+ */
 void
 LocaleWindow::_Refresh(bool setInitial)
 {
@@ -558,6 +646,9 @@ LocaleWindow::_Refresh(bool setInitial)
 }
 
 
+/**
+ * @brief Restores the preferred-language list to the snapshot taken at startup.
+ */
 void
 LocaleWindow::_Revert()
 {
@@ -565,6 +656,15 @@ LocaleWindow::_Revert()
 }
 
 
+/**
+ * @brief Replaces the preferred-language list with the entries from @a languages.
+ *
+ * Clears the existing list, looks each requested language up in the
+ * available list, and copies the matched item into the preferred
+ * list while updating the available list's enable flags.
+ *
+ * @param languages  Message with one or more "language" string fields.
+ */
 void
 LocaleWindow::_SetPreferredLanguages(const BMessage& languages)
 {
@@ -594,6 +694,16 @@ LocaleWindow::_SetPreferredLanguages(const BMessage& languages)
 }
 
 
+/**
+ * @brief Inserts @a item into the preferred-language list, replacing any sibling.
+ *
+ * If a different country variant of the same base language is
+ * already in the list, it is removed first so each base language
+ * appears at most once.
+ *
+ * @param item     Item to insert (no-op if NULL or if the item is already present).
+ * @param atIndex  Insertion index, or -1 to append.
+ */
 void
 LocaleWindow::_InsertPreferredLanguage(LanguageListItem* item, int32 atIndex)
 {
@@ -624,6 +734,12 @@ LocaleWindow::_InsertPreferredLanguage(LanguageListItem* item, int32 atIndex)
 }
 
 
+/**
+ * @brief Resets preferred languages to "en" and conventions to "en_US".
+ *
+ * Persists the default selection through the MutableLocaleRoster and
+ * scrolls the conventions list to the matching entry.
+ */
 void
 LocaleWindow::_Defaults()
 {

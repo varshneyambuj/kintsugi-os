@@ -1,9 +1,39 @@
 /*
- * Copyright 2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author:
- *		Preetpal Kaur <preetpalok123@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Author:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ */
+
+
+/**
+ * @file SettingsView.cpp
+ * @brief Implementation of SettingsView, the shared layout for mouse preferences.
+ *
+ * SettingsView assembles the mouse-type popup, the schematic MouseView,
+ * the click-speed/mouse-speed/acceleration sliders, and the focus-mode
+ * controls, and binds them to a MouseSettings model. The actual data
+ * lives in the MouseSettings object passed in at construction time.
  */
 
 
@@ -30,6 +60,19 @@
 #define B_TRANSLATION_CONTEXT "SettingsView"
 
 
+/**
+ * @brief Constructs the settings view and builds its child controls.
+ *
+ * Creates the mouse-type popup (1- to 6-button), the click-speed,
+ * mouse-speed, and acceleration sliders, the schematic MouseView, the
+ * focus-mode popup, and the accept-first-click checkbox, then arranges
+ * them in a two-column layout with the focus-mode block underneath.
+ *
+ * @param settings  Mouse settings model bound to this view; must
+ *                  outlive the view.
+ * @note The constructor aborts via debugger() if the model reports more
+ *       than 6 buttons.
+ */
 SettingsView::SettingsView(MouseSettings& settings)
 	:
 	BBox("main_view"),
@@ -147,11 +190,17 @@ SettingsView::SettingsView(MouseSettings& settings)
 }
 
 
+/**
+ * @brief Destroys the view. Child controls are owned by the layout system.
+ */
 SettingsView::~SettingsView()
 {
 }
 
 
+/**
+ * @brief Synchronises the controls with the current model state when shown.
+ */
 void
 SettingsView::AttachedToWindow()
 {
@@ -159,6 +208,12 @@ SettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Forwards a button-count change to the embedded MouseView.
+ *
+ * @param type  Number of buttons (1..6).
+ * @note Aborts via debugger() if @a type exceeds 6.
+ */
 void
 SettingsView::SetMouseType(int32 type)
 {
@@ -168,6 +223,9 @@ SettingsView::SetMouseType(int32 type)
 }
 
 
+/**
+ * @brief Notifies the embedded MouseView that the button mapping changed.
+ */
 void
 SettingsView::MouseMapUpdated()
 {
@@ -175,6 +233,13 @@ SettingsView::MouseMapUpdated()
 }
 
 
+/**
+ * @brief Pushes the model state into every child control.
+ *
+ * Maps the click-speed and mouse-speed values through their respective
+ * slider scales, selects the right options in the type and focus
+ * popups, and refreshes the schematic MouseView.
+ */
 void
 SettingsView::UpdateFromSettings()
 {

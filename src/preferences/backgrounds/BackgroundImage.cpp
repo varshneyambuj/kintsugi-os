@@ -1,39 +1,74 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Terms and Conditions
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files (the
+ *   "Software"), to deal in the Software without restriction, including
+ *   without limitation the rights to use, copy, modify, merge, publish,
+ *   distribute, sublicense, and/or sell copies of the Software, and to
+ *   permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all
+ *   licensees and shall be included in all copies or substantial portions
+ *   of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ *   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ *   TITLE, MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ *   NONINFRINGEMENT. IN NO EVENT SHALL BE INCORPORATED BE LIABLE FOR ANY
+ *   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ *   TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+ *   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Except as contained in this notice, the name of Be Incorporated
+ *   shall not be used in advertising or otherwise to promote the sale,
+ *   use or other dealings in this Software without prior written
+ *   authorization from Be Incorporated.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or
+ *   registered trademarks of Be Incorporated in the United States and
+ *   other countries. Other brand product names are registered trademarks
+ *   or trademarks of their respective holders. All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+/**
+ * @file BackgroundImage.cpp
+ * @brief Persistent storage and rendering of desktop and folder wallpapers.
+ *
+ * Defines BackgroundImage, BackgroundImageInfo and Image -- the data
+ * model used by the Backgrounds preflet (and Tracker) for serialising
+ * one or more background bitmaps to a node's @c be:bgndimginfo
+ * attribute and rendering them at the appropriate scale, offset, and
+ * tiling for each workspace.
+ */
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
 
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
-
-//  Classes used for setting up and managing background images
-//
+// Classes used for setting up and managing background images.
 
 #include "BackgroundImage.h"
 
@@ -56,23 +91,47 @@ All rights reserved.
 #include "BackgroundsView.h"
 
 
+/** @brief Top-level node attribute holding the flattened background message. */
 const char* kBackgroundImageInfo 			= "be:bgndimginfo";
+/** @brief Per-image offset within the flattened message. */
 const char* kBackgroundImageInfoOffset 		= "be:bgndimginfooffset";
-// const char* kBackgroundImageInfoTextOutline	= "be:bgndimginfotextoutline";
+// const char* kBackgroundImageInfoTextOutline = "be:bgndimginfotextoutline";
+/** @brief Per-image text-outline flag (legacy attribute name kept). */
 const char* kBackgroundImageInfoTextOutline	= "be:bgndimginfoerasetext";
 // NOTE: the attribute keeps the old name for backwards compatibility,
 // just in case some users spend time configuring a few windows with
 // this feature on or off...
+/** @brief Per-image rendering mode (centered, tiled, scaled, offset). */
 const char* kBackgroundImageInfoMode 		= "be:bgndimginfomode";
+/** @brief Per-image workspace mask. */
 const char* kBackgroundImageInfoWorkspaces 	= "be:bgndimginfoworkspaces";
+/** @brief Per-image filesystem path to the bitmap. */
 const char* kBackgroundImageInfoPath 		= "be:bgndimginfopath";
+/** @brief Per-image set index used for slideshow grouping. */
 const char* kBackgroundImageInfoSet 		= "be:bgndimginfoset";
+/** @brief Per-image cache strategy. */
 const char* kBackgroundImageInfoCacheMode	= "be:bgndimginfocachemode";
+/** @brief Slideshow period in seconds. */
 const char* kBackgroundImageSetPeriod		= "be:bgndimgsetperiod";
+/** @brief Slideshow random-order flag. */
 const char* kBackgroundImageRandomChange	= "be:bgndimgrandomchange";
+/** @brief Global cache strategy applied to all images. */
 const char* kBackgroundImageCacheMode		= "be:bgndimgcachemode";
 
 
+/**
+ * @brief Builds a BackgroundImage by reading the metadata from @a node.
+ *
+ * Parses the @c be:bgndimginfo attribute, registers each referenced
+ * bitmap with @a view's image cache, and returns a populated
+ * BackgroundImage. On the desktop the parser also reads the slideshow
+ * period, random-order flag, and global cache mode.
+ *
+ * @param node      Source node carrying the background metadata.
+ * @param isDesktop Pass @c true when @a node is the desktop folder.
+ * @param view      BackgroundsView whose image cache should be used.
+ * @return New BackgroundImage owned by the caller. Never @c NULL.
+ */
 BackgroundImage*
 BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop,
 	BackgroundsView* view)
@@ -170,6 +229,17 @@ BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop,
 }
 
 
+/**
+ * @brief Constructs a per-image record for one workspace mask.
+ *
+ * @param workspaces             Bitmask of workspaces this entry applies to.
+ * @param imageIndex             Index into the parent view's image cache.
+ * @param mode                   Rendering mode (offset, tile, center, scale).
+ * @param offset                 Top-left offset for kAtOffset placement.
+ * @param textWidgetLabelOutline Tracker pose-view label-outline preference.
+ * @param imageSet               Slideshow set this image belongs to.
+ * @param cacheMode              Per-image cache strategy.
+ */
 BackgroundImage::BackgroundImageInfo::BackgroundImageInfo(uint32 workspaces,
 	int32 imageIndex, Mode mode, BPoint offset, bool textWidgetLabelOutline,
 	uint32 imageSet, uint32 cacheMode)
@@ -185,6 +255,9 @@ BackgroundImage::BackgroundImageInfo::BackgroundImageInfo(uint32 workspaces,
 }
 
 
+/**
+ * @brief Destructor; the bitmap is owned by the parent view's image cache.
+ */
 BackgroundImage::BackgroundImageInfo::~BackgroundImageInfo()
 {
 }
@@ -193,6 +266,13 @@ BackgroundImage::BackgroundImageInfo::~BackgroundImageInfo()
 //	#pragma mark -
 
 
+/**
+ * @brief Private constructor invoked only via GetBackgroundImage().
+ *
+ * @param node    Source node that owns the metadata.
+ * @param desktop @c true when @a node is the desktop folder.
+ * @param view    BackgroundsView used to resolve image indices.
+ */
 BackgroundImage::BackgroundImage(const BNode* node, bool desktop,
 	BackgroundsView* view)
 	:
@@ -211,11 +291,19 @@ BackgroundImage::BackgroundImage(const BNode* node, bool desktop,
 }
 
 
+/**
+ * @brief Destructor; deletes any owned BackgroundImageInfo entries.
+ */
 BackgroundImage::~BackgroundImage()
 {
 }
 
 
+/**
+ * @brief Adds a per-image record to the workspace list.
+ *
+ * @param info Record to add. Ownership is transferred to this object.
+ */
 void
 BackgroundImage::Add(BackgroundImageInfo* info)
 {
@@ -223,6 +311,13 @@ BackgroundImage::Add(BackgroundImageInfo* info)
 }
 
 
+/**
+ * @brief Removes a per-image record from the workspace list.
+ *
+ * Does not delete @a info; callers must free it themselves.
+ *
+ * @param info Record to remove.
+ */
 void
 BackgroundImage::Remove(BackgroundImageInfo* info)
 {
@@ -230,6 +325,12 @@ BackgroundImage::Remove(BackgroundImageInfo* info)
 }
 
 
+/**
+ * @brief Removes every record belonging to the active slideshow set.
+ *
+ * Records whose @c fImageSet differs from @c fShowingImageSet are
+ * left in place.
+ */
 void
 BackgroundImage::RemoveAll()
 {
@@ -243,6 +344,14 @@ BackgroundImage::RemoveAll()
 }
 
 
+/**
+ * @brief Picks the right record for @a workspace and renders it on @a view.
+ *
+ * No-op if no record matches the workspace mask.
+ *
+ * @param view      Target BView (typically the Tracker pose view).
+ * @param workspace Zero-based workspace index.
+ */
 void
 BackgroundImage::Show(BView* view, int32 workspace)
 {
@@ -259,6 +368,16 @@ BackgroundImage::Show(BView* view, int32 workspace)
 }
 
 
+/**
+ * @brief Renders @a info as the view bitmap of @a view.
+ *
+ * Computes destination bounds and tiling/scaling options from
+ * @c info->fMode and the screen's virtual size, then assigns the
+ * bitmap as @a view's view bitmap and forces a redraw.
+ *
+ * @param info Per-image record describing what to render.
+ * @param view Target BView.
+ */
 void
 BackgroundImage::Show(BackgroundImageInfo* info, BView* view)
 {
@@ -346,6 +465,12 @@ BackgroundImage::Show(BackgroundImageInfo* info, BView* view)
 }
 
 
+/**
+ * @brief Returns the width-to-height ratio of @a rect.
+ *
+ * @param rect Source rectangle.
+ * @return @c rect.Width() / @c rect.Height().
+ */
 float
 BackgroundImage::BRectRatio(BRect rect)
 {
@@ -353,6 +478,16 @@ BackgroundImage::BRectRatio(BRect rect)
 }
 
 
+/**
+ * @brief Returns half the horizontal overhang when fitting by height.
+ *
+ * Used by kScaledToFit to compute how much the bitmap must overflow
+ * horizontally if scaled to match the host's height.
+ *
+ * @param hostRect    Destination rectangle.
+ * @param resizedRect Resized bitmap rectangle.
+ * @return Half the horizontal overhang in pixels.
+ */
 float
 BackgroundImage::BRectHorizontalOverlap(BRect hostRect, BRect resizedRect)
 {
@@ -361,6 +496,13 @@ BackgroundImage::BRectHorizontalOverlap(BRect hostRect, BRect resizedRect)
 }
 
 
+/**
+ * @brief Returns half the vertical overhang when fitting by width.
+ *
+ * @param hostRect    Destination rectangle.
+ * @param resizedRect Resized bitmap rectangle.
+ * @return Half the vertical overhang in pixels.
+ */
 float
 BackgroundImage::BRectVerticalOverlap(BRect hostRect, BRect resizedRect)
 {
@@ -369,6 +511,9 @@ BackgroundImage::BRectVerticalOverlap(BRect hostRect, BRect resizedRect)
 }
 
 
+/**
+ * @brief Clears the active background bitmap from the bound view.
+ */
 void
 BackgroundImage::Remove()
 {
@@ -384,6 +529,16 @@ BackgroundImage::Remove()
 }
 
 
+/**
+ * @brief Picks the per-image record best matching @a workspace.
+ *
+ * Prefers a record whose mask is exactly @a workspace's bit; falls
+ * back to a record whose mask merely contains the bit. Folder
+ * (non-desktop) backgrounds always return their first record.
+ *
+ * @param workspace Zero-based workspace index.
+ * @return Matching record, or @c NULL if none applies.
+ */
 BackgroundImage::BackgroundImageInfo*
 BackgroundImage::ImageInfoForWorkspace(int32 workspace) const
 {
@@ -416,6 +571,17 @@ BackgroundImage::ImageInfoForWorkspace(int32 workspace) const
 }
 
 
+/**
+ * @brief Updates the desktop bitmap when entering a workspace.
+ *
+ * Folder backgrounds and workspace deactivation events are ignored.
+ * If the new workspace has no matching record, the existing view
+ * bitmap is cleared.
+ *
+ * @param view      Target BView.
+ * @param workspace Workspace being entered.
+ * @param state     @c true when entering, @c false when leaving.
+ */
 void
 BackgroundImage::WorkspaceActivated(BView* view, int32 workspace, bool state)
 {
@@ -444,6 +610,12 @@ BackgroundImage::WorkspaceActivated(BView* view, int32 workspace, bool state)
 }
 
 
+/**
+ * @brief Re-renders the desktop bitmap after a screen-mode change.
+ *
+ * The current implementation is a stub; the original Tracker
+ * recompute path is preserved as a commented-out reference.
+ */
 void
 BackgroundImage::ScreenChanged(BRect, color_space)
 {
@@ -465,6 +637,19 @@ BackgroundImage::ScreenChanged(BRect, color_space)
 }
 
 
+/**
+ * @brief Flattens the workspace list and writes it to @a node's attribute.
+ *
+ * Constructs a BMessage containing one entry per record (path,
+ * workspace mask, mode, offset, image-set index), flattens it, and
+ * writes the result to @c kBackgroundImageInfo.
+ *
+ * @param node Target node.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  When the flatten buffer cannot be allocated.
+ * @retval B_ERROR      When the partial write does not match the
+ *                      flattened size.
+ */
 status_t
 BackgroundImage::SetBackgroundImage(BNode* node)
 {
@@ -560,6 +745,14 @@ BackgroundImage::ChangeImageSet(BPoseView* poseView)
 //	#pragma mark -
 
 
+/**
+ * @brief Caches the leaf name of @a path, truncating it if it is long.
+ *
+ * Names longer than 40 characters are shortened with a UTF-8 ellipsis
+ * while preserving the file extension.
+ *
+ * @param path Path to the bitmap on disk.
+ */
 Image::Image(BPath path)
 	:
 	fBitmap(NULL),
@@ -578,12 +771,21 @@ Image::Image(BPath path)
 }
 
 
+/**
+ * @brief Destructor; frees the cached BBitmap if any.
+ */
 Image::~Image()
 {
 	delete fBitmap;
 }
 
 
+/**
+ * @brief Lazily decodes the bitmap from disk on first request.
+ *
+ * @return Pointer to the cached BBitmap; ownership stays with this
+ *         Image.
+ */
 BBitmap*
 Image::GetBitmap()
 {

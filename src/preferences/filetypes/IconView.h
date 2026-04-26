@@ -1,7 +1,32 @@
 /*
- * Copyright 2006-2024, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2006-2024, Axel Dörfler, axeld@pinc-software.de.
  */
+
+/**
+ * @file IconView.h
+ * @brief Icon container model and view: an Icon storage class that holds
+ *        large/mini bitmaps plus vector data, and an IconView control that
+ *        renders, drags, drops, and edits icons attached to MIME types or
+ *        files.
+ */
+
 #ifndef ICON_VIEW_H
 #define ICON_VIEW_H
 
@@ -13,6 +38,10 @@
 #include <String.h>
 
 
+/**
+ * @brief Source from which an icon was resolved when looking it up for a
+ *        given MIME type.
+ */
 enum icon_source {
 	kNoIcon = 0,
 	kOwnIcon,
@@ -21,6 +50,10 @@ enum icon_source {
 };
 
 
+/**
+ * @brief Icon storage holding large and mini bitmaps and the original
+ *        vector icon data, with copy-in/out helpers for app and type info.
+ */
 class Icon {
 public:
 								Icon();
@@ -74,6 +107,10 @@ private:
 class BSize;
 
 
+/**
+ * @brief BControl-derived widget that draws an icon, supports drag/drop,
+ *        and launches the external icon-O-matic editor on invoke.
+ */
 class IconView : public BControl {
 public:
 								IconView(const char* name,
@@ -164,9 +201,13 @@ private:
 };
 
 
+/** @brief Message: the icon was double-clicked or otherwise invoked. */
 static const uint32 kMsgIconInvoked	= 'iciv';
+/** @brief Message: user asked to remove the current icon. */
 static const uint32 kMsgRemoveIcon	= 'icrm';
+/** @brief Message: user asked to add an icon. */
 static const uint32 kMsgAddIcon		= 'icad';
+/** @brief Message: user asked to edit the current icon. */
 static const uint32 kMsgEditIcon	= 'iced';
 
 

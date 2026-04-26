@@ -1,3 +1,36 @@
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Data table generated from the UEFI Forum's PNP-ID export
+ * (https://uefi.org/uefi-pnp-export). The table itself is factual data and
+ * is used here for vendor lookup; see ScreenMode.cpp for the regeneration
+ * recipe.
+ */
+
+/** @file Vendors.h
+    @brief EDID PNP-ID to manufacturer-name lookup table.
+
+    This file is included from ScreenMode.cpp inside the body of the
+    @c kPNPIDs array initializer. Each row is a @c { "XYZ", "Vendor Name" }
+    pair where the first field is the three-letter PNP vendor code reported
+    by an EDID block. The table is sorted alphabetically by code so that
+    @c std::find can locate entries with @c strcasecmp equality. There are
+    no functions or macros defined here; it is pure data. */
+
  { "AAA", "Avolites Ltd" },
  { "AAE", "Anatek Electronics Inc." },
  { "AAM", "Aava Mobile Oy" },

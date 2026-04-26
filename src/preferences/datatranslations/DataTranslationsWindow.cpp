@@ -1,12 +1,44 @@
 /*
- * Copyright 2002-2017, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Siebenmarck
- *		Andrew McCall, mccall@digitalparadise.co.uk
- *		Michael Wilber
- *		Maxime Simon
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2017, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Oliver Siebenmarck
+ *       Andrew McCall, mccall@digitalparadise.co.uk
+ *       Michael Wilber
+ *       Maxime Simon
+ */
+
+
+/**
+ * @file DataTranslationsWindow.cpp
+ * @brief Main window for the DataTranslations preferences application.
+ *
+ * Lists installed translator add-ons, shows their icon and metadata, and
+ * embeds each translator's per-add-on configuration view. Watches the
+ * BTranslatorRoster for translator additions and removals so the list stays
+ * in sync as add-ons are dropped onto the panel.
+ *
+ * @see DataTranslationsApplication, TranslatorListView, BTranslatorRoster
  */
 
 
@@ -49,10 +81,19 @@
 #define B_TRANSLATION_CONTEXT "DataTranslations"
 
 
+/** @brief Message sent when the "Info" button is clicked. */
 const uint32 kMsgTranslatorInfo = 'trin';
+/** @brief Message sent when the selection in the translator list changes. */
 const uint32 kMsgSelectedTranslator = 'trsl';
 
 
+/**
+ * @brief Creates the main preferences window and shows it on screen.
+ *
+ * Restores the saved window corner from DataTranslationsSettings, builds the
+ * UI, registers as a watcher of the default BTranslatorRoster, and centers
+ * the window if its restored frame would lie off-screen.
+ */
 DataTranslationsWindow::DataTranslationsWindow()
 	:
 	BWindow(BRect(0.0f, 0.0f, 597.0f, 368.0f),
@@ -78,6 +119,9 @@ DataTranslationsWindow::DataTranslationsWindow()
 }
 
 
+/**
+ * @brief Tears down the window and unregisters from roster notifications.
+ */
 DataTranslationsWindow::~DataTranslationsWindow()
 {
 	BTranslatorRoster* roster = BTranslatorRoster::Default();
@@ -85,7 +129,15 @@ DataTranslationsWindow::~DataTranslationsWindow()
 }
 
 
-// Reads the installed translators and adds them to our BListView
+/**
+ * @brief Reads the installed translators and adds them to the list view.
+ *
+ * Queries the default BTranslatorRoster for every installed translator and
+ * inserts a TranslatorItem per entry, then sorts the list and sizes the
+ * column to fit the widest name.
+ *
+ * @return B_OK after the list has been populated.
+ */
 status_t
 DataTranslationsWindow::_PopulateListView()
 {
@@ -118,6 +170,20 @@ DataTranslationsWindow::_PopulateListView()
 }
 
 
+/**
+ * @brief Looks up the metadata for the translator with the given id.
+ *
+ * @param id       Translator identifier returned by BTranslatorRoster.
+ * @param name     [out] Receives a pointer to the translator's name.
+ * @param info     [out] Receives a pointer to the descriptive info string.
+ * @param version  [out] Receives the encoded version number.
+ * @param path     [out] Receives the on-disk path; left unset if no entry
+ *                 ref is available.
+ * @return         Status of the lookup.
+ * @retval B_OK         The translator exists and metadata was retrieved.
+ * @retval B_BAD_VALUE  @a id is negative.
+ * @retval B_ERROR      The roster could not return information for @a id.
+ */
 status_t
 DataTranslationsWindow::_GetTranslatorInfo(int32 id, const char*& name,
 	const char*& info, int32& version, BPath& path)
@@ -143,6 +209,20 @@ DataTranslationsWindow::_GetTranslatorInfo(int32 id, const char*& name,
 }
 
 
+/**
+ * @brief Replaces the right-hand panel with the translator's config view.
+ *
+ * Tears down any previously installed configuration view, asks the roster
+ * for a fresh one, and acquires a release delegate so the translator's
+ * code image is not unloaded while its view is on screen.
+ *
+ * @param id  Identifier of the translator whose config view should appear.
+ * @return    Status of the operation.
+ * @retval B_OK         The configuration view was installed.
+ * @retval B_BAD_VALUE  @a id is negative.
+ * @note Returns whatever error MakeConfigurationView() reports if creating
+ *       the view fails.
+ */
 status_t
 DataTranslationsWindow::_ShowConfigView(int32 id)
 {
@@ -189,6 +269,13 @@ DataTranslationsWindow::_ShowConfigView(int32 id)
 }
 
 
+/**
+ * @brief Replaces the right-hand panel with a generic informational view.
+ *
+ * Used when no translator is selected; the view explains how the panel is
+ * meant to be used to set defaults that apply when no per-application
+ * settings are supplied.
+ */
 void
 DataTranslationsWindow::_ShowInfoView()
 {
@@ -227,6 +314,13 @@ DataTranslationsWindow::_ShowInfoView()
 }
 
 
+/**
+ * @brief Builds the window's view hierarchy and initial layout.
+ *
+ * Creates the translator list view (with its scroll view), the right-hand
+ * box for icon and config view, the Info button, populates the list, and
+ * shows the initial info view. Called once from the constructor.
+ */
 void
 DataTranslationsWindow::_SetupViews()
 {
@@ -280,6 +374,11 @@ DataTranslationsWindow::_SetupViews()
 }
 
 
+/**
+ * @brief Persists the window position and asks the application to quit.
+ *
+ * @return Always true; the close is allowed to proceed.
+ */
 bool
 DataTranslationsWindow::QuitRequested()
 {
@@ -290,6 +389,14 @@ DataTranslationsWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Pops up an alert with name, version, info text, and on-disk path.
+ *
+ * Builds a multi-section message via _GetTranslatorInfo() and emboldens the
+ * row labels using the alert's text view font controls.
+ *
+ * @param id  Identifier of the translator to describe.
+ */
 void
 DataTranslationsWindow::_ShowInfoAlert(int32 id)
 {
@@ -349,6 +456,15 @@ DataTranslationsWindow::_ShowInfoAlert(int32 id)
 }
 
 
+/**
+ * @brief Dispatches messages from the UI and BTranslatorRoster watcher.
+ *
+ * Handles the Info button, list selection changes, color updates, and
+ * B_TRANSLATOR_ADDED / B_TRANSLATOR_REMOVED notifications that keep the
+ * list view in sync with the roster.
+ *
+ * @param message  Incoming BMessage; its @c what field selects the branch.
+ */
 void
 DataTranslationsWindow::MessageReceived(BMessage* message)
 {

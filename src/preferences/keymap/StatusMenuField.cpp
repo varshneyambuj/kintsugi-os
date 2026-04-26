@@ -1,9 +1,34 @@
 /*
- * Copyright 2023 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2023 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file StatusMenuField.cpp
+ * @brief Menu field with status icon overlay used by ModifierKeysWindow.
  */
 
 
@@ -32,13 +57,21 @@
 #endif
 
 
+/** @brief Status token meaning "this role is mapped to a duplicate key". */
 static const char* kDuplicate = "duplicate";
+/** @brief Status token meaning "left and right key roles disagree". */
 static const char* kUnmatched = "unmatched";
 
 
 //	#pragma mark - StatusMenuItem
 
 
+/**
+ * @brief Construct a StatusMenuItem with an empty icon.
+ *
+ * @param name    Item label.
+ * @param message Optional message sent on selection.
+ */
 StatusMenuItem::StatusMenuItem(const char* name, BMessage* message)
 	:
 	BMenuItem(name, message),
@@ -47,6 +80,11 @@ StatusMenuItem::StatusMenuItem(const char* name, BMessage* message)
 }
 
 
+/**
+ * @brief Reconstruct a StatusMenuItem from its archived form.
+ *
+ * @param archive BMessage carrying the archived state.
+ */
 StatusMenuItem::StatusMenuItem(BMessage* archive)
 	:
 	BMenuItem(archive),
@@ -55,6 +93,12 @@ StatusMenuItem::StatusMenuItem(BMessage* archive)
 }
 
 
+/**
+ * @brief BArchivable factory for StatusMenuItem.
+ *
+ * @param data Archive containing a serialized StatusMenuItem.
+ * @return     A new instance, or NULL if @a data is not a StatusMenuItem.
+ */
 BArchivable*
 StatusMenuItem::Instantiate(BMessage* data)
 {
@@ -65,6 +109,13 @@ StatusMenuItem::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Forward archiving to BMenuItem.
+ *
+ * @param data Out: receives the archived state.
+ * @param deep When true, archive nested items as well.
+ * @return     Whatever BMenuItem::Archive() returns.
+ */
 status_t
 StatusMenuItem::Archive(BMessage* data, bool deep) const
 {
@@ -74,6 +125,12 @@ StatusMenuItem::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Draw the menu label and the optional status icon.
+ *
+ * The icon (when present) is drawn first with alpha blending, then
+ * BMenuItem::DrawContent() handles the text label.
+ */
 void
 StatusMenuItem::DrawContent()
 {
@@ -91,6 +148,12 @@ StatusMenuItem::DrawContent()
 }
 
 
+/**
+ * @brief Report the desired content size, leaving room for the status icon.
+ *
+ * @param _width  Out: width reduced by the icon area; may be NULL.
+ * @param _height Out: natural label height; may be NULL.
+ */
 void
 StatusMenuItem::GetContentSize(float* _width, float* _height)
 {
@@ -107,6 +170,7 @@ StatusMenuItem::GetContentSize(float* _width, float* _height)
 }
 
 
+/** @brief Return the currently displayed status icon (may be NULL). */
 BBitmap*
 StatusMenuItem::Icon()
 {
@@ -114,6 +178,14 @@ StatusMenuItem::Icon()
 }
 
 
+/**
+ * @brief Replace the displayed status icon.
+ *
+ * Ownership of @a icon stays with the caller; the item only stores the
+ * pointer.
+ *
+ * @param icon New bitmap to draw, or NULL to clear.
+ */
 void
 StatusMenuItem::SetIcon(BBitmap* icon)
 {
@@ -121,6 +193,7 @@ StatusMenuItem::SetIcon(BBitmap* icon)
 }
 
 
+/** @brief Compute the icon rectangle within the parent menu bounds. */
 BRect
 StatusMenuItem::IconRect()
 {
@@ -132,6 +205,7 @@ StatusMenuItem::IconRect()
 }
 
 
+/** @brief Pixel size of the mini status icon, scaled by control_look. */
 BSize
 StatusMenuItem::IconSize()
 {
@@ -139,6 +213,7 @@ StatusMenuItem::IconSize()
 }
 
 
+/** @brief Default horizontal spacing between elements, from control_look. */
 float
 StatusMenuItem::Spacing()
 {
@@ -149,6 +224,12 @@ StatusMenuItem::Spacing()
 //	#pragma mark - StatusMenuField
 
 
+/**
+ * @brief Construct a StatusMenuField and load its stop/warn icons.
+ *
+ * @param label Field label drawn before the menu.
+ * @param menu  Menu placed inside the field.
+ */
 StatusMenuField::StatusMenuField(const char* label, BMenu* menu)
 	:
 	BMenuField(label, menu),
@@ -160,6 +241,7 @@ StatusMenuField::StatusMenuField(const char* label, BMenu* menu)
 }
 
 
+/** @brief Free the cached stop and warning bitmaps. */
 StatusMenuField::~StatusMenuField()
 {
 	delete fStopIcon;
@@ -167,6 +249,12 @@ StatusMenuField::~StatusMenuField()
 }
 
 
+/**
+ * @brief Toggle the duplicate (stop) status.
+ *
+ * @param on When true, show the stop icon and set the status string to
+ *           @c "duplicate"; when false, clear the icon and status.
+ */
 void
 StatusMenuField::SetDuplicate(bool on)
 {
@@ -176,6 +264,12 @@ StatusMenuField::SetDuplicate(bool on)
 }
 
 
+/**
+ * @brief Toggle the unmatched-roles (warning) status.
+ *
+ * @param on When true, show the warning icon and set the status string to
+ *           @c "unmatched"; when false, clear the icon and status.
+ */
 void
 StatusMenuField::SetUnmatched(bool on)
 {
@@ -185,6 +279,11 @@ StatusMenuField::SetUnmatched(bool on)
 }
 
 
+/**
+ * @brief Attach or remove the stop icon on the marked StatusMenuItem.
+ *
+ * @param show True to attach, false to remove.
+ */
 void
 StatusMenuField::ShowStopIcon(bool show)
 {
@@ -195,6 +294,11 @@ StatusMenuField::ShowStopIcon(bool show)
 }
 
 
+/**
+ * @brief Attach or remove the warn icon on the marked StatusMenuItem.
+ *
+ * @param show True to attach, false to remove.
+ */
 void
 StatusMenuField::ShowWarnIcon(bool show)
 {
@@ -205,6 +309,7 @@ StatusMenuField::ShowWarnIcon(bool show)
 }
 
 
+/** @brief Reset the status string and remove any tooltip. */
 void
 StatusMenuField::ClearStatus()
 {
@@ -213,6 +318,14 @@ StatusMenuField::ClearStatus()
 }
 
 
+/**
+ * @brief Set the status string and refresh the tooltip accordingly.
+ *
+ * Recognized values are @c "duplicate" and @c "unmatched"; any other
+ * string clears the tooltip text.
+ *
+ * @param status New status token.
+ */
 void
 StatusMenuField::SetStatus(BString status)
 {
@@ -231,6 +344,16 @@ StatusMenuField::SetStatus(BString status)
 //	#pragma mark - StatusMenuField private methods
 
 
+/**
+ * @brief Lazily allocate and load the stop and warn icons.
+ *
+ * Bitmaps are obtained from app_server via @c BIconUtils::GetSystemIcon().
+ * On allocation or load failure the corresponding pointer is left NULL,
+ * which simply suppresses the badge.
+ *
+ * @todo Replace the generic dialog-error / dialog-warning icons with
+ *       glyphs better matched to keyboard role conflicts.
+ */
 void
 StatusMenuField::_FillIcons()
 {
@@ -275,6 +398,7 @@ StatusMenuField::_FillIcons()
 }
 
 
+/** @brief Default rectangle used when allocating the status icon bitmaps. */
 BRect
 StatusMenuField::_IconRect()
 {

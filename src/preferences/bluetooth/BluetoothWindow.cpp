@@ -1,6 +1,39 @@
 /*
- * Copyright 2008-10, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes_at_gmail.com>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-10, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes_at_gmail.com>
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file BluetoothWindow.cpp
+ * @brief Implementation of BluetoothWindow, the top-level preference window.
+ *
+ * BluetoothWindow hosts the BTabView containing the remote-devices tab and
+ * the local-device settings tab, exposes a Server menu to start, stop, and
+ * refresh bluetooth_server, and surfaces the standard Defaults and Revert
+ * preference buttons.
+ *
+ * @see BluetoothSettingsView, RemoteDevicesView
  */
 
 
@@ -25,15 +58,29 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Window"
 
+/** @brief Window message: revert all settings to their defaults. */
 static const uint32 kMsgSetDefaults = 'dflt';
+/** @brief Window message: revert all settings to their on-entry values. */
 static const uint32 kMsgRevert = 'rvrt';
 
+/** @brief Server menu message: start the bluetooth_server process. */
 static const uint32 kMsgStartServices = 'SrSR';
+/** @brief Server menu message: stop the bluetooth_server process. */
 static const uint32 kMsgStopServices = 'StST';
 
+/** @brief Currently active LocalDevice shared between settings views. */
 LocalDevice* ActiveLocalDevice = NULL;
 
 
+/**
+ * @brief Constructs the Bluetooth preference window.
+ *
+ * Builds the Defaults and Revert buttons, the Server and Help menu bars,
+ * and the BTabView containing the remote devices and settings tabs. Lays
+ * everything out vertically with a separator above the action buttons.
+ *
+ * @param frame  Initial screen rectangle for the window.
+ */
 BluetoothWindow::BluetoothWindow(BRect frame)
 	:
 	BWindow(frame, B_TRANSLATE_SYSTEM_NAME("Bluetooth"), B_TITLED_WINDOW,
@@ -97,6 +144,17 @@ BluetoothWindow::BluetoothWindow(BRect frame)
 }
 
 
+/**
+ * @brief Routes window-level messages to the appropriate child view.
+ *
+ * Connection-policy and device-class changes are forwarded to the settings
+ * view; remote-list additions are forwarded to the remote devices tab; the
+ * Server menu items start or stop bluetooth_server via BRoster and
+ * BMessenger respectively.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BWindow::MessageReceived.
+ */
 void
 BluetoothWindow::MessageReceived(BMessage* message)
 {
@@ -151,6 +209,14 @@ BluetoothWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Asks the application to quit when the window is closed.
+ *
+ * Forwards a B_QUIT_REQUESTED to be_app so closing the only window also
+ * terminates the application.
+ *
+ * @return Always returns true to allow the close to proceed.
+ */
 bool
 BluetoothWindow::QuitRequested()
 {

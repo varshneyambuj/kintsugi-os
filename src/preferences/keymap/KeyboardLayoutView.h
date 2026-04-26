@@ -1,12 +1,28 @@
 /*
- * Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2013-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		John Scipione, jscipione@gmail.com
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Axel Dörfler. Copyright 2013-2014 Haiku, Inc.
+ * Original authors: Axel Dörfler, John Scipione.
  */
+
+/** @file KeyboardLayoutView.h
+    @brief Interactive keyboard rendering used by the keymap preferences applet. */
+
 #ifndef KEYBOARD_LAYOUT_VIEW_H
 #define KEYBOARD_LAYOUT_VIEW_H
 
@@ -22,6 +38,17 @@ class BMenuItem;
 class Keymap;
 
 
+/**
+ * @brief Interactive on-screen rendering of a KeyboardLayout bound to a Keymap.
+ *
+ * Draws each key according to the geometry from KeyboardLayout, looks
+ * up labels via the bound Keymap, and animates pressed-key feedback in
+ * response to live key events. In editable mode the view supports
+ * drag-and-drop to swap key bindings, popup menus to remap modifier
+ * keys, and a tertiary-click toggle for dead-key state. Can also act
+ * as a virtual keyboard input device when constructed with a
+ * BInputServerDevice.
+ */
 class KeyboardLayoutView : public BView {
 public:
 								KeyboardLayoutView(const char* name,
@@ -32,6 +59,7 @@ public:
 			void				SetKeymap(Keymap* keymap);
 			void				SetTarget(BMessenger target);
 
+			/** @brief Returns the layout currently displayed by this view. */
 			KeyboardLayout*		GetKeyboardLayout() { return fLayout; }
 
 			void				SetBaseFont(const BFont& font);

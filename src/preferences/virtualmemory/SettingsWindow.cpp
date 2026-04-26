@@ -1,13 +1,45 @@
 /*
- * Copyright 2005-2009, Axel Dörfler, axeld@pinc-software.de
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2010-2012 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Hamish Morrison, hamish@lavabit.com
- *		Alexander von Gluck, kallisti5@unixzen.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Axel Dörfler, axeld@pinc-software.de
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2010-2012 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Hamish Morrison, hamish@lavabit.com
+ *       Alexander von Gluck, kallisti5@unixzen.com
+ */
+
+
+/**
+ * @file SettingsWindow.cpp
+ * @brief Implementation of the VirtualMemory preflet's main BWindow.
+ *
+ * Builds the layout (enable/automatic checkboxes, volume picker, size
+ * slider, usage bar, Defaults/Revert buttons), watches volume mounts via
+ * the node monitor, validates the loaded Settings on startup, and writes
+ * both the window position and the swap settings on quit.
+ *
+ * @see Settings
  */
 
 
@@ -43,16 +75,35 @@
 #define B_TRANSLATION_CONTEXT "SettingsWindow"
 
 
+/** @brief Message sent by the Defaults button. */
 static const uint32 kMsgDefaults = 'dflt';
+/** @brief Message sent by the Revert button. */
 static const uint32 kMsgRevert = 'rvrt';
+/** @brief Message sent when the size slider value changes. */
 static const uint32 kMsgSliderUpdate = 'slup';
+/** @brief Message sent when the enable-swap checkbox is toggled. */
 static const uint32 kMsgSwapEnabledUpdate = 'swen';
+/** @brief Message sent when the automatic-swap checkbox is toggled. */
 static const uint32 kMsgSwapAutomaticUpdate = 'swat';
+/** @brief Message sent when an entry in the volume picker is chosen. */
 static const uint32 kMsgVolumeSelected = 'vlsl';
+/** @brief One mebibyte expressed in bytes; the slider's tick unit. */
 static const off_t kMegaByte = 1024 * 1024;
+/** @brief Cached device id for the boot volume, set during window construction. */
 static dev_t gBootDev = -1;
 
 
+/**
+ * @brief Constructs the slider with horizontal orientation and the system
+ *        control highlight color.
+ *
+ * @param name    Internal BView name.
+ * @param label   Label drawn above the slider.
+ * @param message Message dispatched on value change.
+ * @param min     Minimum slider value (in megabytes).
+ * @param max     Maximum slider value (in megabytes).
+ * @param flags   Standard BView flags.
+ */
 SizeSlider::SizeSlider(const char* name, const char* label,
 	BMessage* message, int32 min, int32 max, uint32 flags)
 	:
@@ -64,6 +115,12 @@ SizeSlider::SizeSlider(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Returns the slider's current value as a human-readable byte size.
+ *
+ * @return Pointer to an internal mutable buffer holding the formatted text.
+ *         The buffer is reused across calls; do not free it.
+ */
 const char*
 SizeSlider::UpdateText() const
 {
@@ -71,6 +128,12 @@ SizeSlider::UpdateText() const
 }
 
 
+/**
+ * @brief Constructs a menu item bound to the given BVolume.
+ *
+ * @param volume  Volume to represent.
+ * @param message Message dispatched when the item is selected.
+ */
 VolumeMenuItem::VolumeMenuItem(BVolume volume, BMessage* message)
 	:
 	BMenuItem("", message),
@@ -80,6 +143,12 @@ VolumeMenuItem::VolumeMenuItem(BVolume volume, BMessage* message)
 }
 
 
+/**
+ * @brief BHandler hook that refreshes the label on a node-monitor rename.
+ *
+ * @param message Incoming message; only @c B_NODE_MONITOR with opcode
+ *                @c B_ENTRY_MOVED triggers a label rebuild.
+ */
 void
 VolumeMenuItem::MessageReceived(BMessage* message)
 {
@@ -92,6 +161,11 @@ VolumeMenuItem::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Builds the menu item label as @c "name (mount-path)".
+ *
+ * Falls back to just the volume name when the mount path cannot be queried.
+ */
 void
 VolumeMenuItem::GenerateLabel()
 {
@@ -116,6 +190,18 @@ VolumeMenuItem::GenerateLabel()
 }
 
 
+/**
+ * @brief Constructs the preflet window, loads settings, and lays out controls.
+ *
+ * On construction the window: caches the boot device, restores its previous
+ * position (or centers on screen), reads the kernel swap settings (with
+ * BAlert prompts for malformed or volume-missing files), populates the
+ * volume picker from the BVolumeRoster, registers a node monitor for
+ * mount/unmount events, builds the layout, and refreshes UI state.
+ *
+ * @note If the user picks "Quit" in either error dialog, the window posts
+ *       @c B_QUIT_REQUESTED to the application and returns early.
+ */
 SettingsWindow::SettingsWindow()
 	:
 	BWindow(BRect(0, 0, 269, 172), B_TRANSLATE_SYSTEM_NAME("VirtualMemory"),
@@ -264,6 +350,17 @@ SettingsWindow::SettingsWindow()
 }
 
 
+/**
+ * @brief BWindow message hook: dispatches UI and node-monitor events.
+ *
+ * Handles mount/unmount notifications by updating the volume picker, and
+ * acts on the various control messages (Revert, Defaults, slider, volume
+ * pick, enable/automatic toggles). When the user disables swap a
+ * confirmation alert is shown.
+ *
+ * @param message Incoming message; unhandled messages fall through to
+ *                BWindow::MessageReceived().
+ */
 void
 SettingsWindow::MessageReceived(BMessage* message)
 {
@@ -347,6 +444,16 @@ SettingsWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief BWindow hook called when the user requests to close the window.
+ *
+ * Persists the window position and the current swap settings, then asks
+ * the application to quit.
+ *
+ * @return Always @c true; the window is allowed to close.
+ * @note When the window failed to finish setup (early return from the
+ *       constructor), no settings are written.
+ */
 bool
 SettingsWindow::QuitRequested()
 {
@@ -362,6 +469,17 @@ SettingsWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Adds a VolumeMenuItem for @a device to the volume picker.
+ *
+ * Also subscribes the new item to node-monitor name changes on the
+ * volume's root entry.
+ *
+ * @param device Device id of the volume to add.
+ * @return Status code.
+ * @retval B_OK     The item was created and inserted.
+ * @retval B_ERROR  An item for @a device already exists.
+ */
 status_t
 SettingsWindow::_AddVolumeMenuItem(dev_t device)
 {
@@ -385,6 +503,14 @@ SettingsWindow::_AddVolumeMenuItem(dev_t device)
 }
 
 
+/**
+ * @brief Removes the VolumeMenuItem for @a device from the volume picker.
+ *
+ * @param device Device id of the volume to drop.
+ * @return Status code.
+ * @retval B_OK     The matching item was removed and deleted.
+ * @retval B_ERROR  No item for @a device was found.
+ */
 status_t
 SettingsWindow::_RemoveVolumeMenuItem(dev_t device)
 {
@@ -398,6 +524,12 @@ SettingsWindow::_RemoveVolumeMenuItem(dev_t device)
 }
 
 
+/**
+ * @brief Locates the VolumeMenuItem in the picker that matches @a device.
+ *
+ * @param device Device id to look up.
+ * @return Pointer to the matching item, or @c NULL when no item matches.
+ */
 VolumeMenuItem*
 SettingsWindow::_FindVolumeMenuItem(dev_t device)
 {
@@ -413,6 +545,12 @@ SettingsWindow::_FindVolumeMenuItem(dev_t device)
 }
 
 
+/**
+ * @brief Pushes the current control values into the Settings model.
+ *
+ * Called whenever a control changes so that the model stays in sync with
+ * the UI; the next _Update() pass then re-derives button enable states.
+ */
 void
 SettingsWindow::_RecordChoices()
 {
@@ -424,6 +562,15 @@ SettingsWindow::_RecordChoices()
 }
 
 
+/**
+ * @brief Refreshes UI state from the Settings model.
+ *
+ * Updates checkbox values, the size-slider range and label, the warning
+ * string visibility, the Revert and Defaults button enable states, and
+ * the dependent controls (the slider and volume picker are disabled when
+ * swap is off or running in automatic mode). The slider range adapts to
+ * the chosen volume's free space, leaving a 15 % safety margin.
+ */
 void
 SettingsWindow::_Update()
 {
@@ -484,6 +631,12 @@ SettingsWindow::_Update()
 }
 
 
+/**
+ * @brief Refreshes the swap usage status bar from current system info.
+ *
+ * Queries the kernel for the maximum and free swap pages, formats the
+ * values for display, and pushes them into the @c fSwapUsageBar widget.
+ */
 void
 SettingsWindow::_UpdateSwapInfo()
 {

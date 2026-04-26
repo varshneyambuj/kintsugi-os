@@ -1,13 +1,44 @@
 /*
- * Copyright 2004-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Alexandre Deckner, alex@zappotek.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval
- *		John Scipione, jscipione@gmai.com
- *		Sandor Vroemisse
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Alexandre Deckner, alex@zappotek.com
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval
+ *       John Scipione, jscipione@gmai.com
+ *       Sandor Vroemisse
+ */
+
+
+/**
+ * @file KeymapWindow.cpp
+ * @brief Implementation of KeymapWindow, the editor frame for keyboard layouts and keymaps.
+ *
+ * Wires together the system and user keymap lists, the editable
+ * KeyboardLayoutView, the dead-key submenus, the layout and font
+ * menus, and the Open/Save-As file panels. Tracks three snapshots of
+ * the keymap (current, applied, previous) so the Defaults and Revert
+ * buttons can roll back partial edits.
  */
 
 
@@ -76,6 +107,13 @@ static const char* kDefaultKeymapName = "US-International";
 static const float kDefaultHeight = 440;
 static const float kDefaultWidth = 1000;
 
+/**
+ * @brief Locale-aware comparator for KeymapListItem pointers.
+ *
+ * @param a  Pointer to a KeymapListItem*.
+ * @param b  Pointer to a KeymapListItem*.
+ * @return   Comparison result usable with BList sort routines.
+ */
 static int
 compare_key_list_items(const void* a, const void* b)
 {
@@ -84,6 +122,14 @@ compare_key_list_items(const void* a, const void* b)
 	return BLocale::Default()->StringCompare(item1->Text(), item2->Text());
 }
 
+/**
+ * @brief Constructs the Keymap window and assembles its UI.
+ *
+ * Sizes the frame to fit small displays, builds the menu bar, the
+ * map lists, the keyboard layout view, the dead-key trigger menu,
+ * and the Defaults/Revert buttons, then loads the saved settings and
+ * the user's current keymap.
+ */
 KeymapWindow::KeymapWindow()
 	:
 	BWindow(BRect(80, 50, kDefaultWidth, kDefaultHeight),
@@ -199,6 +245,9 @@ KeymapWindow::KeymapWindow()
 }
 
 
+/**
+ * @brief Destroys the window and releases the file panels.
+ */
 KeymapWindow::~KeymapWindow()
 {
 	delete fOpenPanel;
@@ -206,6 +255,11 @@ KeymapWindow::~KeymapWindow()
 }
 
 
+/**
+ * @brief Saves window-frame and layout settings, then quits the application.
+ *
+ * @return Always true; the window is allowed to close.
+ */
 bool
 KeymapWindow::QuitRequested()
 {
@@ -216,6 +270,15 @@ KeymapWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Dispatches messages from menus, keymap lists, file panels, and the layout view.
+ *
+ * Recognises file open/save, keymap selection, layout changes, font
+ * selection, modifier and dead-key edits, defaults/revert, and the
+ * Switch Shortcuts toggle.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 KeymapWindow::MessageReceived(BMessage* message)
 {
@@ -501,6 +564,11 @@ KeymapWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Builds the window's menu bar (File, Layout, Font).
+ *
+ * @return Newly created menu bar; ownership passes to the layout system.
+ */
 BMenuBar*
 KeymapWindow::_CreateMenu()
 {
@@ -552,6 +620,14 @@ KeymapWindow::_CreateMenu()
 }
 
 
+/**
+ * @brief Builds the dead-key trigger menu field with five accent submenus.
+ *
+ * Constructs separate radio-mode submenus for the acute, circumflex,
+ * diaeresis, grave, and tilde dead keys.
+ *
+ * @return Menu field hosting the assembled popup.
+ */
 BMenuField*
 KeymapWindow::_CreateDeadKeyMenuField()
 {
@@ -606,6 +682,11 @@ KeymapWindow::_CreateDeadKeyMenuField()
 }
 
 
+/**
+ * @brief Builds the System and User keymap list panes inside scroll views.
+ *
+ * @return Group view containing the two list views and their headings.
+ */
 BView*
 KeymapWindow::_CreateMapLists()
 {
@@ -639,6 +720,15 @@ KeymapWindow::_CreateMapLists()
 }
 
 
+/**
+ * @brief Populates @a menu with every keyboard layout found in the standard locations.
+ *
+ * Walks user-noPACKAGED, user, system-noPACKAGED, and system data
+ * directories, then delegates per-directory population to
+ * _AddKeyboardLayoutMenu().
+ *
+ * @param menu  Layout menu to populate.
+ */
 void
 KeymapWindow::_AddKeyboardLayouts(BMenu* menu)
 {
@@ -665,10 +755,16 @@ KeymapWindow::_AddKeyboardLayouts(BMenu* menu)
 }
 
 
-/*!	Adds a menu populated with the keyboard layouts found in the passed
-	in directory to the passed in menu. Each subdirectory in the passed
-	in directory is added as a submenu recursively.
-*/
+/**
+ * @brief Adds layouts from @a directory to @a menu, recursing into subdirectories.
+ *
+ * Each subdirectory becomes a submenu and each regular file becomes
+ * a kChangeKeyboardLayout-bearing menu item. Items already present
+ * in @a menu are skipped so user-installed entries override system ones.
+ *
+ * @param menu       Layout menu to populate.
+ * @param directory  Directory to scan.
+ */
 void
 KeymapWindow::_AddKeyboardLayoutMenu(BMenu* menu, BDirectory directory)
 {
@@ -697,10 +793,15 @@ KeymapWindow::_AddKeyboardLayoutMenu(BMenu* menu, BDirectory directory)
 }
 
 
-/*!	Sets the keyboard layout with the passed in path and marks the
-	corresponding menu item. If the path is not found in the menu this method
-	sets the default keyboard layout and marks the corresponding menu item.
-*/
+/**
+ * @brief Loads a keyboard layout by path and marks the corresponding menu item.
+ *
+ * If the path is not found in the menu this method sets the default
+ * keyboard layout and marks the corresponding menu item.
+ *
+ * @param path  Filesystem path of the layout to load.
+ * @return      Status code from the layout load.
+ */
 status_t
 KeymapWindow::_SetKeyboardLayout(const char* path)
 {
@@ -725,12 +826,15 @@ KeymapWindow::_SetKeyboardLayout(const char* path)
 }
 
 
-/*!	Marks a keyboard layout item by iterating through the menus recursively
-	searching for the menu item with the passed in path. This method always
-	iterates through all menu items and unmarks them. If no item with the
-	passed in path is found it is up to the caller to set the default keyboard
-	layout and mark item corresponding to the default keyboard layout path.
-*/
+/**
+ * @brief Recursively unmarks every layout item, then marks the one at @a path.
+ *
+ * If no item matches @a path the caller is expected to fall back to
+ * the default layout and mark its menu item.
+ *
+ * @param path  Filesystem path of the layout that should be marked.
+ * @param menu  Subtree to walk.
+ */
 void
 KeymapWindow::_MarkKeyboardLayoutItem(const char* path, BMenu* menu)
 {
@@ -761,9 +865,12 @@ KeymapWindow::_MarkKeyboardLayoutItem(const char* path, BMenu* menu)
 }
 
 
-/*!	Sets the label of the "Switch Shorcuts" button to make it more
-	descriptive what will happen when you press that button.
-*/
+/**
+ * @brief Updates the Switch Shortcuts button label to reflect the next swap.
+ *
+ * The label changes between "to Windows/Linux mode" and "to Haiku
+ * mode" depending on which shortcut layout is currently active.
+ */
 void
 KeymapWindow::_UpdateSwitchShortcutButton()
 {
@@ -780,9 +887,9 @@ KeymapWindow::_UpdateSwitchShortcutButton()
 }
 
 
-/*!	Marks the menu items corresponding to the dead key state of the current
-	key map.
-*/
+/**
+ * @brief Marks the menu items matching the current map's dead-key triggers.
+ */
 void
 KeymapWindow::_UpdateDeadKeyMenu()
 {
@@ -824,6 +931,9 @@ KeymapWindow::_UpdateDeadKeyMenu()
 }
 
 
+/**
+ * @brief Refreshes the enabled state of Defaults/Revert and re-syncs ancillary menus.
+ */
 void
 KeymapWindow::_UpdateButtons()
 {
@@ -841,6 +951,12 @@ KeymapWindow::_UpdateButtons()
 }
 
 
+/**
+ * @brief Swaps the left/right Command and Control assignments in the current map.
+ *
+ * Used to toggle between Haiku and Windows/Linux shortcut conventions
+ * without requiring a full keymap edit.
+ */
 void
 KeymapWindow::_SwitchShortcutKeys()
 {
@@ -862,7 +978,9 @@ KeymapWindow::_SwitchShortcutKeys()
 }
 
 
-//!	Restores the default keymap.
+/**
+ * @brief Restores the system default keymap and updates the UI selection.
+ */
 void
 KeymapWindow::_DefaultKeymap()
 {
@@ -876,7 +994,9 @@ KeymapWindow::_DefaultKeymap()
 }
 
 
-//!	Saves previous map to the "Key_map" file.
+/**
+ * @brief Saves the previous map to the Key_map settings file and re-applies it.
+ */
 void
 KeymapWindow::_RevertKeymap()
 {
@@ -900,7 +1020,9 @@ KeymapWindow::_RevertKeymap()
 }
 
 
-//!	Saves current map to the "Key_map" file.
+/**
+ * @brief Saves the current map to the Key_map settings file and activates it.
+ */
 void
 KeymapWindow::_UseKeymap()
 {
@@ -921,6 +1043,11 @@ KeymapWindow::_UseKeymap()
 }
 
 
+/**
+ * @brief Fills the System list view with keymaps installed under B_SYSTEM_DATA_DIRECTORY.
+ *
+ * @todo Discover keymaps in shared common directories as well.
+ */
 void
 KeymapWindow::_FillSystemMaps()
 {
@@ -951,6 +1078,9 @@ KeymapWindow::_FillSystemMaps()
 }
 
 
+/**
+ * @brief Fills the User list view with the "(Current)" entry plus any saved user maps.
+ */
 void
 KeymapWindow::_FillUserMaps()
 {
@@ -982,6 +1112,11 @@ KeymapWindow::_FillUserMaps()
 }
 
 
+/**
+ * @brief Sets the minimum width of @a listView based on the widest item.
+ *
+ * @param listView  List view whose explicit minimum size is updated.
+ */
 void
 KeymapWindow::_SetListViewSize(BListView* listView)
 {
@@ -997,6 +1132,12 @@ KeymapWindow::_SetListViewSize(BListView* listView)
 }
 
 
+/**
+ * @brief Resolves the entry_ref of the user's active "Key_map" settings file.
+ *
+ * @param ref  Output entry reference.
+ * @return     Status from the path lookup.
+ */
 status_t
 KeymapWindow::_GetCurrentKeymap(entry_ref& ref)
 {
@@ -1010,6 +1151,12 @@ KeymapWindow::_GetCurrentKeymap(entry_ref& ref)
 }
 
 
+/**
+ * @brief Returns the active keymap's friendly name from its file attribute.
+ *
+ * Falls back to the kCurrentKeymapName placeholder when the attribute
+ * is missing or unreadable.
+ */
 BString
 KeymapWindow::_GetActiveKeymapName()
 {
@@ -1028,6 +1175,12 @@ KeymapWindow::_GetActiveKeymapName()
 }
 
 
+/**
+ * @brief Selects the row in @a view whose name matches the current map.
+ *
+ * @param view  List view to search.
+ * @return      true if a matching row was found and selected.
+ */
 bool
 KeymapWindow::_SelectCurrentMap(BListView* view)
 {
@@ -1048,6 +1201,12 @@ KeymapWindow::_SelectCurrentMap(BListView* view)
 }
 
 
+/**
+ * @brief Selects the active keymap in either the System or User list.
+ *
+ * Falls back to selecting the "(Current)" placeholder in the user
+ * list when no entry matches the active keymap name.
+ */
 void
 KeymapWindow::_SelectCurrentMap()
 {
@@ -1059,6 +1218,13 @@ KeymapWindow::_SelectCurrentMap()
 }
 
 
+/**
+ * @brief Opens the "Keymap settings" file in the user settings directory.
+ *
+ * @param file  Output BFile bound to the settings file.
+ * @param mode  open(2)-style flags forwarded to BFile::SetTo().
+ * @return      Status from the directory lookup or BFile::SetTo().
+ */
 status_t
 KeymapWindow::_GetSettings(BFile& file, int mode) const
 {
@@ -1074,6 +1240,16 @@ KeymapWindow::_GetSettings(BFile& file, int mode) const
 }
 
 
+/**
+ * @brief Loads the persisted window frame and selected keyboard layout.
+ *
+ * Computes a sensible default frame scaled by the current font size
+ * before unflattening saved values; if no settings exist the defaults
+ * remain in @a windowFrame.
+ *
+ * @param windowFrame  Output: rectangle to use for the window placement.
+ * @return             Status from the settings read.
+ */
 status_t
 KeymapWindow::_LoadSettings(BRect& windowFrame)
 {
@@ -1110,6 +1286,11 @@ KeymapWindow::_LoadSettings(BRect& windowFrame)
 }
 
 
+/**
+ * @brief Persists the current window frame and selected keyboard layout.
+ *
+ * @return Status from opening or flattening the settings file.
+ */
 status_t
 KeymapWindow::_SaveSettings()
 {
@@ -1130,10 +1311,14 @@ KeymapWindow::_SaveSettings()
 }
 
 
-/*!	Gets the path of the currently marked keyboard layout item
-	by searching through each of the menus recursively until
-	a marked item is found.
-*/
+/**
+ * @brief Returns the path of the currently marked keyboard layout item.
+ *
+ * Searches each menu recursively until a marked item is found.
+ *
+ * @param menu  Subtree to walk.
+ * @return      Path of the marked item, or an uninitialised BPath if none.
+ */
 BPath
 KeymapWindow::_GetMarkedKeyboardLayoutPath(BMenu* menu)
 {

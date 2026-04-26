@@ -1,10 +1,41 @@
 /*
- * Copyright 2004-2007, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Mike Berg <mike@berg-net.us>
- *		Julun <host.haiku@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2007, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Mike Berg <mike@berg-net.us>
+ *       Julun <host.haiku@gmx.de>
+ */
+
+
+/**
+ * @file BaseView.cpp
+ * @brief Implementation of TTimeBaseView, the pulse and notice hub for the
+ *        Time preference window.
+ *
+ * Drives a periodic Pulse() that broadcasts H_TM_CHANGED notices to any
+ * observers (tabs that need to redraw the live clock), and provides a
+ * helper that translates an H_USER_CHANGE message into a system clock
+ * update.
  */
 
 
@@ -16,6 +47,14 @@
 #include "TimeMessages.h"
 
 
+/**
+ * @brief Constructs a base view named for layout purposes.
+ *
+ * Initializes the cached notice message and turns on B_PULSE_NEEDED so the
+ * window framework will call Pulse() every PulseRate() microseconds.
+ *
+ * @param name View name.
+ */
 TTimeBaseView::TTimeBaseView(const char* name)
 	:
 	BGroupView(name, B_VERTICAL, 0),
@@ -25,11 +64,17 @@ TTimeBaseView::TTimeBaseView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; nothing to release.
+ */
 TTimeBaseView::~TTimeBaseView()
 {
 }
 
 
+/**
+ * @brief Pulse callback; broadcasts H_TM_CHANGED if anyone is observing.
+ */
 void
 TTimeBaseView::Pulse()
 {
@@ -38,6 +83,9 @@ TTimeBaseView::Pulse()
 }
 
 
+/**
+ * @brief Synchronizes the view's colors with the panel UI palette.
+ */
 void
 TTimeBaseView::AttachedToWindow()
 {
@@ -46,6 +94,17 @@ TTimeBaseView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Applies a user-driven date or time change to the system clock.
+ *
+ * Reads "time" (bool) from the message: when true, hour/minute/second are
+ * pulled from the message and combined with today's date; when false,
+ * day/month/year override the current date and the time is preserved. The
+ * resulting BDateTime is pushed to the kernel via set_real_time_clock().
+ *
+ * @param message Source message; must contain a bool "time" field. Other
+ *                fields are read opportunistically.
+ */
 void
 TTimeBaseView::ChangeTime(BMessage* message)
 {
@@ -93,6 +152,12 @@ TTimeBaseView::ChangeTime(BMessage* message)
 }
 
 
+/**
+ * @brief Broadcasts the current date and time to all observers.
+ *
+ * Repacks the cached BMessage with day/month/year and hour/minute/second
+ * fields and emits it as an H_TM_CHANGED notice.
+ */
 void
 TTimeBaseView::_SendNotices()
 {

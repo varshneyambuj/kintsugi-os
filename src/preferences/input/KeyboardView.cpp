@@ -1,11 +1,39 @@
 /*
- * Copyright 2004-2006, the Haiku project. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors in chronological order:
- *  mccall@digitalparadise.co.uk
- *  Jérôme Duval
- *  Marcus Overhagen
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2006, the Haiku project. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors in chronological order:
+ *       mccall@digitalparadise.co.uk
+ *       Jérôme Duval
+ *       Marcus Overhagen
+ */
+
+
+/**
+ * @file KeyboardView.cpp
+ * @brief Implementation of KeyboardView, the visual portion of the Keyboard preferences pane.
+ *
+ * KeyboardView lays out the two sliders (key repeat rate, delay until repeat),
+ * a typing test text box, and renders decorative bitmaps next to the sliders.
  */
 
 
@@ -25,6 +53,12 @@
 #define B_TRANSLATION_CONTEXT "KeyboardView"
 
 
+/**
+ * @brief Constructs the keyboard preferences view and builds its layout.
+ *
+ * Creates the repeat-rate slider, the delay-until-repeat slider, and the
+ * typing test text control, then arranges them in a vertical group.
+ */
 KeyboardView::KeyboardView()
 	:
 	BGroupView()
@@ -64,11 +98,20 @@ KeyboardView::KeyboardView()
 }
 
 
+/**
+ * @brief Destroys the view; child controls are owned by the layout system.
+ */
 KeyboardView::~KeyboardView()
 {
 }
 
 
+/**
+ * @brief Renders icon and clock bitmaps next to the repeat and delay sliders.
+ *
+ * @param updateFrame  Region requested for redraw (currently unused; bitmaps
+ *                     are drawn unconditionally relative to the slider frames).
+ */
 void
 KeyboardView::Draw(BRect updateFrame)
 {

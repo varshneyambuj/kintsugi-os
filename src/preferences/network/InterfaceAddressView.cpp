@@ -1,10 +1,44 @@
 /*
- * Copyright 2004-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Alexander von Gluck, kallisti5@unixzen.com
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Alexander von Gluck, kallisti5@unixzen.com
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file InterfaceAddressView.cpp
+ * @brief Implementation of InterfaceAddressView, the per-family network
+ *        addressing editor used inside the Network preflet.
+ *
+ * For a single interface and address family (AF_INET or AF_INET6), this
+ * view exposes a mode selector (DHCP/Automatic, Static, Disabled), the
+ * address/netmask/gateway fields, and an Apply button. Settings are read
+ * via BNetworkSettings, and changes are pushed back through the same
+ * facility so net_server can reconfigure the live stack.
+ *
+ * @see IPAddressControl, NetworkWindow
  */
 
 
@@ -31,15 +65,27 @@
 #define B_TRANSLATION_CONTEXT "IntefaceAddressView"
 
 
+/** @brief Mode message: configure address automatically (DHCP / RA). */
 const uint32 kModeAuto = 'iato';
+/** @brief Mode message: configure address from user-entered static values. */
 const uint32 kModeStatic = 'istc';
+/** @brief Mode message: disable this address family on the interface. */
 const uint32 kModeDisabled = 'ioff';
+/** @brief Apply-button message: push the current field values to settings. */
 const uint32 kMsgApply = 'aply';
 
 
 // #pragma mark - InterfaceAddressView
 
 
+/**
+ * @brief Builds the view, populates the mode pop-up, and snapshots the
+ *        current interface settings for Revert().
+ *
+ * @param family     Address family edited by this view (AF_INET or AF_INET6).
+ * @param interface  Name of the interface to edit.
+ * @param settings   Live network settings backing the editor.
+ */
 InterfaceAddressView::InterfaceAddressView(int family,
 	const char* interface, BNetworkSettings& settings)
 	:
@@ -115,6 +161,9 @@ InterfaceAddressView::InterfaceAddressView(int family,
 }
 
 
+/**
+ * @brief Destructor. Owned controls are deleted by the BView hierarchy.
+ */
 InterfaceAddressView::~InterfaceAddressView()
 {
 }
@@ -123,6 +172,10 @@ InterfaceAddressView::~InterfaceAddressView()
 // #pragma mark - InterfaceAddressView virtual methods
 
 
+/**
+ * @brief Routes mode-menu and Apply-button messages to this view once
+ *        the layout is attached to a window.
+ */
 void
 InterfaceAddressView::AttachedToWindow()
 {
@@ -131,6 +184,15 @@ InterfaceAddressView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles mode-change and Apply messages.
+ *
+ * Switching to a non-Static mode pushes the change immediately; switching
+ * to Static only updates the field enable/disable state and waits for the
+ * user to press Apply.
+ *
+ * @param message  Incoming BMessage; @c what selects the action.
+ */
 void
 InterfaceAddressView::MessageReceived(BMessage* message)
 {
@@ -159,6 +221,11 @@ InterfaceAddressView::MessageReceived(BMessage* message)
 // #pragma mark - InterfaceAddressView public methods
 
 
+/**
+ * @brief Restores the interface to the settings captured at construction.
+ *
+ * @return Status from the underlying BNetworkSettings::AddInterface call.
+ */
 status_t
 InterfaceAddressView::Revert()
 {
@@ -166,6 +233,11 @@ InterfaceAddressView::Revert()
 }
 
 
+/**
+ * @brief Reports whether the live settings still match the snapshot.
+ *
+ * @return true if the user has changed something Revert() could undo.
+ */
 bool
 InterfaceAddressView::IsRevertable() const
 {
@@ -176,6 +248,14 @@ InterfaceAddressView::IsRevertable() const
 }
 
 
+/**
+ * @brief Notifies the view that interface configuration changed externally.
+ *
+ * Ignores notifications for other interfaces.
+ *
+ * @param message  Configuration message; expected to carry an "interface"
+ *                 string field.
+ */
 void
 InterfaceAddressView::ConfigurationUpdated(const BMessage& message)
 {
@@ -190,6 +270,11 @@ InterfaceAddressView::ConfigurationUpdated(const BMessage& message)
 // #pragma mark - InterfaceAddressView private methods
 
 
+/**
+ * @brief Enables or disables the address fields and Apply button as a group.
+ *
+ * @param enable  true to make fields editable, false to lock them.
+ */
 void
 InterfaceAddressView::_EnableFields(bool enable)
 {
@@ -200,12 +285,13 @@ InterfaceAddressView::_EnableFields(bool enable)
 }
 
 
-/*!	Updates the UI to match the current interface configuration.
-
-	The interface settings may be consulted to determine if the
-	automatic configuration has been specified, if there was no
-	configuration yet.
-*/
+/**
+ * @brief Updates the UI to match the current interface configuration.
+ *
+ * The interface settings may be consulted to determine if the
+ * automatic configuration has been specified, if there was no
+ * configuration yet.
+ */
 void
 InterfaceAddressView::_UpdateFields()
 {
@@ -246,6 +332,14 @@ InterfaceAddressView::_UpdateFields()
 }
 
 
+/**
+ * @brief Marks @a mode as active in the pop-up and adjusts field state.
+ *
+ * Disabled mode clears all text fields; Static mode focuses the address
+ * field for immediate entry. Records the mode as the last applied mode.
+ *
+ * @param mode  One of kModeAuto, kModeStatic, kModeDisabled.
+ */
 void
 InterfaceAddressView::_SetModeField(uint32 mode)
 {
@@ -266,7 +360,9 @@ InterfaceAddressView::_SetModeField(uint32 mode)
 }
 
 
-/*!	Updates the current settings from the controls. */
+/**
+ * @brief Updates the current settings from the controls.
+ */
 void
 InterfaceAddressView::_UpdateSettings()
 {
@@ -301,6 +397,11 @@ InterfaceAddressView::_UpdateSettings()
 }
 
 
+/**
+ * @brief Reads the currently selected mode message from the pop-up.
+ *
+ * @return The marked menu item's message @c what, or kModeAuto if none.
+ */
 uint32
 InterfaceAddressView::_Mode() const
 {
@@ -313,6 +414,15 @@ InterfaceAddressView::_Mode() const
 }
 
 
+/**
+ * @brief Populates @a settings with the current family, mode, and (when
+ *        Static) the user-entered address/mask/gateway.
+ *
+ * Always clears address fields first so stale auto/static values do not
+ * leak across mode switches.
+ *
+ * @param settings  Address record to update in place.
+ */
 void
 InterfaceAddressView::_ConfigureAddress(
 	BNetworkInterfaceAddressSettings& settings)
@@ -336,6 +446,15 @@ InterfaceAddressView::_ConfigureAddress(
 }
 
 
+/**
+ * @brief Parses @a text and writes the result into @a address, suppressing
+ *        DNS resolution.
+ *
+ * Empty input (after trimming) leaves @a address untouched.
+ *
+ * @param address  Destination address; modified on success.
+ * @param text     User-entered address string.
+ */
 void
 InterfaceAddressView::_SetAddress(BNetworkAddress& address, const char* text)
 {

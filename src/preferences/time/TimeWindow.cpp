@@ -1,12 +1,42 @@
 /*
- * Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Andrew McCall <mccall@@digitalparadise.co.uk>
- *		Julun <host.haiku@gmx.de>
- *		Hamish Morrison <hamish@lavabit.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Andrew McCall <mccall@@digitalparadise.co.uk>
+ *       Julun <host.haiku@gmx.de>
+ *       Hamish Morrison <hamish@lavabit.com>
  */
+
+
+/**
+ * @file TimeWindow.cpp
+ * @brief Implementation of TTimeWindow, the tabbed Time & Date window.
+ *
+ * Builds the four preference tabs (Date and time, Time zone, Network time,
+ * Clock), wires them to a shared TTimeBaseView pulse source, and routes
+ * Revert / RTC / change messages through the active page.
+ */
+
 
 #include "TimeWindow.h"
 
@@ -32,6 +62,12 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Time"
 
+/**
+ * @brief Constructs the Time preference window and restores its position.
+ *
+ * Sets up the tabbed layout, restores the last-used screen position, and
+ * registers a Cmd-A shortcut that triggers the About dialog.
+ */
 TTimeWindow::TTimeWindow()
 	:
 	BWindow(BRect(0, 0, 0, 0), B_TRANSLATE_SYSTEM_NAME("Time"), B_TITLED_WINDOW,
@@ -44,11 +80,23 @@ TTimeWindow::TTimeWindow()
 }
 
 
+/**
+ * @brief Destructor; subviews are owned by the layout.
+ */
 TTimeWindow::~TTimeWindow()
 {
 }
 
 
+/**
+ * @brief Saves the window position and tears down observation links on quit.
+ *
+ * Persists the current frame to TimeSettings, stops the clock-pulse
+ * observers held by the time-zone and date/time views, and asks the
+ * application to quit.
+ *
+ * @return Result of BWindow::QuitRequested() (always true here).
+ */
 bool
 TTimeWindow::QuitRequested()
 {
@@ -63,6 +111,15 @@ TTimeWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Routes preference-related messages to the active page.
+ *
+ * Dispatches user time changes to the base view, locale changes to the
+ * date/time view, and revert / RTC / change messages to the relevant
+ * pages. Updates the Revert button's enabled state in response.
+ *
+ * @param message Incoming message.
+ */
 void
 TTimeWindow::MessageReceived(BMessage* message)
 {
@@ -119,6 +176,15 @@ TTimeWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Builds the tabbed layout, all four preference views, and the
+ *        Revert button.
+ *
+ * Configures a 2 Hz pulse rate so the live clock animates smoothly, hooks
+ * the date/time and time-zone views into TTimeBaseView's notice channel,
+ * and lays everything out vertically with a separator above the bottom
+ * button row.
+ */
 void
 TTimeWindow::_InitWindow()
 {
@@ -160,6 +226,9 @@ TTimeWindow::_InitWindow()
 }
 
 
+/**
+ * @brief Restores the saved window position, clamped to the visible screen.
+ */
 void
 TTimeWindow::_AlignWindow()
 {
@@ -168,6 +237,12 @@ TTimeWindow::_AlignWindow()
 }
 
 
+/**
+ * @brief Sends a kChangeTimeFinished message to the date/time view.
+ *
+ * Used after H_USER_CHANGE so the analog clock can release its drag-edit
+ * mode and resume tracking the system clock.
+ */
 void
 TTimeWindow::_SendTimeChangeFinished()
 {
@@ -177,6 +252,9 @@ TTimeWindow::_SendTimeChangeFinished()
 }
 
 
+/**
+ * @brief Enables the Revert button when any page has pending changes.
+ */
 void
 TTimeWindow::_SetRevertStatus()
 {

@@ -1,10 +1,28 @@
 /*
- * Copyright 2001-2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Michael Pfeiffer
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2010, Haiku.
+ * Original authors: Michael Pfeiffer.
  */
+
+/** @file PrinterListView.h
+    @brief List view and row class for installed printers. */
+
 #ifndef _PRINTERS_LISTVIEW_H
 #define _PRINTERS_LISTVIEW_H
 
@@ -25,6 +43,10 @@ class BBitmap;
 class PrintersWindow;
 
 
+/**
+ * @brief Cached column-width state shared between PrinterItem rows so
+ *        that all rows align horizontally.
+ */
 struct PrinterListLayoutData
 {
 	float	fLeftColumnMaximumWidth;
@@ -33,6 +55,12 @@ struct PrinterListLayoutData
 
 
 
+/**
+ * @brief Single-selection list of installed printers.
+ *
+ * Watches the user printers directory through a FolderWatcher and
+ * forwards selection / invocation messages to the parent window.
+ */
 class PrinterListView : public BListView, public FolderListener {
 public:
 								PrinterListView(BRect frame);
@@ -66,6 +94,12 @@ private:
 };
 
 
+/**
+ * @brief Row in PrinterListView representing one installed printer.
+ *
+ * Caches the printer's display strings and owns the SpoolFolder that
+ * tracks job churn for that printer.
+ */
 class PrinterItem : public BListItem {
 public:
 								PrinterItem(PrintersWindow* window,
@@ -84,9 +118,14 @@ public:
 			bool				IsActivePrinter() const;
 			bool				HasPendingJobs() const;
 
+			/** @brief Returns the printer's display name. */
 			const char* 		Name() const { return fName.String(); }
+			/** @brief Returns the driver name shown to the user. */
 			const char*			Driver() const { return fDriverName.String(); }
+			/** @brief Returns the transport name (e.g. USB Port). */
 			const char*			Transport() const { return fTransport.String(); }
+			/** @brief Returns the transport-specific address (e.g.
+			    /dev/parallel/0). */
 			const char*			TransportAddress() const
 									{ return fTransportAddress.String(); }
 

@@ -1,10 +1,41 @@
 /*
- * Copyright 2003-2015 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Phipps
- *		Jérôme Duval, jerome.duval@free.fr
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2015 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Phipps
+ *       Jérôme Duval, jerome.duval@free.fr
+ */
+
+
+/**
+ * @file PreviewView.cpp
+ * @brief Implementation of the stylized monitor preview view.
+ *
+ * Draws a faux-CRT chassis with rounded edges, a power-light dot, and a
+ * dark inner area. Hosts either a child preview BView (driven by the
+ * screensaver add-on) or a text overlay reading "No preview available".
+ *
+ * @see ScreenSaverWindow
  */
 
 
@@ -25,6 +56,7 @@
 #include "Utility.h"
 
 
+/** @brief Pure white text color used by the "no preview" overlay. */
 static const rgb_color kWhite = (rgb_color){ 255, 255, 255 };
 
 
@@ -32,11 +64,21 @@ static const rgb_color kWhite = (rgb_color){ 255, 255, 255 };
 #define B_TRANSLATION_CONTEXT "PreviewView"
 
 
+/** @brief Horizontal sample positions (unit square) used by the local scale2 helpers. */
 static float sampleX[]
 	= { 0, 0.05, 0.15, 0.7, 0.725, 0.8, 0.825, 0.85, 0.950, 1.0 };
+/** @brief Vertical sample positions (unit square) used by the local scale2 helpers. */
 static float sampleY[] = { 0, 0.05, 0.90, 0.95, 0.966, 0.975, 1.0 };
 
 
+/**
+ * @brief Indexed point lookup against the local sampleX/sampleY tables.
+ *
+ * @param x    Index into @c sampleX.
+ * @param y    Index into @c sampleY.
+ * @param area Reference rectangle for the unit square.
+ * @return Scaled point inside @a area.
+ */
 inline BPoint
 scale2(int x, int y, BRect area)
 {
@@ -44,6 +86,16 @@ scale2(int x, int y, BRect area)
 }
 
 
+/**
+ * @brief Indexed rectangle lookup against the local sampleX/sampleY tables.
+ *
+ * @param x1   Left index into @c sampleX.
+ * @param x2   Right index into @c sampleX.
+ * @param y1   Top index into @c sampleY.
+ * @param y2   Bottom index into @c sampleY.
+ * @param area Reference rectangle for the unit square.
+ * @return Scaled rectangle inside @a area.
+ */
 inline BRect
 scale2(int x1, int x2, int y1, int y2, BRect area)
 {
@@ -55,6 +107,15 @@ scale2(int x1, int x2, int y1, int y2, BRect area)
 //	#pragma mark - PreviewView
 
 
+/**
+ * @brief Constructs the preview view and its hidden "no preview" placeholder.
+ *
+ * Sets up the layout (a vertical group with custom insets that leave room
+ * for the painted monitor frame) and creates a black-backed BTextView with
+ * white text reading "No preview available", which is initially hidden.
+ *
+ * @param name Internal BView name.
+ */
 PreviewView::PreviewView(const char* name)
 	:
 	BView(name, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE),
@@ -92,11 +153,25 @@ PreviewView::PreviewView(const char* name)
 }
 
 
+/**
+ * @brief Destroys the preview view; the child views are owned by BView.
+ */
 PreviewView::~PreviewView()
 {
 }
 
 
+/**
+ * @brief BView Draw hook: paints the stylized CRT chassis.
+ *
+ * Renders the outer rounded body, the screen bezel, the speaker grille,
+ * and a green LED power indicator. The actual preview content is drawn by
+ * the child views laid into the container.
+ *
+ * @param updateRect Region requested by the app_server; used as a hint to
+ *                   skip outer-frame work when only the inner area needs
+ *                   refreshing.
+ */
 void
 PreviewView::Draw(BRect updateRect)
 {
@@ -128,6 +203,16 @@ PreviewView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Creates and inserts a fresh child preview view sized to a 4:3 frame.
+ *
+ * The width scales with the system plain font size so previews stay
+ * legible on high-DPI configurations. The "no preview" overlay is sized
+ * to match.
+ *
+ * @return Pointer to the newly created preview BView; ownership remains
+ *         with this PreviewView.
+ */
 BView*
 PreviewView::AddPreview()
 {
@@ -153,6 +238,12 @@ PreviewView::AddPreview()
 }
 
 
+/**
+ * @brief Detaches the current preview child view and shows the placeholder.
+ *
+ * @return The detached preview BView; the caller takes ownership and is
+ *         expected to delete it. Returns @c NULL when no preview existed.
+ */
 BView*
 PreviewView::RemovePreview()
 {
@@ -167,6 +258,9 @@ PreviewView::RemovePreview()
 }
 
 
+/**
+ * @brief Returns the current preview child view, or @c NULL when none is set.
+ */
 BView*
 PreviewView::SaverView()
 {
@@ -174,6 +268,9 @@ PreviewView::SaverView()
 }
 
 
+/**
+ * @brief Brings the "No preview available" overlay to the front.
+ */
 void
 PreviewView::ShowNoPreview() const
 {
@@ -181,6 +278,9 @@ PreviewView::ShowNoPreview() const
 }
 
 
+/**
+ * @brief Hides the "No preview available" overlay and reveals the saver view.
+ */
 void
 PreviewView::HideNoPreview() const
 {

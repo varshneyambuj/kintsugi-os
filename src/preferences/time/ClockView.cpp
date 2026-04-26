@@ -1,9 +1,38 @@
 /*
- * Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione <jscipione@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       John Scipione <jscipione@gmail.com>
+ */
+
+
+/**
+ * @file ClockView.cpp
+ * @brief Implementation of the Clock preference page.
+ *
+ * Lays out the four toggles, fetches the current Deskbar settings on
+ * attach, and forwards user changes back to the Deskbar over its registered
+ * messenger. Caches launch-time values to support Revert.
  */
 
 
@@ -25,6 +54,7 @@
 #include "TimeMessages.h"
 
 
+/** @brief MIME signature of the Deskbar, used as the messaging target. */
 static const char* kDeskbarSignature = "application/x-vnd.Be-TSKB";
 
 
@@ -32,6 +62,14 @@ static const char* kDeskbarSignature = "application/x-vnd.Be-TSKB";
 #define B_TRANSLATION_CONTEXT "Time"
 
 
+/**
+ * @brief Constructs the Clock preference page and lays out its checkboxes.
+ *
+ * Caches initial values that match the Deskbar's defaults; real values
+ * arrive asynchronously in MessageReceived().
+ *
+ * @param name View name.
+ */
 ClockView::ClockView(const char* name)
 	:
 	BView(name, 0),
@@ -72,11 +110,20 @@ ClockView::ClockView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; checkboxes are owned by the layout.
+ */
 ClockView::~ClockView()
 {
 }
 
 
+/**
+ * @brief Hooks up checkbox targets and asks the Deskbar for current values.
+ *
+ * Disables every control until the asynchronous Deskbar reply arrives so
+ * the user cannot stomp on uninitialized state.
+ */
 void
 ClockView::AttachedToWindow()
 {
@@ -103,6 +150,19 @@ ClockView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Routes Deskbar replies, user toggles, and Revert into the UI.
+ *
+ * - kGetClockSettings: applies the asynchronous Deskbar reply, caches the
+ *   values for Revert, and enables the controls.
+ * - kShowHideTime: toggles the master switch (with cascade to the
+ *   sub-options) and forwards the change to the Deskbar.
+ * - kShowSeconds / kShowDayOfWeek / kShowTimeZone: forwards the change to
+ *   the Deskbar and posts kMsgChange so the Revert button updates.
+ * - kMsgRevert: restores the cached values.
+ *
+ * @param message Incoming message.
+ */
 void
 ClockView::MessageReceived(BMessage* message)
 {
@@ -191,6 +251,9 @@ ClockView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Returns true when any control differs from its cached launch value.
+ */
 bool
 ClockView::CheckCanRevert()
 {
@@ -201,6 +264,10 @@ ClockView::CheckCanRevert()
 }
 
 
+/**
+ * @brief Restores each checkbox to its cached value, invoking the
+ *        associated message so the Deskbar follows.
+ */
 void
 ClockView::_Revert()
 {

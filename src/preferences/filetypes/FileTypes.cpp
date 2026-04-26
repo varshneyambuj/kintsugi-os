@@ -1,6 +1,36 @@
 /*
- * Copyright 2006-2007, Axel Dörfler, axeld@pinc-software.de.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2007, Axel Dörfler, axeld@pinc-software.de.
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file FileTypes.cpp
+ * @brief Entry point and BApplication implementation for the FileTypes
+ *        preference app.
+ *
+ * Hosts the main window factory, the persistent settings store, file panel
+ * dispatch, refs/argv handling, cascade placement of per-application type
+ * editors, and small free-function helpers (is_application, is_resource,
+ * error_alert) shared across the app.
  */
 
 
@@ -32,12 +62,19 @@
 #define B_TRANSLATION_CONTEXT "FileTypes"
 
 
+/** @brief MIME signature used to register and launch the FileTypes app. */
 const char* kSignature = "application/x-vnd.Haiku-FileTypes";
 
+/** @brief BMessage what code identifying the on-disk settings blob. */
 static const uint32 kMsgFileTypesSettings = 'FTst';
+/** @brief Pixel offset between cascaded ApplicationTypeWindow positions. */
 static const uint32 kCascadeOffset = 20;
 
 
+/**
+ * @brief Persistent settings store: window frames and view-state flags
+ *        kept in a flattened BMessage under the user settings directory.
+ */
 class Settings {
 public:
 								Settings();
@@ -54,6 +91,10 @@ private:
 			bool				fUpdated;
 };
 
+/**
+ * @brief BApplication subclass that hosts every FileTypes window and the
+ *        shared open-file panel.
+ */
 class FileTypes : public BApplication {
 public:
 								FileTypes();
@@ -85,6 +126,14 @@ private:
 };
 
 
+/**
+ * @brief Loads the persisted settings BMessage from disk, falling back to
+ *        defaults when the file is missing or unreadable.
+ *
+ * On failure to open or unflatten, the default values laid down by
+ * _SetDefaults() are kept and @a fUpdated remains false (so no pointless
+ * write occurs on destruction).
+ */
 Settings::Settings()
 	:
 	fMessage(kMsgFileTypesSettings),
@@ -106,6 +155,10 @@ Settings::Settings()
 }
 
 
+/**
+ * @brief Flushes the settings to disk if anything has been updated since
+ *        construction.
+ */
 Settings::~Settings()
 {
 	// only save the settings if something has changed
@@ -120,6 +173,17 @@ Settings::~Settings()
 }
 
 
+/**
+ * @brief Merges fields found in @a message into the in-memory settings
+ *        BMessage and flags it dirty.
+ *
+ * Only the known keys (window frames, icon/rule visibility flags, split
+ * weights) are copied; unknown keys are ignored. The
+ * "app_type_initial_frame" key is intentionally not merged because it
+ * represents the static origin point used on first launch.
+ *
+ * @param message  Message containing one or more known settings fields.
+ */
 void
 Settings::UpdateFrom(BMessage* message)
 {
@@ -153,6 +217,10 @@ Settings::UpdateFrom(BMessage* message)
 }
 
 
+/**
+ * @brief Populates the settings BMessage with the factory defaults used
+ *        on the first launch or when the on-disk file cannot be read.
+ */
 void
 Settings::_SetDefaults()
 {
@@ -167,6 +235,15 @@ Settings::_SetDefaults()
 }
 
 
+/**
+ * @brief Opens the user settings file backing this Settings instance.
+ *
+ * @param file  Output BFile that will be initialised on success.
+ * @param mode  BFile open flags (e.g. B_READ_ONLY, B_WRITE_ONLY |
+ *              B_CREATE_FILE | B_ERASE_FILE).
+ * @return      B_OK on success, B_ERROR if the user settings directory
+ *              cannot be located, or any error returned by BFile::SetTo.
+ */
 status_t
 Settings::_Open(BFile* file, int32 mode)
 {
@@ -183,6 +260,9 @@ Settings::_Open(BFile* file, int32 mode)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the BApplication and the shared file-open panel.
+ */
 FileTypes::FileTypes()
 	:
 	BApplication(kSignature),
@@ -196,12 +276,19 @@ FileTypes::FileTypes()
 }
 
 
+/**
+ * @brief Releases the shared open file panel.
+ */
 FileTypes::~FileTypes()
 {
 	delete fFilePanel;
 }
 
 
+/**
+ * @brief Opens the default FileTypes window when no other window has been
+ *        created in response to refs or argv arguments.
+ */
 void
 FileTypes::ReadyToRun()
 {
@@ -214,6 +301,18 @@ FileTypes::ReadyToRun()
 }
 
 
+/**
+ * @brief Dispatches incoming entry refs to the right editor window.
+ *
+ * Applications and resource files spawn an ApplicationTypeWindow per
+ * entry; remaining refs are aggregated and handed to a single
+ * FileTypeWindow. Errors opening any ref produce a translated alert and
+ * the offending ref is removed from the message before further processing.
+ *
+ * Holding the Shift key on launch keeps symlinks unresolved.
+ *
+ * @param message  Message containing zero or more "refs" entries.
+ */
 void
 FileTypes::RefsReceived(BMessage* message)
 {
@@ -286,6 +385,18 @@ FileTypes::RefsReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Translates command-line arguments into a refs message and
+ *        forwards them to RefsReceived().
+ *
+ * Recognises the special form "FileTypes -type <mime>" to preselect a
+ * MIME type the next time the main browser is opened. Any other arguments
+ * are treated as paths (resolved against the launching CWD when relative)
+ * and bundled into a synthetic refs message.
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector; argv[0] is the executable path.
+ */
 void
 FileTypes::ArgvReceived(int32 argc, char** argv)
 {
@@ -327,6 +438,15 @@ FileTypes::ArgvReceived(int32 argc, char** argv)
 }
 
 
+/**
+ * @brief Top-level message dispatch for the FileTypes BApplication.
+ *
+ * Handles the open-window/window-closed bookkeeping for the main browser
+ * and the application-types browser, the shared file panel request, and
+ * the silent-relaunch and B_CANCEL hooks needed for clean exit.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 FileTypes::MessageReceived(BMessage* message)
 {
@@ -437,6 +557,12 @@ FileTypes::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Always permits termination; called by Be when the app is asked
+ *        to quit.
+ *
+ * @return Always true.
+ */
 bool
 FileTypes::QuitRequested()
 {
@@ -444,6 +570,10 @@ FileTypes::QuitRequested()
 }
 
 
+/**
+ * @brief Decrements the live window counter and posts B_QUIT_REQUESTED
+ *        when no windows remain and the file panel is closed.
+ */
 void
 FileTypes::_WindowClosed()
 {
@@ -452,6 +582,16 @@ FileTypes::_WindowClosed()
 }
 
 
+/**
+ * @brief Computes the next cascaded ApplicationTypeWindow position from
+ *        @a lastFrame and writes it back to the settings store.
+ *
+ * Wraps the cascade back to the initial frame when an offset would push
+ * the window off the right or bottom edge of the screen.
+ *
+ * @param lastFrame  Frame of the most recently opened ApplicationTypeWindow
+ *                   in screen coordinates.
+ */
 void
 FileTypes::_AppTypeCascade(BRect lastFrame)
 {
@@ -483,6 +623,13 @@ FileTypes::_AppTypeCascade(BRect lastFrame)
 //	#pragma mark -
 
 
+/**
+ * @brief Tests whether @a file carries the application MIME type.
+ *
+ * @param file  Open BFile to probe.
+ * @return      True when BAppFileInfo reports B_APP_MIME_TYPE,
+ *              false otherwise (including when the info is invalid).
+ */
 bool
 is_application(BFile& file)
 {
@@ -499,6 +646,13 @@ is_application(BFile& file)
 }
 
 
+/**
+ * @brief Tests whether @a file carries the BResources MIME type.
+ *
+ * @param file  Open BFile to probe.
+ * @return      True when the file's node info reports
+ *              B_RESOURCE_MIME_TYPE and BResources can read it.
+ */
 bool
 is_resource(BFile& file)
 {
@@ -516,6 +670,16 @@ is_resource(BFile& file)
 }
 
 
+/**
+ * @brief Shows a translated, blocking BAlert reporting an error to the user.
+ *
+ * Appends a human-readable description of @a status when it is not B_OK.
+ * The alert closes on Escape and uses the translated FileTypes title.
+ *
+ * @param message  User-facing message; may include a short context.
+ * @param status   Status code; B_OK suppresses the appended strerror text.
+ * @param type     BAlert visual style (info, warning, stop, etc.).
+ */
 void
 error_alert(const char* message, status_t status, alert_type type)
 {
@@ -533,6 +697,14 @@ error_alert(const char* message, status_t status, alert_type type)
 }
 
 
+/**
+ * @brief Process entry point: instantiates the FileTypes BApplication
+ *        and runs its message loop until quit.
+ *
+ * @param argc  Argument count (forwarded to BApplication via ArgvReceived).
+ * @param argv  Argument vector.
+ * @return      Always 0.
+ */
 int
 main(int argc, char** argv)
 {

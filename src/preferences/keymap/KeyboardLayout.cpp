@@ -1,6 +1,37 @@
 /*
- * Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file KeyboardLayout.cpp
+ * @brief Loader and parser for the small text-based keyboard layout description language.
+ *
+ * Builds a KeyboardLayout from either a built-in default (embedded as a
+ * string) or from a file on disk. The parser is a simple state machine
+ * that consumes value pairs (name = value, plus "$"-prefixed
+ * variables) and bracketed row descriptions enumerating each key's
+ * shape, size, and scancode range.
  */
 
 
@@ -26,6 +57,9 @@
 #endif
 
 
+/**
+ * @brief Constructs an empty layout and loads the built-in default.
+ */
 KeyboardLayout::KeyboardLayout()
 	:
 	fKeys(NULL),
@@ -38,12 +72,18 @@ KeyboardLayout::KeyboardLayout()
 }
 
 
+/**
+ * @brief Destroys the layout and releases the key array.
+ */
 KeyboardLayout::~KeyboardLayout()
 {
 	free(fKeys);
 }
 
 
+/**
+ * @brief Returns the human-readable layout name parsed from the description.
+ */
 const char*
 KeyboardLayout::Name()
 {
@@ -51,6 +91,9 @@ KeyboardLayout::Name()
 }
 
 
+/**
+ * @brief Returns the number of keys currently held by this layout.
+ */
 int32
 KeyboardLayout::CountKeys()
 {
@@ -58,6 +101,12 @@ KeyboardLayout::CountKeys()
 }
 
 
+/**
+ * @brief Returns a pointer to the key at @a index, or NULL if out of range.
+ *
+ * @param index  Zero-based key index.
+ * @return       Pointer to the Key entry owned by this layout, or NULL.
+ */
 Key*
 KeyboardLayout::KeyAt(int32 index)
 {
@@ -68,6 +117,9 @@ KeyboardLayout::KeyAt(int32 index)
 }
 
 
+/**
+ * @brief Returns the number of LED indicators in this layout.
+ */
 int32
 KeyboardLayout::CountIndicators()
 {
@@ -75,6 +127,12 @@ KeyboardLayout::CountIndicators()
 }
 
 
+/**
+ * @brief Returns a pointer to the indicator at @a index, or NULL if out of range.
+ *
+ * @param index  Zero-based indicator index.
+ * @return       Pointer to the Indicator entry owned by this layout, or NULL.
+ */
 Indicator*
 KeyboardLayout::IndicatorAt(int32 index)
 {
@@ -82,6 +140,9 @@ KeyboardLayout::IndicatorAt(int32 index)
 }
 
 
+/**
+ * @brief Returns the bounding rectangle covering all keys and indicators.
+ */
 BRect
 KeyboardLayout::Bounds()
 {
@@ -89,6 +150,9 @@ KeyboardLayout::Bounds()
 }
 
 
+/**
+ * @brief Returns the default key size used when a row omits the size specifier.
+ */
 BSize
 KeyboardLayout::DefaultKeySize()
 {
@@ -96,6 +160,13 @@ KeyboardLayout::DefaultKeySize()
 }
 
 
+/**
+ * @brief Returns the key index corresponding to a single-bit modifier mask.
+ *
+ * @param modifier  One of the B_*_KEY or B_*_LOCK constants.
+ * @return          Layout-specific key index for the given modifier, or 0
+ *                  if @a modifier is not recognised.
+ */
 int32
 KeyboardLayout::IndexForModifier(int32 modifier)
 {
@@ -130,6 +201,12 @@ KeyboardLayout::IndexForModifier(int32 modifier)
 }
 
 
+/**
+ * @brief Loads a layout description from a path.
+ *
+ * @param path  Filesystem path to a layout description file.
+ * @return      Status forwarded from the entry_ref overload of Load().
+ */
 status_t
 KeyboardLayout::Load(const char* path)
 {
@@ -140,6 +217,19 @@ KeyboardLayout::Load(const char* path)
 }
 
 
+/**
+ * @brief Loads a layout description from an entry_ref.
+ *
+ * Reads the entire file into memory (capped at 65536 bytes) and parses
+ * it via _InitFrom(). On success the IsDefault() flag is cleared.
+ *
+ * @param ref  Reference to the layout description file.
+ * @return     Status code from the file or the parser.
+ * @retval B_OK         Layout was loaded successfully.
+ * @retval B_BAD_VALUE  File is larger than 65536 bytes or invalid.
+ * @retval B_NO_MEMORY  Could not allocate the read buffer.
+ * @retval B_IO_ERROR   Short read while loading the file.
+ */
 status_t
 KeyboardLayout::Load(entry_ref& ref)
 {
@@ -184,6 +274,15 @@ KeyboardLayout::Load(entry_ref& ref)
 }
 
 
+/**
+ * @brief Replaces the current layout with the built-in default.
+ *
+ * The built-in default is encoded as a string literal in the layout
+ * description language and processed via _InitFrom(). The leading
+ * comment block in this function documents the description-language
+ * syntax (value pairs, row brackets, key shapes, scancode runs, and
+ * LED indicators).
+ */
 void
 KeyboardLayout::SetDefault()
 {
@@ -313,6 +412,9 @@ KeyboardLayout::SetDefault()
 }
 
 
+/**
+ * @brief Discards every key, indicator, and the cached bounds.
+ */
 void
 KeyboardLayout::_FreeKeys()
 {
@@ -326,6 +428,12 @@ KeyboardLayout::_FreeKeys()
 }
 
 
+/**
+ * @brief Emits a parse error message to stderr with the offending line number.
+ *
+ * @param state   Current parser state (used for the line counter).
+ * @param reason  printf-style format string describing the error.
+ */
 void
 KeyboardLayout::_Error(const parse_state& state, const char* reason, ...)
 {
@@ -340,6 +448,14 @@ KeyboardLayout::_Error(const parse_state& state, const char* reason, ...)
 }
 
 
+/**
+ * @brief Records an alternate scancode for @a key, gated by @a modifier.
+ *
+ * @param key       Target key (no-op if NULL).
+ * @param modifier  Modifier mask under which the alternate code applies.
+ * @param code      Alternate scancode to associate with that modifier.
+ * @todo  Search for the first free alternate slot before assigning.
+ */
 void
 KeyboardLayout::_AddAlternateKeyCode(Key* key, int32 modifier, int32 code)
 {
@@ -350,6 +466,12 @@ KeyboardLayout::_AddAlternateKeyCode(Key* key, int32 modifier, int32 code)
 }
 
 
+/**
+ * @brief Appends @a key to the layout, growing the storage in 32-key chunks.
+ *
+ * @param key  Fully populated Key record to append.
+ * @return     true on success, false on allocation failure.
+ */
 bool
 KeyboardLayout::_AddKey(const Key& key)
 {
@@ -374,6 +496,12 @@ KeyboardLayout::_AddKey(const Key& key)
 }
 
 
+/**
+ * @brief Advances @a data past whitespace and "#" line comments.
+ *
+ * @param state  Parser state; the line counter is advanced for each newline.
+ * @param data   Cursor advanced past skipped characters.
+ */
 void
 KeyboardLayout::_SkipCommentsAndSpace(parse_state& state, const char*& data)
 {
@@ -395,6 +523,12 @@ KeyboardLayout::_SkipCommentsAndSpace(parse_state& state, const char*& data)
 }
 
 
+/**
+ * @brief Trims leading and trailing whitespace, optionally stripping comments.
+ *
+ * @param string         String to trim in place.
+ * @param stripComments  When true, truncate at the first '#'.
+ */
 void
 KeyboardLayout::_Trim(BString& string, bool stripComments)
 {
@@ -422,6 +556,15 @@ KeyboardLayout::_Trim(BString& string, bool stripComments)
 }
 
 
+/**
+ * @brief Reads a single "name = value" pair from the input cursor.
+ *
+ * @param state  Parser state used for error reporting.
+ * @param data   Cursor advanced past the consumed text.
+ * @param name   Output: the trimmed left-hand side.
+ * @param value  Output: the trimmed right-hand side, with any "#" comment removed.
+ * @return       true on success, false if no '=' delimiter was present.
+ */
 bool
 KeyboardLayout::_GetPair(const parse_state& state, const char*& data,
 	BString& name, BString& value)
@@ -455,6 +598,24 @@ KeyboardLayout::_GetPair(const parse_state& state, const char*& data,
 }
 
 
+/**
+ * @brief Parses a scancode specifier and adds the resulting keys to the layout.
+ *
+ * Handles the three accepted scancode forms documented at the top of
+ * this file: a leading '-' (free space), '+N' (N keys with relative
+ * codes), '<first>-<last>' (range), and '<first>+N' (run starting at
+ * a fixed code). Also recognises the LED indicator names (led-num,
+ * led-caps, led-scroll).
+ *
+ * @param state       Parser state used for error reporting.
+ * @param rowLeftTop  Cursor for the next key's top-left position; updated.
+ * @param key         Template key whose shape and frame are reused for new keys.
+ * @param data        Trimmed scancode specifier text.
+ * @param lastCount   In/out: number of keys most recently produced; on
+ *                    subsequent calls this triggers alternate-code recording
+ *                    rather than fresh insertion.
+ * @return            true on success, false on parse error.
+ */
 bool
 KeyboardLayout::_AddKeyCodes(const parse_state& state, BPoint& rowLeftTop,
 	Key& key, const char* data, int32& lastCount)
@@ -579,6 +740,16 @@ KeyboardLayout::_AddKeyCodes(const parse_state& state, BPoint& rowLeftTop,
 }
 
 
+/**
+ * @brief Parses a "<x>,<y>[,<second-row>]" size specifier.
+ *
+ * @param state      Parser state used for error reporting.
+ * @param data       Trimmed size text; an empty string yields the default size.
+ * @param x          Output: width.
+ * @param y          Output: height.
+ * @param _secondRow Optional output for the second-row width of an enter key.
+ * @return           true on success, false if fewer than two numbers were found.
+ */
 bool
 KeyboardLayout::_GetSize(const parse_state& state, const char* data,
 	float& x, float& y, float* _secondRow)
@@ -603,6 +774,19 @@ KeyboardLayout::_GetSize(const parse_state& state, const char* data,
 }
 
 
+/**
+ * @brief Parses a key shape descriptor and populates @a key.
+ *
+ * Reads zero or more shape modifier letters ('r' rectangle, 'c'
+ * circle, 'l' enter-shaped, 'd' dark) followed by an optional size
+ * specifier. Validates that a second-row width is supplied if and
+ * only if the shape is the L-shaped enter key.
+ *
+ * @param state  Parser state used for error reporting.
+ * @param data   Trimmed shape text.
+ * @param key    Output: shape, dark flag, and frame are written.
+ * @return       true on success, false on syntax error.
+ */
 bool
 KeyboardLayout::_GetShape(const parse_state& state, const char* data, Key& key)
 {
@@ -653,7 +837,12 @@ KeyboardLayout::_GetShape(const parse_state& state, const char* data, Key& key)
 }
 
 
-/*!	Returns the term delimiter expected in a certain parse mode. */
+/**
+ * @brief Returns the term delimiter expected in a certain parse mode.
+ *
+ * @param mode  Current parser state.
+ * @return      C string of one or more characters that terminate a term.
+ */
 const char*
 KeyboardLayout::_Delimiter(parse_mode mode)
 {
@@ -672,6 +861,15 @@ KeyboardLayout::_Delimiter(parse_mode mode)
 }
 
 
+/**
+ * @brief Reads characters into @a term until a delimiter or comment is hit.
+ *
+ * @param data                   Cursor advanced past the consumed text.
+ * @param delimiter              Characters that terminate the term.
+ * @param term                   Output: the trimmed term text.
+ * @param closingBracketAllowed  When true, a ']' also terminates the term.
+ * @return                       true on success, false at unexpected EOF.
+ */
 bool
 KeyboardLayout::_GetTerm(const char*& data, const char* delimiter,
 	BString& term, bool closingBracketAllowed)
@@ -693,6 +891,18 @@ KeyboardLayout::_GetTerm(const char*& data, const char* delimiter,
 }
 
 
+/**
+ * @brief Replaces every "$name" token in @a term with its value from @a variables.
+ *
+ * Performs longest-match substitution so that "$name1" wins over "$name"
+ * when both are defined. Stops at the first unknown variable and writes
+ * its name to @a unknown.
+ *
+ * @param term       String containing zero or more "$name" tokens; rewritten in place.
+ * @param variables  Substitution table.
+ * @param unknown    Output: name of the first unresolved variable, if any.
+ * @return           true if every "$name" resolved, false otherwise.
+ */
 bool
 KeyboardLayout::_SubstituteVariables(BString& term, VariableMap& variables,
 	BString& unknown)
@@ -736,6 +946,15 @@ KeyboardLayout::_SubstituteVariables(BString& term, VariableMap& variables,
 }
 
 
+/**
+ * @brief Reads the next term and resolves any variable references in it.
+ *
+ * @param state      Parser state used for delimiters and error reporting.
+ * @param data       Cursor advanced past the consumed text.
+ * @param term       Output: the resolved term text.
+ * @param variables  Substitution table.
+ * @return           true on success, false on parse or substitution error.
+ */
 bool
 KeyboardLayout::_ParseTerm(const parse_state& state, const char*& data,
 	BString& term, VariableMap& variables)
@@ -757,10 +976,19 @@ KeyboardLayout::_ParseTerm(const parse_state& state, const char*& data,
 }
 
 
-/*!	Initializes the keyboard layout from the data given.
-	The string has to be a valid keyboard layout description, otherwise
-	an error is returned.
-*/
+/**
+ * @brief Initialises the keyboard layout from a description string.
+ *
+ * The string has to be a valid keyboard layout description, otherwise
+ * an error is returned. Discards any previous keys before parsing and
+ * advances through pairs and bracketed row blocks until the input is
+ * fully consumed.
+ *
+ * @param data  Null-terminated layout description text.
+ * @return      Status code summarising the parse result.
+ * @retval B_OK         The description was accepted.
+ * @retval B_BAD_VALUE  The description failed validation at some point.
+ */
 status_t
 KeyboardLayout::_InitFrom(const char* data)
 {

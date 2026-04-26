@@ -1,17 +1,48 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Andrew Bachmann
- *		Stefano Ceccherini, burton666@libero.it
- *		Alexandre Deckner, alex@zappotek.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Rene Gollent, rene@gollent.com
- *		Thomas Kurschel
- *		Rafael Romo
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Assmus, superstippi@gmx.de
+ *       Andrew Bachmann
+ *       Stefano Ceccherini, burton666@libero.it
+ *       Alexandre Deckner, alex@zappotek.com
+ *       Axel Doerfler, axeld@pinc-software.de
+ *       Rene Gollent, rene@gollent.com
+ *       Thomas Kurschel
+ *       Rafael Romo
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file ScreenWindow.cpp
+ * @brief Implementation of the main Screen preferences window.
+ *
+ * Builds the layout (resolution / color / refresh / multi-monitor menus
+ * plus the monitor preview and brightness slider), responds to menu
+ * selections, and routes apply / revert / undo through ScreenMode. After
+ * applying a mode it shows a countdown alert (AlertWindow) so that an
+ * unreadable mode does not leave the user stranded.
  */
 
 
@@ -103,6 +134,12 @@ static const struct {
 static const int32 kCombineModeCount = B_COUNT_OF(kCombineModes);
 
 
+/**
+ * @brief Map a TV standard ID returned by the accelerant to a printable name.
+ *
+ * @param mode TV standard ID (e.g. 1 = NTSC, 3 = PAL BDGHI).
+ * @return     Localized standard name; @c "??? (mode)" when unrecognized.
+ */
 static BString
 tv_standard_to_string(uint32 mode)
 {
@@ -128,6 +165,12 @@ tv_standard_to_string(uint32 mode)
 }
 
 
+/**
+ * @brief Format a screen_mode resolution as "WIDTH x HEIGHT".
+ *
+ * @param mode   Mode whose width and height should be formatted.
+ * @param string Out: receives the localized "WIDTH x HEIGHT" string.
+ */
 static void
 resolution_to_string(screen_mode& mode, BString &string)
 {
@@ -137,6 +180,14 @@ resolution_to_string(screen_mode& mode, BString &string)
 }
 
 
+/**
+ * @brief Format a refresh rate as "%g" plus an optional unit suffix.
+ *
+ * @param refresh             Refresh rate in Hz.
+ * @param string              Out: receives the formatted string.
+ * @param appendUnit          When true, append "Hz" to the formatted value.
+ * @param alwaysWithFraction  Reserved; currently unused.
+ */
 static void
 refresh_rate_to_string(float refresh, BString &string,
 	bool appendUnit = true, bool alwaysWithFraction = false)
@@ -150,6 +201,12 @@ refresh_rate_to_string(float refresh, BString &string,
 }
 
 
+/**
+ * @brief Convert a screen-mode status code to a user-friendly message.
+ *
+ * @param status Error code, typically returned by @c ScreenMode::Set().
+ * @return       Localized message for known codes; @c strerror() otherwise.
+ */
 static const char*
 screen_errors(status_t status)
 {
@@ -167,6 +224,17 @@ screen_errors(status_t status)
 //	#pragma mark - ScreenWindow
 
 
+/**
+ * @brief Build the entire Screen preferences window layout.
+ *
+ * Detects whether the active accelerant is the VESA fallback (which has
+ * limited capabilities), enumerates resolutions / colour spaces / refresh
+ * rates, configures the brightness slider and multi-monitor controls,
+ * and arranges them via BLayoutBuilder.
+ *
+ * @param settings Persisted settings carrying the saved window frame; the
+ *                 ScreenWindow takes ownership and saves back at exit.
+ */
 ScreenWindow::ScreenWindow(ScreenSettings* settings)
 	:
 	BWindow(settings->WindowFrame(), B_TRANSLATE_SYSTEM_NAME("Screen"),
@@ -621,12 +689,22 @@ ScreenWindow::ScreenWindow(ScreenSettings* settings)
 }
 
 
+/** @brief Free the ScreenSettings object that the window took ownership of. */
 ScreenWindow::~ScreenWindow()
 {
 	delete fSettings;
 }
 
 
+/**
+ * @brief Save state and (when applicable) write a VESA fallback config file.
+ *
+ * On quit, persists the window frame and, if the boot workspace mode was
+ * applied during the session, writes the new mode to the kernel's VESA
+ * settings file so the next boot uses it as the early framebuffer.
+ *
+ * @return true to allow the window to close.
+ */
 bool
 ScreenWindow::QuitRequested()
 {
@@ -654,9 +732,14 @@ ScreenWindow::QuitRequested()
 }
 
 
-/*!	Update resolution list according to combine mode
-	(some resolutions may not be combinable due to memory restrictions).
-*/
+/**
+ * @brief Update the resolution list according to the active combine mode.
+ *
+ * Some resolutions are not combinable horizontally or vertically due to
+ * accelerant memory restrictions. This method walks the menu, disables
+ * every entry, and re-enables only the ones that match the currently
+ * selected combine mode.
+ */
 void
 ScreenWindow::_CheckResolutionMenu()
 {
@@ -680,11 +763,14 @@ ScreenWindow::_CheckResolutionMenu()
 }
 
 
-/*!	Update color and refresh options according to current mode
-	(a color space is made active if there is any mode with
-	given resolution and this colour space; same applies for
-	refresh rate, though "Other…" is always possible)
-*/
+/**
+ * @brief Update the colour-depth menu according to the selected resolution.
+ *
+ * A colour space entry is enabled only if at least one display mode
+ * exposes the currently selected resolution at that depth. If the
+ * previously marked entry is disabled, the next-best entry is selected
+ * automatically.
+ */
 void
 ScreenWindow::_CheckColorMenu()
 {
@@ -771,7 +857,13 @@ ScreenWindow::_CheckColorMenu()
 }
 
 
-/*!	Enable/disable refresh options according to current mode. */
+/**
+ * @brief Enable or disable refresh-rate menu items based on the current mode.
+ *
+ * Walks the refresh menu and clamps each entry to the [min, max] range
+ * reported by ScreenMode for the selected resolution / color space.
+ * The "Other..." item is always kept enabled.
+ */
 void
 ScreenWindow::_CheckRefreshMenu()
 {
@@ -789,7 +881,14 @@ ScreenWindow::_CheckRefreshMenu()
 }
 
 
-/*!	Activate appropriate menu item according to selected refresh rate */
+/**
+ * @brief Mark the menu entry that matches the current refresh rate.
+ *
+ * If the selected rate is one of the standard rates, marks that fixed
+ * entry. Otherwise stores the rate inside the "Other..." item's message
+ * and labels the menu superitem with the explicit Hz value so the user
+ * can see what is active.
+ */
 void
 ScreenWindow::_UpdateRefreshControl()
 {
@@ -828,6 +927,12 @@ ScreenWindow::_UpdateRefreshControl()
 }
 
 
+/**
+ * @brief Tell the MonitorView about the currently selected resolution.
+ *
+ * Posts an @c UPDATE_DESKTOP_MSG carrying the selected width and height
+ * so the schematic monitor preview rescales accordingly.
+ */
 void
 ScreenWindow::_UpdateMonitorView()
 {
@@ -839,6 +944,14 @@ ScreenWindow::_UpdateMonitorView()
 }
 
 
+/**
+ * @brief Refresh every menu and label so they reflect @c fSelected.
+ *
+ * Marks the matching items in the swap, laptop-panel, TV-standard,
+ * resolution, combine-mode and colour-depth menus, refreshes the
+ * monitor preview, and updates the apply/revert button enablement.
+ * Used after Set/Get round-trips and after entering a new mode.
+ */
 void
 ScreenWindow::_UpdateControls()
 {
@@ -931,7 +1044,9 @@ ScreenWindow::_UpdateControls()
 }
 
 
-/*! Reflect active mode in chosen settings */
+/**
+ * @brief Refresh @c fActive from the current workspace's actual mode.
+ */
 void
 ScreenWindow::_UpdateActiveMode()
 {
@@ -939,6 +1054,14 @@ ScreenWindow::_UpdateActiveMode()
 }
 
 
+/**
+ * @brief Refresh @c fActive from the actual mode of @a workspace.
+ *
+ * Drivers are free to alter the proposed mode, so after a Set() we re-read
+ * the live mode and rebuild every dependent control.
+ *
+ * @param workspace Workspace index to query.
+ */
 void
 ScreenWindow::_UpdateActiveMode(int32 workspace)
 {
@@ -956,6 +1079,12 @@ ScreenWindow::_UpdateActiveMode(int32 workspace)
 }
 
 
+/**
+ * @brief Cap the workspace columns/rows spinners so the product fits 32.
+ *
+ * The kernel limit is 32 workspaces total, so the maximum value of each
+ * spinner depends on the value of the other.
+ */
 void
 ScreenWindow::_UpdateWorkspaceButtons()
 {
@@ -993,6 +1122,12 @@ ScreenWindow::_UpdateWorkspaceButtons()
 }
 
 
+/**
+ * @brief Re-center the window when the screen frame shrinks underneath us.
+ *
+ * @param frame The new screen frame in screen coordinates.
+ * @param mode  The new color space (unused).
+ */
 void
 ScreenWindow::ScreenChanged(BRect frame, color_space mode)
 {
@@ -1005,6 +1140,12 @@ ScreenWindow::ScreenChanged(BRect frame, color_space mode)
 }
 
 
+/**
+ * @brief Reload the original-mode snapshot when switching workspaces.
+ *
+ * @param workspace Newly active workspace index.
+ * @param state     True when activating, false when deactivating.
+ */
 void
 ScreenWindow::WorkspaceActivated(int32 workspace, bool state)
 {
@@ -1017,6 +1158,15 @@ ScreenWindow::WorkspaceActivated(int32 workspace, bool state)
 }
 
 
+/**
+ * @brief Top-level message dispatcher for the Screen window.
+ *
+ * Handles every menu / button / slider / spinner message defined in
+ * Constants.h, applies / reverts modes, opens the "Other..." refresh
+ * window, and forwards desktop-color updates to the monitor preview.
+ *
+ * @param message Incoming message.
+ */
 void
 ScreenWindow::MessageReceived(BMessage* message)
 {
@@ -1243,6 +1393,16 @@ ScreenWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Persist the boot-workspace mode to the kernel's VESA settings file.
+ *
+ * Writes a single "mode WIDTH HEIGHT BPP" line to
+ * @c ~/config/settings/kernel/drivers/vesa so the early framebuffer at
+ * the next boot uses the same resolution.
+ *
+ * @param mode Mode to record.
+ * @return     @c B_OK on success; otherwise an I/O error.
+ */
 status_t
 ScreenWindow::_WriteVesaModeFile(const screen_mode& mode) const
 {
@@ -1274,6 +1434,12 @@ ScreenWindow::_WriteVesaModeFile(const screen_mode& mode) const
 }
 
 
+/**
+ * @brief Compute @c fSupportedColorSpaces from the cached mode list.
+ *
+ * Sets a bitmask of indices into the @c kColorSpaces table to reflect
+ * which colour depths can be selected on the current hardware.
+ */
 void
 ScreenWindow::_BuildSupportedColorSpaces()
 {
@@ -1290,6 +1456,14 @@ ScreenWindow::_BuildSupportedColorSpaces()
 }
 
 
+/**
+ * @brief Decide whether the Apply and Revert buttons should be enabled.
+ *
+ * Apply is enabled whenever the user-selected mode differs from the
+ * active mode (or, when "All workspaces" is marked, when any workspace
+ * differs). Revert is enabled when the workspace count, brightness, or
+ * mode differ from the values captured at startup.
+ */
 void
 ScreenWindow::_CheckApplyEnabled()
 {
@@ -1327,6 +1501,12 @@ ScreenWindow::_CheckApplyEnabled()
 }
 
 
+/**
+ * @brief Snapshot the current workspace layout and active mode for revert.
+ *
+ * Records the original columns / rows and asks ScreenMode to capture the
+ * per-workspace original modes so a later @c Revert() can restore them.
+ */
 void
 ScreenWindow::_UpdateOriginal()
 {
@@ -1338,6 +1518,14 @@ ScreenWindow::_UpdateOriginal()
 }
 
 
+/**
+ * @brief Refresh the monitor labels and tooltip from EDID/device info.
+ *
+ * Composes a "Vendor Model X.Y\"" header label, populates the device
+ * info string with the accelerant name + chipset, and assembles a
+ * tooltip listing supported horizontal/vertical frequency ranges,
+ * pixel-clock limits, and the monitor serial number when available.
+ */
 void
 ScreenWindow::_UpdateMonitor()
 {
@@ -1412,6 +1600,9 @@ ScreenWindow::_UpdateMonitor()
 }
 
 
+/**
+ * @brief Update the color menu's superitem to read "N bits/pixel".
+ */
 void
 ScreenWindow::_UpdateColorLabel()
 {
@@ -1421,6 +1612,14 @@ ScreenWindow::_UpdateColorLabel()
 }
 
 
+/**
+ * @brief Apply the selected mode and show the confirm/revert countdown alert.
+ *
+ * Captures the current modes for undo, asks ScreenMode to apply the
+ * selected mode (per-workspace or globally depending on the menu mark),
+ * and uses the actual mode the driver settled on as the new "active"
+ * mode. On failure, displays an error alert with the driver's reason.
+ */
 void
 ScreenWindow::_Apply()
 {

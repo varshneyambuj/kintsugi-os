@@ -1,12 +1,44 @@
 /*
- * Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
- * Copyright 2009, Pier Luigi Fiorini.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
- *		Brian Hill, supernova@tycho.email
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
+ *   Copyright 2009, Pier Luigi Fiorini.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
+ *       Brian Hill, supernova@tycho.email
  */
+
+
+/**
+ * @file NotificationsView.cpp
+ * @brief Implementation of NotificationsView and AppRow, the Applications
+ *        tab of the Notifications preflet.
+ *
+ * Maintains a BColumnListView of registered applications keyed by MIME
+ * signature. Adding an entry uses a filtered BFilePanel; muting or
+ * removing entries posts an Apply so notification_server picks up the
+ * change immediately.
+ */
+
 
 #include <Alert.h>
 #include <Button.h>
@@ -32,10 +64,20 @@
 #define B_TRANSLATION_CONTEXT "NotificationView"
 
 // Applications column indexes
+/** @brief Column index for the application name. */
 const int32 kAppNameIndex = 0;
+/** @brief Column index for the allowed/muted status text. */
 const int32 kAppEnabledIndex = 1;
 
 
+/**
+ * @brief Constructs the row with a name, MIME signature, and initial
+ *        allowed/muted state.
+ *
+ * @param name       Display name of the application.
+ * @param signature  Application MIME signature.
+ * @param allowed    true when notifications from this app are allowed.
+ */
 AppRow::AppRow(const char* name, const char* signature, bool allowed)
 	:
 	BRow(),
@@ -49,6 +91,11 @@ AppRow::AppRow(const char* name, const char* signature, bool allowed)
 }
 
 
+/**
+ * @brief Updates the allowed flag and refreshes the displayed status.
+ *
+ * @param allowed  New allowed/muted state.
+ */
 void
 AppRow::SetAllowed(bool allowed)
 {
@@ -57,6 +104,10 @@ AppRow::SetAllowed(bool allowed)
 }
 
 
+/**
+ * @brief Rewrites the status column field to match the current allowed
+ *        flag and invalidates the row so the change is repainted.
+ */
 void
 AppRow::RefreshEnabledField()
 {
@@ -67,6 +118,12 @@ AppRow::RefreshEnabledField()
 }
 
 
+/**
+ * @brief Builds the column list view, the Add/Remove buttons, and the
+ *        Mute checkbox, and prepares the file panel used to add new apps.
+ *
+ * @param host  Settings host receiving change notifications.
+ */
 NotificationsView::NotificationsView(SettingsHost* host)
 	:
 	SettingsPane("apps", host),
@@ -90,13 +147,13 @@ NotificationsView::NotificationsView(SettingsHost* host)
 		colWidth, colWidth * 3, B_TRUNCATE_END, B_ALIGN_LEFT);
 	fApplications->AddColumn(fAppEnabledCol, kAppEnabledIndex);
 	fApplications->SetSortColumn(fAppCol, true, true);
-	
+
 	fAddButton = new BButton("add_app", B_TRANSLATE("Add" B_UTF8_ELLIPSIS),
 		new BMessage(kAddApplication));
 	fRemoveButton = new BButton("add_app", B_TRANSLATE("Remove"),
 		new BMessage(kRemoveApplication));
 	fRemoveButton->SetEnabled(false);
-	
+
 	fMuteAll = new BCheckBox("block", B_TRANSLATE("Mute notifications from "
 		"this application"),
 		new BMessage(kMuteChanged));
@@ -128,6 +185,9 @@ NotificationsView::NotificationsView(SettingsHost* host)
 }
 
 
+/**
+ * @brief Destructor. Releases the file panel and its filter.
+ */
 NotificationsView::~NotificationsView()
 {
 	delete fAddAppPanel;
@@ -135,6 +195,9 @@ NotificationsView::~NotificationsView()
 }
 
 
+/**
+ * @brief Retargets controls to this view and primes the dependent state.
+ */
 void
 NotificationsView::AttachedToWindow()
 {
@@ -148,6 +211,15 @@ NotificationsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Routes selection, mute, add, and remove messages.
+ *
+ * Adding a new entry validates that the dropped binary has a MIME
+ * signature; missing signatures or duplicates raise an info BAlert and
+ * are rejected. Each successful change posts kApply so the host saves.
+ *
+ * @param msg  Incoming BMessage.
+ */
 void
 NotificationsView::MessageReceived(BMessage* msg)
 {
@@ -252,6 +324,13 @@ NotificationsView::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Replaces the in-memory app-usage map with entries deserialized
+ *        from @a settings, then repopulates the list view.
+ *
+ * @param settings  Source BMessage; must contain "app_usage" entries.
+ * @return B_OK on success, B_ERROR when no app_usage entries are found.
+ */
 status_t
 NotificationsView::Load(BMessage& settings)
 {
@@ -281,6 +360,13 @@ NotificationsView::Load(BMessage& settings)
 }
 
 
+/**
+ * @brief Flattens every AppUsage entry into @a storage as repeated
+ *        "app_usage" fields.
+ *
+ * @param storage  Destination BMessage.
+ * @return Always B_OK.
+ */
 status_t
 NotificationsView::Save(BMessage& storage)
 {
@@ -292,6 +378,9 @@ NotificationsView::Save(BMessage& storage)
 }
 
 
+/**
+ * @brief Resets the per-app controls (mute checkbox) to a neutral state.
+ */
 void
 NotificationsView::_ClearItemSettings()
 {
@@ -299,14 +388,23 @@ NotificationsView::_ClearItemSettings()
 }
 
 
+/**
+ * @brief Caches the currently selected list row in fSelectedRow.
+ */
 void
 NotificationsView::_UpdateSelectedItem()
 {
 	fSelectedRow = dynamic_cast<AppRow*>(fApplications->CurrentSelection());
-	
+
 }
 
 
+/**
+ * @brief Synchronizes the per-app controls with the cached selection.
+ *
+ * Disables the mute checkbox and Remove button when no row is selected;
+ * otherwise reflects the selected app's allowed flag.
+ */
 void
 NotificationsView::_RecallItemSettings()
 {
@@ -326,6 +424,11 @@ NotificationsView::_RecallItemSettings()
 }
 
 
+/**
+ * @brief Revert is a no-op: edits are persisted immediately on Apply.
+ *
+ * @return Always B_OK.
+ */
 status_t
 NotificationsView::Revert()
 {
@@ -333,6 +436,11 @@ NotificationsView::Revert()
 }
 
 
+/**
+ * @brief Reports that this pane has nothing to revert (it auto-saves).
+ *
+ * @return Always false.
+ */
 bool
 NotificationsView::RevertPossible()
 {
@@ -340,6 +448,11 @@ NotificationsView::RevertPossible()
 }
 
 
+/**
+ * @brief Defaults is a no-op for the per-app list.
+ *
+ * @return Always B_OK.
+ */
 status_t
 NotificationsView::Defaults()
 {
@@ -347,6 +460,11 @@ NotificationsView::Defaults()
 }
 
 
+/**
+ * @brief Reports that this pane has no notion of factory defaults.
+ *
+ * @return Always false.
+ */
 bool
 NotificationsView::DefaultsPossible()
 {
@@ -354,6 +472,11 @@ NotificationsView::DefaultsPossible()
 }
 
 
+/**
+ * @brief Opts this pane out of the global Defaults / Revert button strip.
+ *
+ * @return Always false.
+ */
 bool
 NotificationsView::UseDefaultRevertButtons()
 {
@@ -361,6 +484,9 @@ NotificationsView::UseDefaultRevertButtons()
 }
 
 
+/**
+ * @brief Rebuilds the BColumnListView from the current fAppFilters map.
+ */
 void
 NotificationsView::_PopulateApplications()
 {

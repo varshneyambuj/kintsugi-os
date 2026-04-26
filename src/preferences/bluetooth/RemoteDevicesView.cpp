@@ -1,11 +1,43 @@
 /*
- * Copyright 2008-2009, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes@gmail.com>
- * Copyright 2021, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- * 		Fredrik Modéen <fredrik_at_modeen.se>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2009, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes@gmail.com>
+ *   Copyright 2021, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Fredrik Modéen <fredrik_at_modeen.se>
  */
+
+
+/**
+ * @file RemoteDevicesView.cpp
+ * @brief Implementation of RemoteDevicesView, the remote-devices tab.
+ *
+ * RemoteDevicesView is the BView the user spends most time with. It hosts
+ * the BListView of paired/known remote devices and the action buttons
+ * (Add, Remove, Pair, Disconnect). Add launches an InquiryPanel; the
+ * other actions operate on the currently selected DeviceListItem.
+ */
+
 
 #include <stdio.h>
 
@@ -34,15 +66,29 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Remote devices"
 
+/** @brief Internal message: open the inquiry panel to add new devices. */
 static const uint32 kMsgAddDevices = 'ddDv';
+/** @brief Internal message: remove the currently selected device. */
 static const uint32 kMsgRemoveDevice = 'rmDv';
+/** @brief Internal message: pair with the selected remote device. */
 static const uint32 kMsgPairDevice = 'trDv';
+/** @brief Internal message: disconnect from the selected remote device. */
 static const uint32 kMsgDisconnectDevice = 'dsDv';
 //static const uint32 kMsgBlockDevice = 'blDv';
 //static const uint32 kMsgRefreshDevices = 'rfDv';
 
 using namespace Bluetooth;
 
+
+/**
+ * @brief Constructs the remote-devices tab view.
+ *
+ * Builds the device list (single selection), its scroll wrapper, and the
+ * Add/Remove/Pair/Disconnect buttons, and lays them side-by-side.
+ *
+ * @param name   BView name passed up to BView.
+ * @param flags  BView creation flags.
+ */
 RemoteDevicesView::RemoteDevicesView(const char* name, uint32 flags)
  :	BView(name, flags)
 {
@@ -92,12 +138,21 @@ RemoteDevicesView::RemoteDevicesView(const char* name, uint32 flags)
 }
 
 
+/**
+ * @brief Destroys the view.
+ */
 RemoteDevicesView::~RemoteDevicesView(void)
 {
 
 }
 
 
+/**
+ * @brief Wires the buttons and list view to this view as the message target.
+ *
+ * Also calls LoadSettings() to populate the list and selects the first
+ * entry.
+ */
 void
 RemoteDevicesView::AttachedToWindow(void)
 {
@@ -114,6 +169,17 @@ RemoteDevicesView::AttachedToWindow(void)
 }
 
 
+/**
+ * @brief Handles button clicks and inter-window list updates.
+ *
+ * Add launches a new InquiryPanel against ActiveLocalDevice. Remove drops
+ * the selected entry. Pair and Disconnect dispatch to the matching
+ * RemoteDevice methods. Incoming kMsgAddToRemoteList messages from the
+ * inquiry panel are appended (de-duplicating by BD_ADDR).
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BView::MessageReceived.
+ */
 void
 RemoteDevicesView::MessageReceived(BMessage* message)
 {
@@ -194,12 +260,23 @@ RemoteDevicesView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Loads the persisted list of remote devices.
+ *
+ * @note Currently a stub; the persistence backend is not yet implemented.
+ */
 void RemoteDevicesView::LoadSettings(void)
 {
 
 }
 
 
+/**
+ * @brief Indicates whether the tab can be reset to its defaults.
+ *
+ * @return Always true; the parent window decides whether to enable the
+ *         Defaults button on this basis.
+ */
 bool RemoteDevicesView::IsDefaultable(void)
 {
 	return true;

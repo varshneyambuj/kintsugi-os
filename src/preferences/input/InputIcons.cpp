@@ -1,7 +1,37 @@
 /*
- * Copyright 2020, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2020, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file InputIcons.cpp
+ * @brief Implementation of InputIcons, a small bundle of preset BBitmaps.
+ *
+ * Loads the mouse, touchpad, and keyboard vector icons from the
+ * application's executable resources at construction and rasterises them
+ * into BBitmap members sized for the device list view.
+ */
+
 
 #include "InputIcons.h"
 
@@ -15,9 +45,17 @@
 #include "IconHandles.h"
 
 
+/** @brief Cached icon size (computed once on first construction). */
 const BRect InputIcons::sBounds;
 
 
+/**
+ * @brief Loads the vector icon resources and rasterises them into BBitmaps.
+ *
+ * Computes the cached @ref sBounds once, opens the application executable
+ * via BRoster, preloads the vector-icon resource type, then defers to
+ * _LoadBitmap() for the per-icon rasterisation.
+ */
 InputIcons::InputIcons()
 	:
 	mouseIcon(NULL, false),
@@ -39,6 +77,16 @@ InputIcons::InputIcons()
 }
 
 
+/**
+ * @brief Rasterises the three named vector icons into BBitmap members.
+ *
+ * Looks up the "mouse_icon", "touchpad_icon", and "keyboard_icon" entries
+ * from @a resources and hands each to BIconUtils::GetVectorIcon. Missing
+ * icons are silently skipped, leaving the corresponding BBitmap member
+ * default-initialised.
+ *
+ * @param resources  BResources opened from the application executable.
+ */
 void
 InputIcons::_LoadBitmap(BResources* resources)
 {
@@ -71,6 +119,12 @@ InputIcons::_LoadBitmap(BResources* resources)
 }
 
 
+/**
+ * @brief Returns the icon's bounding rectangle offset to a screen point.
+ *
+ * @param topLeft  Origin (top-left corner) for the resulting rectangle.
+ * @return BRect with the cached icon size positioned at @a topLeft.
+ */
 BRect
 InputIcons::IconRectAt(const BPoint& topLeft)
 {

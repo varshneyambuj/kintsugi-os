@@ -1,9 +1,39 @@
 /*
- * Copyright 2011, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Philippe Houdoin
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Philippe Houdoin
+ */
+
+
+/**
+ * @file TestPageView.cpp
+ * @brief View that renders a multi-feature printer test page.
+ *
+ * Builds the test page from several helper views: a stylised leaf shape
+ * exercising bezier rendering, a radial-line burst, color gradient bars
+ * and a textual status block. Designed to be drawn through BPrintJob, but
+ * works as a regular on-screen view too.
  */
 
 
@@ -34,6 +64,8 @@
 // #pragma mark LeafView
 
 
+/** @brief Starting point of the leaf path; subsequent bezier curves
+    extend from here. */
 // path data for the leaf shape
 static const BPoint kLeafBegin(56.24793f, 15.46287f);
 static BPoint kLeafCurves[][3] = {
@@ -55,11 +87,17 @@ static BPoint kLeafCurves[][3] = {
 	{ BPoint(124.70, 98.79), BPoint(124.11, 103.67), BPoint(124.19, 110.60) },
 	{ BPoint(116.42, 111.81), BPoint(85.82, 99.60), BPoint(83.25, 51.96) },
 	{ BPoint(62.50, 42.57), BPoint(58.12, 33.18), BPoint(50.98, 23.81) } };
+/** @brief Number of bezier control-point triples in kLeafCurves. */
 static const int kNumLeafCurves = sizeof(kLeafCurves) / sizeof(kLeafCurves[0]);
+/** @brief Reference width of the leaf path before scaling. */
 static const float kLeafWidth = 372.f;
+/** @brief Reference height of the leaf path before scaling. */
 static const float kLeafHeight = 121.f;
 
 
+/**
+ * @brief View that draws the stylised leaf shape on the test page.
+ */
 class LeafView : public BView {
 public:
 								LeafView();
@@ -67,6 +105,7 @@ public:
 };
 
 
+/** @brief Creates a white-backed view used to render the leaf. */
 LeafView::LeafView()
 	:
 	BView("leafview", B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE)
@@ -75,6 +114,17 @@ LeafView::LeafView()
 }
 
 
+/**
+ * @brief Renders the leaf with a soft drop shadow and a linear gradient
+ *        fill.
+ *
+ * Computes a uniform scale factor from the view width, builds a
+ * BShape from kLeafBegin / kLeafCurves, strokes three increasingly
+ * faint shadow passes and finally fills the shape with a blue gradient.
+ *
+ * @param updateRect Damage region forwarded by BView (unused; we always
+ *                   redraw the full leaf).
+ */
 void
 LeafView::Draw(BRect updateRect)
 {
@@ -119,18 +169,27 @@ LeafView::Draw(BRect updateRect)
 // #pragma mark -
 
 
+/**
+ * @brief View that draws a radial burst of black lines.
+ *
+ * Constrained to a 1:1 aspect ratio so the burst remains circular at
+ * any layout width.
+ */
 class RadialLinesView : public BView {
 public:
 								RadialLinesView();
 
 	virtual	void				Draw(BRect updateRect);
 
+	/** @brief Tells the layout system this view has a height-for-width
+	    constraint. */
 	virtual bool				HasHeightForWidth() { return true; }
 	virtual void				GetHeightForWidth(float width, float* min,
 									float* max, float* preferred);
 };
 
 
+/** @brief Creates a white-backed view used to render the burst. */
 RadialLinesView::RadialLinesView()
 	: BView("radiallinesview", B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE)
 {
@@ -138,6 +197,14 @@ RadialLinesView::RadialLinesView()
 }
 
 
+/**
+ * @brief Reports a square aspect ratio to the layout engine.
+ *
+ * @param width     Layout width offered by the parent layout.
+ * @param min       Output: minimum acceptable height.
+ * @param max       Output: maximum acceptable height.
+ * @param preferred Output: preferred height.
+ */
 void
 RadialLinesView::GetHeightForWidth(float width,
 	float* min, float* max, float* preferred)
@@ -155,6 +222,14 @@ RadialLinesView::GetHeightForWidth(float width,
 }
 
 
+/**
+ * @brief Draws the radial burst into the view.
+ *
+ * Walks 0..360 degrees in 4-degree steps, drawing one line from the
+ * centre to a point on a circle that fills 90% of the smaller side.
+ *
+ * @param updateRect Damage region forwarded by BView (unused).
+ */
 void
 RadialLinesView::Draw(BRect updateRect)
 {
@@ -182,6 +257,8 @@ RadialLinesView::Draw(BRect updateRect)
 // #pragma mark -
 
 
+/** @brief Names and end colors of the gradient bars rendered on the test
+    page. */
 static const struct {
 	const char* name;
 	rgb_color	color;
@@ -194,10 +271,14 @@ static const struct {
 	{ B_TRANSLATE_MARK("Cyan"), 	{0, 255, 255, 255} },
 	{ B_TRANSLATE_MARK("Black"), 	{0, 0, 0, 255} }
 };
+/** @brief Number of gradient bars defined in kColorGradients. */
 static const int kNumColorGradients = sizeof(kColorGradients)
 	/ sizeof(kColorGradients[0]);
 
 
+/**
+ * @brief View that fills itself with a white-to-color gradient.
+ */
 class ColorGradientView : public BView {
 public:
 								ColorGradientView(rgb_color color);
@@ -208,6 +289,12 @@ private:
 };
 
 
+/**
+ * @brief Constructs the gradient view with the given end color.
+ *
+ * @param color RGB color used at the bottom-right of the gradient; the
+ *              top-left is always white.
+ */
 ColorGradientView::ColorGradientView(rgb_color color)
 	:
 	BView("colorgradientview", B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE),
@@ -216,6 +303,12 @@ ColorGradientView::ColorGradientView(rgb_color color)
 }
 
 
+/**
+ * @brief Fills the view's bounds with a linear white-to-fColor gradient
+ *        and strokes the rectangle outline.
+ *
+ * @param updateRect Damage region forwarded by BView (unused).
+ */
 void
 ColorGradientView::Draw(BRect updateRect)
 {
@@ -234,6 +327,14 @@ ColorGradientView::Draw(BRect updateRect)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the top-level test page view.
+ *
+ * @param frame   Initial view frame, normally the BPrintJob printable
+ *                rect.
+ * @param printer PrinterItem whose name / driver / transport are shown
+ *                in the status block.
+ */
 TestPageView::TestPageView(BRect frame, PrinterItem* printer)
 	: BView(frame, "testpage", B_FOLLOW_ALL,
 		B_DRAW_ON_CHILDREN | B_FULL_UPDATE_ON_RESIZE),
@@ -243,6 +344,12 @@ TestPageView::TestPageView(BRect frame, PrinterItem* printer)
 }
 
 
+/**
+ * @brief Builds the view hierarchy when the view enters a window.
+ *
+ * Constructs the status BTextView, the gradient bars, the leaf and the
+ * radial-burst view, and arranges them with BGroupLayoutBuilder.
+ */
 void
 TestPageView::AttachedToWindow()
 {
@@ -309,6 +416,15 @@ TestPageView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Draws four corner alignment marks on top of the children.
+ *
+ * Each mark is two short strokes meeting at the corner, sized at 5% of
+ * the smaller dimension of the page so the marks scale with paper size.
+ *
+ * @param updateRect Damage region (unused; we always draw the four
+ *                   corners).
+ */
 void
 TestPageView::DrawAfterChildren(BRect updateRect)
 {

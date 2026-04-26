@@ -1,7 +1,39 @@
 /*
- * Copyright 2009, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes_at_gmail.com>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes_at_gmail.com>
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file DeviceListItem.cpp
+ * @brief Implementation of Bluetooth::DeviceListItem, a custom BListItem.
+ *
+ * DeviceListItem renders a single discovered remote device inside the
+ * inquiry panel and the main remote-devices BListView. It draws the
+ * device-class icon, the friendly name, and a secondary line containing
+ * the BD_ADDR plus major/minor class.
+ */
+
 
 #include <Bitmap.h>
 #include <View.h>
@@ -11,12 +43,23 @@
 
 #include "DeviceListItem.h"
 
+/** @brief Pixel padding inside each list item. */
 #define INSETS  5
+/** @brief Number of text rows the item reserves vertical space for. */
 #define TEXT_ROWS  2
 
 namespace Bluetooth {
 
 
+/**
+ * @brief Constructs a DeviceListItem wrapping a RemoteDevice.
+ *
+ * Caches the BD_ADDR, the device class, and the cached friendly name from
+ * @a bDevice. The cached name is preferred so that drawing during an
+ * INQUIRY does not trigger a blocking name request.
+ *
+ * @param bDevice  Remote device to represent in the list.
+ */
 DeviceListItem::DeviceListItem(RemoteDevice* bDevice)
 	:
 	BListItem(),
@@ -32,6 +75,15 @@ DeviceListItem::DeviceListItem(RemoteDevice* bDevice)
 }
 
 
+/**
+ * @brief Re-binds the item to a different RemoteDevice and refreshes data.
+ *
+ * Unlike the constructor, this method calls GetFriendlyName() rather than
+ * the cached variant, so it should only be invoked outside the inquiry
+ * critical path.
+ *
+ * @param bDevice  New remote device to represent.
+ */
 void
 DeviceListItem::SetDevice(RemoteDevice* bDevice)
 {
@@ -42,12 +94,32 @@ DeviceListItem::SetDevice(RemoteDevice* bDevice)
 }
 
 
+/**
+ * @brief Destroys the item.
+ *
+ * @note Does not delete the wrapped RemoteDevice; ownership stays with
+ *       the kit's discovery agent.
+ */
 DeviceListItem::~DeviceListItem()
 {
 
 }
 
 
+/**
+ * @brief Draws the list item into the owning view.
+ *
+ * Renders the selection background when applicable, lays out the friendly
+ * name and the BD_ADDR + class line on two separate rows, and draws the
+ * device-class icon at the left edge.
+ *
+ * @param owner     BView that owns the BListView and provides the drawing
+ *                  context.
+ * @param itemRect  Rectangle in @a owner-local coordinates the item should
+ *                  paint into.
+ * @param complete  If true, repaint the entire background even when the
+ *                  item is not selected.
+ */
 void
 DeviceListItem::DrawItem(BView* owner, BRect itemRect, bool	complete)
 {
@@ -126,6 +198,15 @@ DeviceListItem::DrawItem(BView* owner, BRect itemRect, bool	complete)
 }
 
 
+/**
+ * @brief Recomputes the item height from the current font metrics.
+ *
+ * Sets the height to the maximum of two text rows plus padding and the
+ * height needed to display the device-class icon plus padding.
+ *
+ * @param owner  BView providing the drawing context.
+ * @param font   Font BListView is currently using.
+ */
 void
 DeviceListItem::Update(BView* owner, const BFont* font)
 {
@@ -139,6 +220,17 @@ DeviceListItem::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief Comparison hook used by BListView::SortItems.
+ *
+ * Orders items by their cached BD_ADDR using bdaddrUtils::Compare so the
+ * list is deterministic and duplicates can be detected easily.
+ *
+ * @param firstArg   Pointer to a pointer to the first DeviceListItem.
+ * @param secondArg  Pointer to a pointer to the second DeviceListItem.
+ * @return Negative, zero, or positive matching strcmp-style ordering of
+ *         the two BD_ADDRs.
+ */
 int
 DeviceListItem::Compare(const void	*firstArg, const void	*secondArg)
 {
@@ -151,6 +243,11 @@ DeviceListItem::Compare(const void	*firstArg, const void	*secondArg)
 }
 
 
+/**
+ * @brief Returns the wrapped remote device.
+ *
+ * @return Pointer to the RemoteDevice owned by the discovery agent.
+ */
 RemoteDevice*
 DeviceListItem::Device() const
 {

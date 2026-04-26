@@ -1,7 +1,43 @@
 /*
- * Copyright 2008-09, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes_at_gmail.com>
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-09, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes_at_gmail.com>
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file BluetoothDeviceView.cpp
+ * @brief Implementation of BluetoothDeviceView, a read-only summary view.
+ *
+ * BluetoothDeviceView is a BView that arranges a device icon next to a
+ * vertical stack of BStringViews summarising name, BD_ADDR, class of
+ * device, HCI/LMP version, manufacturer, and ACL/SCO buffer counts for a
+ * given BluetoothDevice. It is reused by both local and remote device
+ * detail panels.
+ *
+ * @see ExtendedLocalDeviceView, BluetoothDevice
+ */
+
+
 #include "BluetoothDeviceView.h"
 #include <bluetooth/bdaddrUtils.h>
 
@@ -21,6 +57,18 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Device View"
 
+
+/**
+ * @brief Constructs a BluetoothDeviceView wrapping the given device.
+ *
+ * Creates the labelled BStringViews for each device property, the icon
+ * BView, and arranges them in a horizontal layout. SetBluetoothDevice()
+ * is called to populate the labels from @a bDevice.
+ *
+ * @param bDevice  Device whose properties are displayed; may be NULL to
+ *                 produce an empty placeholder view.
+ * @param flags    Additional BView flags OR'd with B_WILL_DRAW.
+ */
 BluetoothDeviceView::BluetoothDeviceView(BluetoothDevice* bDevice, uint32 flags)
 	:
 	BView("BluetoothDeviceView", flags | B_WILL_DRAW),
@@ -85,11 +133,28 @@ BluetoothDeviceView::BluetoothDeviceView(BluetoothDevice* bDevice, uint32 flags)
 }
 
 
+/**
+ * @brief Destroys the view.
+ *
+ * @note Child BStringViews and the icon BView are owned by the BView tree
+ *       and are released when the parent is destroyed; this destructor
+ *       does no extra work.
+ */
 BluetoothDeviceView::~BluetoothDeviceView()
 {
 }
 
 
+/**
+ * @brief Re-binds the view to a different BluetoothDevice and refreshes labels.
+ *
+ * Pulls friendly name, address, class of device, HCI/LMP versions,
+ * manufacturer, and ACL/SCO buffer parameters from @a bDevice and writes
+ * them into the corresponding BStringViews. The device class icon is
+ * redrawn into the icon child view.
+ *
+ * @param bDevice  New device to display; if NULL the view is left as is.
+ */
 void
 BluetoothDeviceView::SetBluetoothDevice(BluetoothDevice* bDevice)
 {
@@ -151,12 +216,25 @@ BluetoothDeviceView::SetBluetoothDevice(BluetoothDevice* bDevice)
 }
 
 
+/**
+ * @brief No-op target hook kept for BInvoker-style API compatibility.
+ *
+ * @param target  Ignored.
+ */
 void
 BluetoothDeviceView::SetTarget(BHandler* target)
 {
 }
 
 
+/**
+ * @brief Handles messages delivered to the view.
+ *
+ * Currently only delegates to BView::MessageReceived after detecting a
+ * dropped message; reserved for future drag-and-drop handling.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 BluetoothDeviceView::MessageReceived(BMessage* message)
 {
@@ -171,6 +249,11 @@ BluetoothDeviceView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Reserved hook for enabling or disabling the view.
+ *
+ * @param value  Ignored in the current implementation.
+ */
 void
 BluetoothDeviceView::SetEnabled(bool value)
 {

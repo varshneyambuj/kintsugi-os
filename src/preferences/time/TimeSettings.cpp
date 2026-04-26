@@ -1,13 +1,41 @@
 /*
- * Copyright 2002-2007, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Andrew McCall, mccall@digitalparadise.co.uk
- *		Mike Berg <mike@berg-net.us>
- *		Julun <host.haiku@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2007, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Andrew McCall, mccall@digitalparadise.co.uk
+ *       Mike Berg <mike@berg-net.us>
+ *       Julun <host.haiku@gmx.de>
  */
+
+
+/**
+ * @file TimeSettings.cpp
+ * @brief Persists the preference window's screen position between launches.
+ *
+ * Uses a small binary file in B_USER_SETTINGS_DIRECTORY containing a single
+ * BPoint that records the window's last left-top corner.
+ */
+
 
 #include "TimeSettings.h"
 #include "TimeMessages.h"
@@ -18,6 +46,9 @@
 #include <Path.h>
 
 
+/**
+ * @brief Constructs a settings object bound to the canonical filename.
+ */
 TimeSettings::TimeSettings()
 	:
 	fSettingsFile("Time_preflet_window")
@@ -25,11 +56,21 @@ TimeSettings::TimeSettings()
 }
 
 
+/**
+ * @brief Destructor; nothing to release.
+ */
 TimeSettings::~TimeSettings()
 {
 }
 
 
+/**
+ * @brief Reads the saved window position from the user settings directory.
+ *
+ * @return The saved BPoint, or (-1000, -1000) when the file is missing or
+ *         unreadable. The sentinel encourages the caller to use a default
+ *         placement.
+ */
 BPoint
 TimeSettings::LeftTop() const
 {
@@ -51,6 +92,13 @@ TimeSettings::LeftTop() const
 }
 
 
+/**
+ * @brief Writes the current window position to the user settings directory.
+ *
+ * Errors are ignored because the value is non-essential.
+ *
+ * @param leftTop New top-left corner to persist.
+ */
 void
 TimeSettings::SetLeftTop(const BPoint leftTop)
 {

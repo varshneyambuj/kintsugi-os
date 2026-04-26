@@ -1,9 +1,39 @@
 /*
- * Copyright 2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author:
- *		Preetpal Kaur <preetpalok123@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Author:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ */
+
+
+/**
+ * @file MouseSettings.cpp
+ * @brief Per-device and aggregate mouse settings models for the input preferences pane.
+ *
+ * MouseSettings reads, mutates, and persists the input-server settings
+ * for one mouse (button mapping, click speed, acceleration, focus mode,
+ * accept-first-click). MultipleMouseSettings is a per-device registry
+ * that hands out one MouseSettings instance per connected mouse name.
  */
 
 
@@ -18,6 +48,16 @@
 #include <stdio.h>
 
 
+/**
+ * @brief Constructs a MouseSettings model for the named device.
+ *
+ * Pulls the device's current settings from the input server. If retrieval
+ * fails, the object falls back to system defaults. The values active at
+ * construction time are also captured as the "original" snapshot so that
+ * Revert() can restore them later.
+ *
+ * @param name  Device-instance name as known to the input server.
+ */
 MouseSettings::MouseSettings(BString name)
 	:
 	fName(name)
@@ -32,11 +72,24 @@ MouseSettings::MouseSettings(BString name)
 }
 
 
+/**
+ * @brief Destroys the model. No owned resources are released here.
+ */
 MouseSettings::~MouseSettings()
 {
 }
 
 
+/**
+ * @brief Pulls the current settings for this device from the input server.
+ *
+ * Reads button mapping, click speed, mouse speed, acceleration factor,
+ * device type, and the global focus/click-through fields.
+ *
+ * @return     Status code summarising whether all reads succeeded.
+ * @retval B_OK     All settings were retrieved.
+ * @retval B_ERROR  At least one input-server query failed.
+ */
 status_t
 MouseSettings::_RetrieveSettings()
 {
@@ -60,7 +113,13 @@ MouseSettings::_RetrieveSettings()
 }
 
 
-// Resets the settings to the system defaults
+/**
+ * @brief Resets every setting to the system defaults.
+ *
+ * Restores click speed, mouse speed, type, acceleration factor, focus
+ * mode, focus-follows-mouse mode, accept-first-click, and a 1:1 button
+ * mapping spanning B_MAX_MOUSE_BUTTONS.
+ */
 void
 MouseSettings::Defaults()
 {
@@ -79,7 +138,11 @@ MouseSettings::Defaults()
 }
 
 
-// Checks if the settings are different then the system defaults
+/**
+ * @brief Tests whether the current settings differ from the system defaults.
+ *
+ * @return true if at least one tracked field differs from its default.
+ */
 bool
 MouseSettings::IsDefaultable() const
 {
@@ -99,7 +162,9 @@ MouseSettings::IsDefaultable() const
 }
 
 
-//	Reverts to the active settings at program startup
+/**
+ * @brief Restores the settings that were active when this object was constructed.
+ */
 void
 MouseSettings::Revert()
 {
@@ -115,7 +180,11 @@ MouseSettings::Revert()
 }
 
 
-// Checks if the settings are different then the original settings
+/**
+ * @brief Tests whether the current settings differ from the captured original snapshot.
+ *
+ * @return true if Revert() would change at least one tracked field.
+ */
 bool
 MouseSettings::IsRevertable() const
 {
@@ -135,6 +204,11 @@ MouseSettings::IsRevertable() const
 }
 
 
+/**
+ * @brief Updates the device's button-count "type" if the input server accepts it.
+ *
+ * @param type  Number of mouse buttons (1..B_MAX_MOUSE_BUTTONS).
+ */
 void
 MouseSettings::SetMouseType(int32 type)
 {
@@ -143,6 +217,11 @@ MouseSettings::SetMouseType(int32 type)
 }
 
 
+/**
+ * @brief Returns the current double-click time threshold.
+ *
+ * @return Click speed in microseconds (smaller value means faster click).
+ */
 bigtime_t
 MouseSettings::ClickSpeed() const
 {
@@ -150,6 +229,11 @@ MouseSettings::ClickSpeed() const
 }
 
 
+/**
+ * @brief Updates the double-click time threshold for this device.
+ *
+ * @param clickSpeed  Click speed in microseconds.
+ */
 void
 MouseSettings::SetClickSpeed(bigtime_t clickSpeed)
 {
@@ -158,6 +242,11 @@ MouseSettings::SetClickSpeed(bigtime_t clickSpeed)
 }
 
 
+/**
+ * @brief Updates the pointer-movement speed for this device.
+ *
+ * @param speed  Pointer speed value as understood by the input server.
+ */
 void
 MouseSettings::SetMouseSpeed(int32 speed)
 {
@@ -166,6 +255,11 @@ MouseSettings::SetMouseSpeed(int32 speed)
 }
 
 
+/**
+ * @brief Updates the pointer-acceleration factor for this device.
+ *
+ * @param factor  Acceleration factor as understood by the input server.
+ */
 void
 MouseSettings::SetAccelerationFactor(int32 factor)
 {
@@ -174,6 +268,13 @@ MouseSettings::SetAccelerationFactor(int32 factor)
 }
 
 
+/**
+ * @brief Returns the logical button assigned to the given physical button index.
+ *
+ * @param index  Zero-based physical button index.
+ * @return       The B_*_MOUSE_BUTTON value mapped to that physical button.
+ * @note         No bounds checking is performed.
+ */
 uint32
 MouseSettings::Mapping(int32 index) const
 {
@@ -181,6 +282,11 @@ MouseSettings::Mapping(int32 index) const
 }
 
 
+/**
+ * @brief Copies the entire button-mapping table to @a map.
+ *
+ * @param map  Output structure receiving the full mapping.
+ */
 void
 MouseSettings::Mapping(mouse_map& map) const
 {
@@ -188,6 +294,12 @@ MouseSettings::Mapping(mouse_map& map) const
 }
 
 
+/**
+ * @brief Reassigns one physical button to a different logical button and persists it.
+ *
+ * @param index   Zero-based physical button index.
+ * @param button  Logical B_*_MOUSE_BUTTON value to assign.
+ */
 void
 MouseSettings::SetMapping(int32 index, uint32 button)
 {
@@ -196,6 +308,12 @@ MouseSettings::SetMapping(int32 index, uint32 button)
 }
 
 
+/**
+ * @brief Replaces the entire button-mapping table for this device.
+ *
+ * @param map  New mapping. The cached copy is updated only if the input
+ *             server accepted the change.
+ */
 void
 MouseSettings::SetMapping(mouse_map& map)
 {
@@ -204,6 +322,12 @@ MouseSettings::SetMapping(mouse_map& map)
 }
 
 
+/**
+ * @brief Updates the global mouse focus mode.
+ *
+ * @param mode  Focus mode (e.g. B_NORMAL_MOUSE, B_FOCUS_FOLLOWS_MOUSE).
+ * @note  This setting is global, not per device.
+ */
 void
 MouseSettings::SetMouseMode(mode_mouse mode)
 {
@@ -212,6 +336,12 @@ MouseSettings::SetMouseMode(mode_mouse mode)
 }
 
 
+/**
+ * @brief Updates the global focus-follows-mouse behaviour.
+ *
+ * @param mode  Focus-follows-mouse mode (instant, delayed, etc.).
+ * @note  This setting is global, not per device.
+ */
 void
 MouseSettings::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 {
@@ -220,6 +350,12 @@ MouseSettings::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 }
 
 
+/**
+ * @brief Updates the "accept first click" (click-through) behaviour.
+ *
+ * @param accept_first_click  Whether clicks on inactive windows are delivered.
+ * @note  This setting is global, not per device.
+ */
 void
 MouseSettings::SetAcceptFirstClick(bool accept_first_click)
 {
@@ -228,6 +364,11 @@ MouseSettings::SetAcceptFirstClick(bool accept_first_click)
 }
 
 
+/**
+ * @brief Returns a mutable pointer to the underlying settings record.
+ *
+ * @return Pointer to the cached mouse_settings struct owned by this object.
+ */
 mouse_settings*
 MouseSettings::GetSettings()
 {
@@ -235,11 +376,17 @@ MouseSettings::GetSettings()
 }
 
 
+/**
+ * @brief Constructs an empty registry of per-device MouseSettings models.
+ */
 MultipleMouseSettings::MultipleMouseSettings()
 {
 }
 
 
+/**
+ * @brief Releases every per-device MouseSettings object owned by the registry.
+ */
 MultipleMouseSettings::~MultipleMouseSettings()
 {
 	std::map<BString, MouseSettings*>::iterator itr;
@@ -248,6 +395,13 @@ MultipleMouseSettings::~MultipleMouseSettings()
 }
 
 
+/**
+ * @brief Returns the MouseSettings entry for @a mouse_name, creating it on first use.
+ *
+ * @param mouse_name  Device-instance name as reported by the input server.
+ * @return            Pointer to the cached entry, or NULL on allocation failure.
+ * @note              The returned object remains owned by the registry.
+ */
 MouseSettings*
 MultipleMouseSettings::AddMouseSettings(BString mouse_name)
 {

@@ -1,11 +1,43 @@
 /*
- * Copyright 2003-2008, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jérôme Duval
- *		Oliver Ruiz Dorantes
- *		Atsushi Takamatsu
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2008, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jérôme Duval
+ *       Oliver Ruiz Dorantes
+ *       Atsushi Takamatsu
+ */
+
+
+/**
+ * @file HWindow.cpp
+ * @brief Main window for the Sounds preferences app.
+ *
+ * Hosts the event list, a sound-file picker menu populated from the system
+ * sound directories, the embedded SoundFilePanel for browsing custom files,
+ * and Play/Stop buttons backed by BFileGameSound. Persists the window frame
+ * and last-used directory across runs.
+ *
+ * @see HEventList, SoundFilePanel, BFileGameSound, BMediaFiles
  */
 
 
@@ -43,11 +75,24 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "HWindow"
 
+/** @brief Leaf name of the settings file under the user settings directory. */
 static const char kSettingsFile[] = "Sounds_Settings";
+/** @brief UTF-8 play glyph defined in SoundFilePanel.cpp; reused by buttons. */
 extern const char* kPlayLabel;
+/** @brief UTF-8 stop glyph defined in SoundFilePanel.cpp. */
 extern const char* kStopLabel;
 
 
+/**
+ * @brief Builds the window, restores its persisted frame, and chooses the
+ *        initial directory shown by the SoundFilePanel.
+ *
+ * Probes BPathFinder for the system sounds directory, then overlays the
+ * persisted frame and last-used directory if a settings file is present.
+ *
+ * @param rect  Initial window frame (used when no persisted frame exists).
+ * @param name  Window title.
+ */
 HWindow::HWindow(BRect rect, const char* name)
 	:
 	BWindow(rect, name, B_TITLED_WINDOW, B_AUTO_UPDATE_SIZE_LIMITS),
@@ -100,6 +145,10 @@ HWindow::HWindow(BRect rect, const char* name)
 }
 
 
+/**
+ * @brief Persists the current frame and last-used directory and tears down
+ *        the file panel and active sound player.
+ */
 HWindow::~HWindow()
 {
 	delete fFilePanel;
@@ -120,6 +169,15 @@ HWindow::~HWindow()
 }
 
 
+/**
+ * @brief Routes B_PULSE through _Pulse() before normal dispatch.
+ *
+ * Used to keep the Stop button's enabled state in sync with the player's
+ * current playing state without needing a separate pulse target.
+ *
+ * @param message  Incoming message; only B_PULSE is special-cased here.
+ * @param handler  Target handler chosen by the looper.
+ */
 void
 HWindow::DispatchMessage(BMessage* message, BHandler* handler)
 {
@@ -129,6 +187,17 @@ HWindow::DispatchMessage(BMessage* message, BHandler* handler)
 }
 
 
+/**
+ * @brief Handles UI messages from the menu, file panel, and event list.
+ *
+ * Recognises the "Other..." menu choice (opens the SoundFilePanel), file
+ * panel cancel and ref-received messages, the Play / Stop buttons, the
+ * M_EVENT_CHANGED notification from HEventList, and the menu items for the
+ * built-in "<none>" entry as well as wav files discovered in the system
+ * sound directories.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 HWindow::MessageReceived(BMessage* message)
 {
@@ -292,6 +361,11 @@ HWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Captures the current frame for persistence and asks the app to quit.
+ *
+ * @return Always true; the close is allowed to proceed.
+ */
 bool
 HWindow::QuitRequested()
 {
@@ -303,6 +377,14 @@ HWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Builds the view hierarchy and primes initial UI state.
+ *
+ * Creates the HEventList bound to BMediaFiles::B_SOUNDS, the sound-file
+ * BMenuField with its "<none>" and "Other..." items, the Play and Stop
+ * buttons (sized from the plain font), and assembles them in a
+ * BLayoutBuilder group.
+ */
 void
 HWindow::_InitGUI()
 {
@@ -360,6 +442,12 @@ HWindow::_InitGUI()
 }
 
 
+/**
+ * @brief Keeps the Stop button enabled only while the player is active.
+ *
+ * Called from DispatchMessage() on every B_PULSE so the button reflects the
+ * BFileGameSound state without requiring per-state callbacks.
+ */
 void
 HWindow::_Pulse()
 {
@@ -378,6 +466,15 @@ HWindow::_Pulse()
 }
 
 
+/**
+ * @brief Populates the sound-file menu with currently bound and well-known
+ *        wav files.
+ *
+ * First adds entries for paths already bound to events, then walks the four
+ * canonical sound directories (system, system non-packaged, user, user
+ * non-packaged) and inserts a menu item per file found there. Duplicate
+ * leaf names are skipped so the menu stays compact.
+ */
 void
 HWindow::_SetupMenuField()
 {
@@ -444,6 +541,13 @@ HWindow::_SetupMenuField()
 }
 
 
+/**
+ * @brief Recomputes the window's zoom limits to fit the event list contents.
+ *
+ * The width is the event list's preferred width plus the inset and a
+ * vertical scroll bar; the height adds a few inset rows and the button row
+ * height (driven by the plain font size).
+ */
 void
 HWindow::_UpdateZoomLimits()
 {

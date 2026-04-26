@@ -1,12 +1,41 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Copyright 2002, Thomas Kurschel.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Rafael Romo
- *		Thomas Kurschel
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009, Haiku.
+ *   Copyright 2002, Thomas Kurschel.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Rafael Romo
+ *       Thomas Kurschel
+ *       Axel Doerfler, axeld@pinc-software.de
+ */
+
+
+/**
+ * @file MonitorView.cpp
+ * @brief Schematic monitor preview rendered inside the Screen window.
+ *
+ * The view draws a small "monitor" rectangle scaled relative to the
+ * maximum supported resolution and overlays a DPI readout when EDID
+ * monitor info is available.
  */
 
 
@@ -25,6 +54,17 @@
 #define B_TRANSLATION_CONTEXT "Monitor View"
 
 
+/**
+ * @brief Construct the monitor preview at @a rect with an initial size.
+ *
+ * The desktop tint is sampled from the current workspace's desktop color
+ * so the preview matches what the user will see.
+ *
+ * @param rect   Frame of the view.
+ * @param name   View name.
+ * @param width  Current desktop width in pixels.
+ * @param height Current desktop height in pixels.
+ */
 MonitorView::MonitorView(BRect rect, const char *name, int32 width, int32 height)
 	: BView(rect, name, B_FOLLOW_ALL, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE),
 	fMaxWidth(1920),
@@ -38,11 +78,15 @@ MonitorView::MonitorView(BRect rect, const char *name, int32 width, int32 height
 }
 
 
+/** @brief Trivial destructor; no owned resources. */
 MonitorView::~MonitorView()
 {
 }
 
 
+/**
+ * @brief Cache the panel-background color and refresh the DPI readout.
+ */
 void
 MonitorView::AttachedToWindow()
 {
@@ -53,6 +97,11 @@ MonitorView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Launch the Backgrounds preferences app on click.
+ *
+ * @param point Click location (unused).
+ */
 void
 MonitorView::MouseDown(BPoint point)
 {
@@ -60,6 +109,11 @@ MonitorView::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Render the schematic monitor, desktop tint, power LED, and DPI text.
+ *
+ * @param updateRect Region requiring redraw.
+ */
 void
 MonitorView::Draw(BRect updateRect)
 {
@@ -122,6 +176,14 @@ MonitorView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Update the previewed resolution and redraw.
+ *
+ * Recomputes DPI when the resolution actually changed.
+ *
+ * @param width  New desktop width in pixels.
+ * @param height New desktop height in pixels.
+ */
 void
 MonitorView::SetResolution(int32 width, int32 height)
 {
@@ -136,6 +198,15 @@ MonitorView::SetResolution(int32 width, int32 height)
 }
 
 
+/**
+ * @brief Set the upper-bound resolution used to scale the preview.
+ *
+ * The drawn monitor rectangle is sized as a fraction of the maximum
+ * supported resolution so the user can compare modes visually.
+ *
+ * @param width  Maximum supported width in pixels.
+ * @param height Maximum supported height in pixels.
+ */
 void
 MonitorView::SetMaxResolution(int32 width, int32 height)
 {
@@ -149,6 +220,15 @@ MonitorView::SetMaxResolution(int32 width, int32 height)
 }
 
 
+/**
+ * @brief Respond to color/desktop-update notifications and resolution changes.
+ *
+ * Handles @c B_COLORS_UPDATED to track panel color changes,
+ * @c UPDATE_DESKTOP_MSG for resolution previews from ScreenWindow, and
+ * @c UPDATE_DESKTOP_COLOR_MSG when the desktop tint changes.
+ *
+ * @param message Incoming message.
+ */
 void
 MonitorView::MessageReceived(BMessage* message)
 {
@@ -186,6 +266,15 @@ MonitorView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Compute the rectangle to draw given the current resolution ratio.
+ *
+ * Preserves the aspect ratio of the monitor and scales it within the view
+ * bounds so the preview rectangle visually communicates how big a chosen
+ * resolution is relative to the max.
+ *
+ * @return The frame to draw the monitor rectangle in, in view coordinates.
+ */
 BRect
 MonitorView::_MonitorBounds()
 {
@@ -216,6 +305,14 @@ MonitorView::_MonitorBounds()
 }
 
 
+/**
+ * @brief Recompute the displayed DPI from EDID monitor info.
+ *
+ * Sets @c fDPI to the average of horizontal and vertical pixel density,
+ * computed from the physical screen dimensions reported by the monitor.
+ * Leaves @c fDPI at zero when EDID info is not available, which
+ * suppresses the on-screen DPI label.
+ */
 void
 MonitorView::_UpdateDPI()
 {

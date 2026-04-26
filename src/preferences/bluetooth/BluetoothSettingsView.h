@@ -1,9 +1,27 @@
 /*
- * Copyright 2008-2009, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes@gmail.com>
- * Copyright 2012-2013, Tri-Edge AI, <triedgeai@gmail.com>
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2008-2009, Oliver Ruiz Dorantes; 2012-2013,
+ * Tri-Edge AI.
  */
+
+/** @file BluetoothSettingsView.h
+    @brief Declares BluetoothSettingsView, the local-device settings tab. */
 
 #ifndef BLUETOOTH_SETTINGS_VIEW_H
 #define BLUETOOTH_SETTINGS_VIEW_H
@@ -21,6 +39,15 @@ class BPopUpMenu;
 class BSlider;
 class BOptionPopUp;
 
+
+/**
+ * @brief BView containing the local-adapter preferences tab.
+ *
+ * Lays out the connection-policy menu, the device-class identity menu,
+ * the inquiry-time slider, the local-device picker, and the embedded
+ * ExtendedLocalDeviceView. Persists changes through a BluetoothSettings
+ * member that loads on construction and saves on destruction.
+ */
 class BluetoothSettingsView : public BView {
 public:
 								BluetoothSettingsView(const char* name);

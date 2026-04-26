@@ -1,6 +1,36 @@
 /*
- * Copyright 2006, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file MimeTypeListView.cpp
+ * @brief Implementation of MimeTypeListView and its row type. Mirrors
+ *        the system MIME-type tree, listens to MIME database change
+ *        notifications via BMimeType::StartWatching, and handles label
+ *        de-duplication so visually identical descriptions get suffixed
+ *        with their subtype.
+ *
+ * @todo  Lazy type collecting (super-types only at startup).
  */
 
 
@@ -14,12 +44,21 @@
 #include <strings.h>
 
 
-// TODO: lazy type collecting (super types only at startup)
-
-
+/** @brief Internal delayed-add message used to debounce MIME type creation. */
 const uint32 kMsgAddType = 'adtp';
 
 
+/**
+ * @brief Returns true when @a type is the application signature of
+ *        itself, which is the convention an installed application
+ *        signature follows.
+ *
+ * Exported because both the list view and the editors need to filter
+ * MIME types into "regular" and "application signature" buckets.
+ *
+ * @param type  MIME type to test.
+ * @return      True for application signatures, false otherwise.
+ */
 bool
 mimetype_is_application_signature(BMimeType& type)
 {
@@ -36,6 +75,16 @@ mimetype_is_application_signature(BMimeType& type)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an item that mirrors a BMimeType.
+ *
+ * @param type      Source MIME type; only its identifier and supertype
+ *                  state are captured at construction time.
+ * @param showIcon  Render the type's mini icon next to the label.
+ * @param flat      When true, render at outline level 0 regardless of
+ *                  whether the type has a supertype (used by flat list
+ *                  views like the chooser dialog).
+ */
 MimeTypeItem::MimeTypeItem(BMimeType& type, bool showIcon, bool flat)
 	: BStringItem(type.Type(), !flat && !type.IsSupertypeOnly() ? 1 : 0, false),
 	fType(type.Type()),
@@ -46,6 +95,14 @@ MimeTypeItem::MimeTypeItem(BMimeType& type, bool showIcon, bool flat)
 }
 
 
+/**
+ * @brief Constructs an item from a raw MIME identifier string.
+ *
+ * @param type      MIME identifier such as "text/plain" or "image".
+ * @param showIcon  Render the type's mini icon next to the label.
+ * @param flat      When true, render at outline level 0 regardless of
+ *                  the slash in @a type.
+ */
 MimeTypeItem::MimeTypeItem(const char* type, bool showIcon, bool flat)
 	: BStringItem(type, !flat && strchr(type, '/') != NULL ? 1 : 0, false),
 	fType(type),
@@ -57,11 +114,25 @@ MimeTypeItem::MimeTypeItem(const char* type, bool showIcon, bool flat)
 }
 
 
+/**
+ * @brief Destructor; no owned heap resources.
+ */
 MimeTypeItem::~MimeTypeItem()
 {
 }
 
 
+/**
+ * @brief Draws the row, optionally rendering the type's mini icon and
+ *        bolding super-type rows.
+ *
+ * Falls back to a generic file or application icon when the MIME type
+ * has no custom icon installed.
+ *
+ * @param owner    List view owning this item.
+ * @param frame    Item rectangle in the owner's coordinates.
+ * @param complete Force a full row redraw rather than the optimised path.
+ */
 void
 MimeTypeItem::DrawItem(BView* owner, BRect frame, bool complete)
 {
@@ -124,6 +195,13 @@ MimeTypeItem::DrawItem(BView* owner, BRect frame, bool complete)
 }
 
 
+/**
+ * @brief Recomputes the item's preferred size and font baseline offset
+ *        when the icon or font changes.
+ *
+ * @param owner  List view owning this item.
+ * @param font   Font used to draw the row.
+ */
 void
 MimeTypeItem::Update(BView* owner, const BFont* font)
 {
@@ -145,6 +223,12 @@ MimeTypeItem::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief Caches super-type, sub-type, and description fields from
+ *        @a type.
+ *
+ * @param type  Source MIME type.
+ */
 void
 MimeTypeItem::_SetTo(BMimeType& type)
 {
@@ -166,6 +250,10 @@ MimeTypeItem::_SetTo(BMimeType& type)
 }
 
 
+/**
+ * @brief Refreshes the row's display text from the type's short
+ *        description (falling back to the subtype name).
+ */
 void
 MimeTypeItem::UpdateText()
 {
@@ -184,6 +272,10 @@ MimeTypeItem::UpdateText()
 }
 
 
+/**
+ * @brief Appends "(subtype)" to the row's text to disambiguate against
+ *        another row that has the same description.
+ */
 void
 MimeTypeItem::AddSubtype()
 {
@@ -199,6 +291,11 @@ MimeTypeItem::AddSubtype()
 }
 
 
+/**
+ * @brief Toggles whether the row draws the type's mini icon.
+ *
+ * @param showIcon  True to enable icon rendering.
+ */
 void
 MimeTypeItem::ShowIcon(bool showIcon)
 {
@@ -206,6 +303,12 @@ MimeTypeItem::ShowIcon(bool showIcon)
 }
 
 
+/**
+ * @brief Marks whether the row represents an application signature so
+ *        the fallback icon can be chosen accordingly.
+ *
+ * @param applicationMode  True for application signatures.
+ */
 void
 MimeTypeItem::SetApplicationMode(bool applicationMode)
 {
@@ -213,6 +316,16 @@ MimeTypeItem::SetApplicationMode(bool applicationMode)
 }
 
 
+/**
+ * @brief Sort comparator that orders items by supertype first, then by
+ *        text label.
+ *
+ * Used to keep the outline view grouped by family.
+ *
+ * @param a  First item.
+ * @param b  Second item.
+ * @return   Standard qsort-style result.
+ */
 /*static*/
 int
 MimeTypeItem::Compare(const BListItem* a, const BListItem* b)
@@ -236,6 +349,16 @@ MimeTypeItem::Compare(const BListItem* a, const BListItem* b)
 }
 
 
+/**
+ * @brief Sort comparator used inside the de-duplication pass that
+ *        suffixes labels with their subtype.
+ *
+ * Compares outline level first, then descriptions, then text.
+ *
+ * @param a  First item.
+ * @param b  Second item.
+ * @return   Standard qsort-style result.
+ */
 /*static*/
 int
 MimeTypeItem::CompareLabels(const BListItem* a, const BListItem* b)
@@ -265,6 +388,16 @@ MimeTypeItem::CompareLabels(const BListItem* a, const BListItem* b)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the outline list view.
+ *
+ * @param name             Layout name forwarded to BOutlineListView.
+ * @param supertype        When non-NULL, restrict the listing to this
+ *                         super-type and present subtypes flat.
+ * @param showIcons        Render mini icons next to the rows.
+ * @param applicationMode  When true, list application signatures
+ *                         instead of regular MIME types.
+ */
 MimeTypeListView::MimeTypeListView(const char* name,
 		const char* supertype, bool showIcons, bool applicationMode)
 	: BOutlineListView(name, B_SINGLE_SELECTION_LIST),
@@ -275,11 +408,25 @@ MimeTypeListView::MimeTypeListView(const char* name,
 }
 
 
+/**
+ * @brief Destructor; the items are torn down by DetachedFromWindow.
+ */
 MimeTypeListView::~MimeTypeListView()
 {
 }
 
 
+/**
+ * @brief Adds every installed MIME type whose super-type matches
+ *        @a supertype to the list, optionally under @a supertypeItem.
+ *
+ * Honours @a fApplicationMode to filter application signatures vs.
+ * regular MIME types.
+ *
+ * @param supertype      Super-type identifier to enumerate.
+ * @param supertypeItem  Parent item for the resulting children, or NULL
+ *                       to add at the top level.
+ */
 void
 MimeTypeListView::_CollectSubtypes(const char* supertype,
 	MimeTypeItem* supertypeItem)
@@ -309,6 +456,11 @@ MimeTypeListView::_CollectSubtypes(const char* supertype,
 }
 
 
+/**
+ * @brief Top-level enumeration that builds either the full MIME tree or
+ *        a single super-type's flat subtree, then runs label
+ *        de-duplication.
+ */
 void
 MimeTypeListView::_CollectTypes()
 {
@@ -335,6 +487,15 @@ MimeTypeListView::_CollectTypes()
 }
 
 
+/**
+ * @brief Sorts the list (or a single subtree) and walks it to suffix any
+ *        rows whose displayed label collides with their neighbour.
+ *
+ * Suffixing is delegated to MimeTypeItem::AddSubtype(), which appends
+ * the subtype name in parentheses.
+ *
+ * @param underItem  Subtree root, or NULL to operate on the entire list.
+ */
 void
 MimeTypeListView::_MakeTypesUnique(MimeTypeItem* underItem)
 {
@@ -389,6 +550,17 @@ MimeTypeListView::_MakeTypesUnique(MimeTypeItem* underItem)
 }
 
 
+/**
+ * @brief Adds, removes, or refreshes a row in response to a MIME database
+ *        notification for @a type.
+ *
+ * Filters out types that do not match the current list mode (regular
+ * vs. application signature) and re-attaches the new item under the
+ * correct super-type. If a previous SelectNewType() request matches
+ * @a type, the new item is selected and the pending request is cleared.
+ *
+ * @param type  MIME identifier whose visibility must be reconciled.
+ */
 void
 MimeTypeListView::_AddNewType(const char* type)
 {
@@ -437,6 +609,10 @@ MimeTypeListView::_AddNewType(const char* type)
 }
 
 
+/**
+ * @brief Subscribes to MIME database notifications and populates the
+ *        list once the view is attached to a window.
+ */
 void
 MimeTypeListView::AttachedToWindow()
 {
@@ -447,6 +623,13 @@ MimeTypeListView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Unsubscribes from MIME database notifications and frees every
+ *        list item.
+ *
+ * Items are recreated on the next AttachedToWindow() call so the view
+ * always reflects the live database after re-attachment.
+ */
 void
 MimeTypeListView::DetachedFromWindow()
 {
@@ -461,6 +644,17 @@ MimeTypeListView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Handles MIME database change notifications and the internal
+ *        delayed-add timer.
+ *
+ * Description, icon, preferred-app, creation, and deletion changes are
+ * all reflected on the matching row. New types are added via a 200 ms
+ * delayed BMessageRunner so we observe the type after the database has
+ * fully committed it.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 MimeTypeListView::MessageReceived(BMessage* message)
 {
@@ -545,12 +739,12 @@ MimeTypeListView::MessageReceived(BMessage* message)
 }
 
 
-/*!
-	\brief This method makes sure a new MIME type will be selected.
-
-	If it's not in the list yet, it will be selected as soon as it's
-	added.
-*/
+/**
+ * @brief Ensures @a type is selected, deferring the selection if the
+ *        type has not yet been observed via the MIME watcher.
+ *
+ * @param type  MIME identifier to select.
+ */
 void
 MimeTypeListView::SelectNewType(const char* type)
 {
@@ -561,6 +755,12 @@ MimeTypeListView::SelectNewType(const char* type)
 }
 
 
+/**
+ * @brief Selects the row for @a type if it currently exists in the list.
+ *
+ * @param type  MIME identifier to look up.
+ * @return      True when a matching row was found and selected.
+ */
 bool
 MimeTypeListView::SelectType(const char* type)
 {
@@ -573,6 +773,14 @@ MimeTypeListView::SelectType(const char* type)
 }
 
 
+/**
+ * @brief Expands the chain of super-items, selects @a item, and scrolls
+ *        it into view.
+ *
+ * Passing NULL clears the selection.
+ *
+ * @param item  Item to make current, or NULL to deselect.
+ */
 void
 MimeTypeListView::SelectItem(MimeTypeItem* item)
 {
@@ -596,6 +804,13 @@ MimeTypeListView::SelectItem(MimeTypeItem* item)
 }
 
 
+/**
+ * @brief Linear search through the full list for the row matching
+ *        @a type.
+ *
+ * @param type  MIME identifier; may be NULL.
+ * @return      Matching MimeTypeItem, or NULL when not found.
+ */
 MimeTypeItem*
 MimeTypeListView::FindItem(const char* type)
 {
@@ -615,6 +830,12 @@ MimeTypeListView::FindItem(const char* type)
 }
 
 
+/**
+ * @brief Refreshes @a item's text, re-runs label de-duplication on its
+ *        subtree, and preserves the selection across the move.
+ *
+ * @param item  Row whose backing MIME type has changed.
+ */
 void
 MimeTypeListView::UpdateItem(MimeTypeItem* item)
 {
@@ -637,6 +858,12 @@ MimeTypeListView::UpdateItem(MimeTypeItem* item)
 }
 
 
+/**
+ * @brief Toggles icon rendering on every non-supertype row and forces
+ *        a relayout so the scroller picks up the new metrics.
+ *
+ * @param showIcons  True to render mini icons next to the rows.
+ */
 void
 MimeTypeListView::ShowIcons(bool showIcons)
 {

@@ -1,11 +1,41 @@
 /*
- * Copyright 2011-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Hamish Morrison, hamish@lavabit.com
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Hamish Morrison, hamish@lavabit.com
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file NetworkTimeView.cpp
+ * @brief Implementation of NetworkTimeView and the Settings persistence
+ *        helper.
+ *
+ * Builds the server list / add / remove / reset / synchronize UI, runs NTP
+ * synchronization in a background thread, and persists settings through a
+ * flattened BMessage stored in the user settings directory.
  */
 
 
@@ -40,6 +70,10 @@
 //	#pragma mark - Settings
 
 
+/**
+ * @brief Constructs Settings, applies factory defaults, and loads any
+ *        existing on-disk values.
+ */
 Settings::Settings()
 	:
 	fMessage(kMsgNetworkTimeSettings)
@@ -49,12 +83,20 @@ Settings::Settings()
 }
 
 
+/**
+ * @brief Destructor; persists the current settings to disk.
+ */
 Settings::~Settings()
 {
 	Save();
 }
 
 
+/**
+ * @brief Adds a server hostname if it is not already present.
+ *
+ * @param server Hostname or IP address to add.
+ */
 void
 Settings::AddServer(const char* server)
 {
@@ -63,6 +105,12 @@ Settings::AddServer(const char* server)
 }
 
 
+/**
+ * @brief Returns the Nth server hostname.
+ *
+ * @param index Zero-based server index.
+ * @return Pointer to the hostname, or NULL when @a index is out of range.
+ */
 const char*
 Settings::GetServer(int32 index) const
 {
@@ -72,6 +120,11 @@ Settings::GetServer(int32 index) const
 }
 
 
+/**
+ * @brief Removes a server hostname and adjusts the default-server index.
+ *
+ * @param server Hostname to remove. No-op when not present.
+ */
 void
 Settings::RemoveServer(const char* server)
 {
@@ -87,6 +140,11 @@ Settings::RemoveServer(const char* server)
 }
 
 
+/**
+ * @brief Records which server should be tried first.
+ *
+ * @param index Zero-based index into the server list.
+ */
 void
 Settings::SetDefaultServer(int32 index)
 {
@@ -95,6 +153,9 @@ Settings::SetDefaultServer(int32 index)
 }
 
 
+/**
+ * @brief Returns the index of the configured default server.
+ */
 int32
 Settings::GetDefaultServer() const
 {
@@ -104,6 +165,11 @@ Settings::GetDefaultServer() const
 }
 
 
+/**
+ * @brief Sets the "try every server on failure" toggle.
+ *
+ * @param boolean True to attempt every server when the default fails.
+ */
 void
 Settings::SetTryAllServers(bool boolean)
 {
@@ -111,6 +177,9 @@ Settings::SetTryAllServers(bool boolean)
 }
 
 
+/**
+ * @brief Returns the current "try all servers" toggle.
+ */
 bool
 Settings::GetTryAllServers() const
 {
@@ -120,6 +189,11 @@ Settings::GetTryAllServers() const
 }
 
 
+/**
+ * @brief Sets the "synchronize at boot" toggle.
+ *
+ * @param boolean True to run a synchronization at every boot.
+ */
 void
 Settings::SetSynchronizeAtBoot(bool boolean)
 {
@@ -127,6 +201,9 @@ Settings::SetSynchronizeAtBoot(bool boolean)
 }
 
 
+/**
+ * @brief Returns the current "synchronize at boot" toggle.
+ */
 bool
 Settings::GetSynchronizeAtBoot() const
 {
@@ -136,6 +213,11 @@ Settings::GetSynchronizeAtBoot() const
 }
 
 
+/**
+ * @brief Replaces the server list with the canonical built-in set.
+ *
+ * Resets the default-server index to zero so the first entry is preferred.
+ */
 void
 Settings::ResetServersToDefaults()
 {
@@ -150,6 +232,9 @@ Settings::ResetServersToDefaults()
 }
 
 
+/**
+ * @brief Reverts every setting to its built-in default value.
+ */
 void
 Settings::ResetToDefaults()
 {
@@ -161,6 +246,9 @@ Settings::ResetToDefaults()
 }
 
 
+/**
+ * @brief Restores the snapshot taken when settings were last loaded.
+ */
 void
 Settings::Revert()
 {
@@ -168,6 +256,12 @@ Settings::Revert()
 }
 
 
+/**
+ * @brief Returns true when the in-memory settings differ from the snapshot.
+ *
+ * Compares the flattened representations byte-for-byte. Allocation
+ * failures conservatively report "changed".
+ */
 bool
 Settings::SettingsChanged()
 {
@@ -198,6 +292,11 @@ Settings::SettingsChanged()
 }
 
 
+/**
+ * @brief Loads the flattened settings file and updates the snapshot.
+ *
+ * @return B_OK on success or the underlying status code on failure.
+ */
 status_t
 Settings::Load()
 {
@@ -224,6 +323,11 @@ Settings::Load()
 }
 
 
+/**
+ * @brief Writes the current settings BMessage out to disk.
+ *
+ * @return B_OK on success or the underlying status code on failure.
+ */
 status_t
 Settings::Save()
 {
@@ -243,6 +347,13 @@ Settings::Save()
 }
 
 
+/**
+ * @brief Returns the index of the first @a name field whose value matches @a value.
+ *
+ * @param name  Name of the BMessage field to scan.
+ * @param value Value to compare against.
+ * @return Matching index, or B_ERROR when no match is found.
+ */
 int32
 Settings::_GetStringByValue(const char* name, const char* value)
 {
@@ -257,6 +368,12 @@ Settings::_GetStringByValue(const char* name, const char* value)
 }
 
 
+/**
+ * @brief Resolves the path of the settings file in the user settings dir.
+ *
+ * @param path Output BPath populated with the absolute file location.
+ * @return B_OK on success or the find_directory() failure code.
+ */
 status_t
 Settings::_GetPath(BPath& path)
 {
@@ -273,6 +390,16 @@ Settings::_GetPath(BPath& path)
 //	#pragma mark - NetworkTimeView
 
 
+/**
+ * @brief Constructs the network-time preference page.
+ *
+ * Loads the NTP settings, then builds the controls. The constructor
+ * intentionally calls Load() a second time even though the Settings
+ * constructor already does so; the duplicate call is harmless and
+ * preserves upstream behavior.
+ *
+ * @param name View name passed to BGroupView.
+ */
 NetworkTimeView::NetworkTimeView(const char* name)
 	:
 	BGroupView(name, B_VERTICAL, B_USE_DEFAULT_SPACING),
@@ -294,6 +421,12 @@ NetworkTimeView::NetworkTimeView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; releases the controls held in member pointers.
+ *
+ * @note The parent layout typically owns these views as well, so the
+ *       deletes here are belt-and-braces.
+ */
 NetworkTimeView::~NetworkTimeView()
 {
 	delete fServerTextControl;
@@ -307,6 +440,16 @@ NetworkTimeView::~NetworkTimeView()
 }
 
 
+/**
+ * @brief Routes user actions and synchronization replies into Settings.
+ *
+ * Edit / add / remove / reset of servers, the two checkboxes, the start
+ * and stop of synchronization, the asynchronous result, and Revert all
+ * dispatch from here. Posts kMsgChange to the parent window so the Revert
+ * button reflects pending changes.
+ *
+ * @param message Incoming message.
+ */
 void
 NetworkTimeView::MessageReceived(BMessage* message)
 {
@@ -441,6 +584,10 @@ NetworkTimeView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Wires every control's target to this view and disables Add until
+ *        a valid server name has been typed.
+ */
 void
 NetworkTimeView::AttachedToWindow()
 {
@@ -456,6 +603,9 @@ NetworkTimeView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Returns true when settings have been edited since load.
+ */
 bool
 NetworkTimeView::CheckCanRevert()
 {
@@ -463,6 +613,12 @@ NetworkTimeView::CheckCanRevert()
 }
 
 
+/**
+ * @brief Constructs and lays out the controls of the network-time page.
+ *
+ * Sizes the +/- mini buttons to match the text control's height for visual
+ * alignment with the rest of the form.
+ */
 void
 NetworkTimeView::_InitView()
 {
@@ -533,6 +689,12 @@ NetworkTimeView::_InitView()
 }
 
 
+/**
+ * @brief Rebuilds the server list view from the current Settings contents.
+ *
+ * Restores the selection to the default-server index and disables the
+ * Remove button when the list is empty.
+ */
 void
 NetworkTimeView::_UpdateServerList()
 {
@@ -552,6 +714,9 @@ NetworkTimeView::_UpdateServerList()
 }
 
 
+/**
+ * @brief Resets the synchronize button's label and state after a run.
+ */
 void
 NetworkTimeView::_DoneSynchronizing()
 {
@@ -561,6 +726,15 @@ NetworkTimeView::_DoneSynchronizing()
 }
 
 
+/**
+ * @brief Validates that a server name is plausibly a hostname.
+ *
+ * Accepts only alphanumeric characters plus '.', '-', and '_'. No URL
+ * scheme is allowed.
+ *
+ * @param serverName Candidate hostname.
+ * @return True when @a serverName looks like a valid host.
+ */
 bool
 NetworkTimeView::_IsValidServerName(const char* serverName)
 {
@@ -581,6 +755,16 @@ NetworkTimeView::_IsValidServerName(const char* serverName)
 //	#pragma mark - update functions
 
 
+/**
+ * @brief Background-thread entry point that performs the NTP request.
+ *
+ * Unpacks the BList of (Settings*, BMessenger*), runs update_time(), and
+ * sends a kMsgSynchronizationResult message back through the messenger.
+ *
+ * @param params BList containing exactly two pointers in order:
+ *               Settings*, BMessenger*.
+ * @return B_OK once the result has been delivered.
+ */
 int32
 update_thread(void* params)
 {
@@ -605,6 +789,14 @@ update_thread(void* params)
 }
 
 
+/**
+ * @brief Spawns and resumes a worker thread to perform synchronization.
+ *
+ * @param settings  Settings the worker should consult.
+ * @param messenger Messenger the worker should reply to.
+ * @param thread    Output: thread id of the spawned worker.
+ * @return Result of resume_thread() on the new thread.
+ */
 status_t
 update_time(const Settings& settings, BMessenger* messenger,
 	thread_id* thread)
@@ -618,6 +810,18 @@ update_time(const Settings& settings, BMessenger* messenger,
 }
 
 
+/**
+ * @brief Performs an NTP request, falling back through servers as needed.
+ *
+ * Tries the default server first; if that fails and "try all servers" is
+ * enabled, walks the remaining servers in order until one succeeds.
+ *
+ * @param settings    Settings to consult.
+ * @param errorString Output: human-readable error string from the last
+ *                    attempt.
+ * @param errorCode   Output: errno-style error code from the last attempt.
+ * @return B_OK on success, or the last underlying error code.
+ */
 status_t
 update_time(const Settings& settings, const char** errorString,
 	int32* errorCode)

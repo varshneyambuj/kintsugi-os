@@ -1,12 +1,45 @@
 /*
- * Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
- * Copyright 2009, Pier Luigi Fiorini.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
- *		Brian Hill, supernova@tycho.email
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
+ *   Copyright 2009, Pier Luigi Fiorini.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
+ *       Brian Hill, supernova@tycho.email
  */
+
+
+/**
+ * @file GeneralView.cpp
+ * @brief Implementation of GeneralView, the General tab of the
+ *        Notifications preflet.
+ *
+ * Edits the master enable flag, popup window width, display timeout, and
+ * on-screen position used by notification_server. The pane keeps an
+ * original snapshot of every value so Revert() can restore the user's
+ * loaded state and DefaultsPossible() can compare against the factory
+ * defaults.
+ */
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,14 +74,27 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "GeneralView"
 
+/** @brief Notifications-enable checkbox toggled. */
 const uint32 kToggleNotifications = '_TSR';
+/** @brief Window-width slider value changed. */
 const uint32 kWidthChanged = '_WIC';
+/** @brief Duration slider value changed. */
 const uint32 kTimeoutChanged = '_TIC';
+/** @brief Position pop-up selection changed. */
 const uint32 kPositionChanged = '_NPC';
+/** @brief Reserved: dispatched after a server-state change is requested. */
 const uint32 kServerChangeTriggered = '_SCT';
+/** @brief Stable identifier used for the Apply-with-example notification. */
 const BString kSampleMessageID("NotificationsSample");
 
 
+/**
+ * @brief Maps a B_FOLLOW_* position bitmask to the corresponding pop-up
+ *        item index.
+ *
+ * @param notification_position  Position flags read from settings.
+ * @return Index in the position pop-up; defaults to 0 (Follow Deskbar).
+ */
 static int32
 notification_position_to_index(uint32 notification_position) {
 	if (notification_position == B_FOLLOW_NONE)
@@ -65,6 +111,12 @@ notification_position_to_index(uint32 notification_position) {
 }
 
 
+/**
+ * @brief Constructs the General view: enable checkbox, width and duration
+ *        sliders, and the position pop-up.
+ *
+ * @param host  Settings host receiving change notifications.
+ */
 GeneralView::GeneralView(SettingsHost* host)
 	:
 	SettingsPane("general", host)
@@ -125,7 +177,7 @@ GeneralView::GeneralView(SettingsHost* host)
 		fPositionMenu->AddItem(new BMenuItem(B_TRANSLATE_NOCOLLECT(
 			positionLabels[i]), message));
 	}
-	BMenuField* positionField = new BMenuField(B_TRANSLATE("Position:"), 
+	BMenuField* positionField = new BMenuField(B_TRANSLATE("Position:"),
 		fPositionMenu);
 
 	box->AddChild(BLayoutBuilder::Group<>(B_VERTICAL)
@@ -135,7 +187,7 @@ GeneralView::GeneralView(SettingsHost* host)
 		.Add(positionField)
 		.AddGlue()
 		.View());
-	
+
 	BLayoutBuilder::Group<>(this, B_VERTICAL)
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(box)
@@ -143,6 +195,9 @@ GeneralView::GeneralView(SettingsHost* host)
 }
 
 
+/**
+ * @brief Retargets every control to this view once it joins a window.
+ */
 void
 GeneralView::AttachedToWindow()
 {
@@ -154,6 +209,14 @@ GeneralView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Routes the four control-changed messages.
+ *
+ * Edits other than the server toggle and width slider also display a
+ * sample notification on Apply so the user can preview the change.
+ *
+ * @param msg  Incoming BMessage.
+ */
 void
 GeneralView::MessageReceived(BMessage* msg)
 {
@@ -191,6 +254,14 @@ GeneralView::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Loads persisted values from @a settings, clamping out-of-range
+ *        entries to defaults, then resets the controls via Revert().
+ *
+ * @param settings  BMessage previously written by Save().
+ * @return Result of Revert() (always B_OK in current code).
+ * @todo Re-save when out-of-range values are clamped.
+ */
 status_t
 GeneralView::Load(BMessage& settings)
 {
@@ -220,11 +291,20 @@ GeneralView::Load(BMessage& settings)
 		fOriginalPosition = position;
 
 	_EnableControls();
-	
+
 	return Revert();
 }
 
 
+/**
+ * @brief Writes the current control values into @a settings.
+ *
+ * Always emits B_LARGE_ICON for the icon size since the UI does not yet
+ * expose a control for it.
+ *
+ * @param settings  Message to populate.
+ * @return Always B_OK.
+ */
 status_t
 GeneralView::Save(BMessage& settings)
 {
@@ -246,12 +326,17 @@ GeneralView::Save(BMessage& settings)
 }
 
 
+/**
+ * @brief Restores controls to the values captured by Load().
+ *
+ * @return Always B_OK.
+ */
 status_t
 GeneralView::Revert()
 {
 	fDurationSlider->SetValue(fOriginalTimeout);
 	_SetTimeoutLabel(fOriginalTimeout);
-	
+
 	fWidthSlider->SetValue(fOriginalWidth / kWidthStep);
 
 	fNewPosition = fOriginalPosition;
@@ -259,18 +344,24 @@ GeneralView::Revert()
 		notification_position_to_index(fNewPosition));
 	if (item != NULL)
 		item->SetMarked(true);
-	
+
 	return B_OK;
 }
 
 
+/**
+ * @brief Reports whether any of timeout, width, or position differ from
+ *        their loaded values.
+ *
+ * @return true when Revert() would change something.
+ */
 bool
 GeneralView::RevertPossible()
 {
 	int32 timeout = fDurationSlider->Value();
 	if (fOriginalTimeout != timeout)
 		return true;
-	
+
 	int32 width = fWidthSlider->Value() * kWidthStep;
 	if (fOriginalWidth != width)
 		return true;
@@ -282,6 +373,11 @@ GeneralView::RevertPossible()
 }
 
 
+/**
+ * @brief Resets controls to factory defaults.
+ *
+ * @return Always B_OK.
+ */
 status_t
 GeneralView::Defaults()
 {
@@ -300,6 +396,12 @@ GeneralView::Defaults()
 }
 
 
+/**
+ * @brief Reports whether the current control values differ from the
+ *        factory defaults.
+ *
+ * @return true when Defaults() would change something.
+ */
 bool
 GeneralView::DefaultsPossible()
 {
@@ -313,11 +415,17 @@ GeneralView::DefaultsPossible()
 
 	if (kDefaultNotificationPosition != fNewPosition)
 		return true;
-	
+
 	return false;
 }
 
 
+/**
+ * @brief Indicates that this pane participates in the global Defaults /
+ *        Revert button strip.
+ *
+ * @return Always true.
+ */
 bool
 GeneralView::UseDefaultRevertButtons()
 {
@@ -325,6 +433,10 @@ GeneralView::UseDefaultRevertButtons()
 }
 
 
+/**
+ * @brief Mirrors the master enable checkbox into the dependent controls
+ *        and selects the loaded position in the pop-up.
+ */
 void
 GeneralView::_EnableControls()
 {
@@ -338,6 +450,12 @@ GeneralView::_EnableControls()
 }
 
 
+/**
+ * @brief Updates the duration slider's label to a localized
+ *        "Timeout: N second(s)" string.
+ *
+ * @param value  Current slider value in seconds.
+ */
 void
 GeneralView::_SetTimeoutLabel(int32 value)
 {
@@ -350,6 +468,11 @@ GeneralView::_SetTimeoutLabel(int32 value)
 }
 
 
+/**
+ * @brief Reports whether notification_server is currently running.
+ *
+ * @return true when the roster lists the notification server signature.
+ */
 bool
 GeneralView::_IsServerRunning()
 {

@@ -1,10 +1,40 @@
 /*
- * Copyright 2007 Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- *		Ryan Leavengood, leavengood@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007 Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *       Ryan Leavengood, leavengood@gmail.com
+ */
+
+
+/**
+ * @file CalibWin.cpp
+ * @brief Placeholder calibration window for joystick preferences.
+ *
+ * This window currently only assembles a static set of controls so that the
+ * "Calibrate" button has something to display. The control set is intended
+ * to be rebuilt dynamically from the joystick descriptor; until that work
+ * lands the layout below is a visual stub.
  */
 
 
@@ -25,6 +55,21 @@
 	with the Joystick descriptors
 */
 
+/**
+ * @brief Constructs the calibration window and lays out a placeholder
+ *        control panel.
+ *
+ * @param frame     Initial screen frame for the window.
+ * @param title     Window title shown in the title bar.
+ * @param look      BWindow look passed to the base class.
+ * @param feel      BWindow feel passed to the base class.
+ * @param flags     BWindow flags (e.g. resizable, zoomable).
+ * @param workspace Workspace mask the window should appear in.
+ *
+ * @note The buttons and string views constructed here are stand-ins; the
+ *       final widget set must be generated from the connected joystick
+ *       descriptor.
+ */
 CalibWin::CalibWin(BRect frame,const char *title, window_look look,
 	window_feel feel, uint32 flags, uint32 workspace)
 	: BWindow(frame,title,look,feel,flags,workspace)
@@ -83,6 +128,14 @@ CalibWin::CalibWin(BRect frame,const char *title, window_look look,
 }
 
 
+/**
+ * @brief BWindow message hook.
+ *
+ * Currently forwards every message straight to BWindow::MessageReceived(),
+ * since the placeholder layout has no interactive behaviour yet.
+ *
+ * @param message Incoming BMessage to dispatch.
+ */
 void CalibWin::MessageReceived(BMessage *message)
 {
 	switch(message->what)
@@ -90,10 +143,15 @@ void CalibWin::MessageReceived(BMessage *message)
 		default:
 			BWindow::MessageReceived(message);
 			break;
-	}	
+	}
 }
 
 
+/**
+ * @brief Handles a request to close the calibration window.
+ *
+ * @return Whatever BWindow::QuitRequested() returns, normally true.
+ */
 bool CalibWin::QuitRequested()
 {
 	return BWindow::QuitRequested();

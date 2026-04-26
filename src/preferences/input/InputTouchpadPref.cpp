@@ -1,11 +1,44 @@
 /*
- * Copyright 2019-2025, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Preetpal Kaur <preetpalok123@gmail.com>
- *		Pawan Yerramilli <me@pawanyerramilli.com>
- *		Samuel Rodríguez Pérez <samuelrp84@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019-2025, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ *       Pawan Yerramilli <me@pawanyerramilli.com>
+ *       Samuel Rodríguez Pérez <samuelrp84@gmail.com>
+ */
+
+
+/**
+ * @file InputTouchpadPref.cpp
+ * @brief Implementation of TouchpadPref, the touchpad settings model.
+ *
+ * TouchpadPref is the persistence and live-control layer behind the
+ * TouchpadPrefView. It reads and writes the touchpad_settings file under
+ * B_USER_SETTINGS_DIRECTORY, can build a BMessage representation for
+ * shipping to the input server, and pushes speed/acceleration changes
+ * through the standard kb_mouse helpers.
+ *
+ * @see TouchpadPrefView
  */
 
 
@@ -21,6 +54,17 @@
 #include <InputServerDevice.h>
 
 
+/**
+ * @brief Constructs the model bound to a specific touchpad device.
+ *
+ * Initialises the window position to "centred" (the (-1, -1) sentinel),
+ * loads the persisted settings (or falls back to the kit defaults if the
+ * settings file is missing or unreadable), and snapshots the current
+ * settings as the on-entry baseline used by Revert().
+ *
+ * @param device  BInputDevice for the touchpad. Ownership is transferred
+ *                to this object and released by the destructor.
+ */
 TouchpadPref::TouchpadPref(BInputDevice* device)
 	:
 	fTouchPad(device)
@@ -36,6 +80,12 @@ TouchpadPref::TouchpadPref(BInputDevice* device)
 }
 
 
+/**
+ * @brief Destroys the model, persisting the current settings.
+ *
+ * Releases the BInputDevice and writes the in-memory settings back to
+ * disk via SaveSettings().
+ */
 TouchpadPref::~TouchpadPref()
 {
 	delete fTouchPad;
@@ -44,6 +94,13 @@ TouchpadPref::~TouchpadPref()
 }
 
 
+/**
+ * @brief Restores the on-entry settings and re-applies live values.
+ *
+ * Resets the in-memory settings to the snapshot taken in the constructor
+ * and pushes the speed and acceleration values back to the kernel driver
+ * via set_mouse_speed and set_mouse_acceleration.
+ */
 void
 TouchpadPref::Revert()
 {
@@ -53,6 +110,15 @@ TouchpadPref::Revert()
 }
 
 
+/**
+ * @brief Serialises the current touchpad settings into a BMessage.
+ *
+ * The returned BMessage carries every field the input server cares about:
+ * scroll behaviour, two-finger gestures, edge motion, click handling, and
+ * cached trackpad speed/acceleration.
+ *
+ * @return BMessage filled with the serialised settings.
+ */
 BMessage
 TouchpadPref::BuildSettingsMessage()
 {
@@ -79,6 +145,16 @@ TouchpadPref::BuildSettingsMessage()
 }
 
 
+/**
+ * @brief Pushes the current settings to the live touchpad driver.
+ *
+ * Calls B_SET_TOUCHPAD_SETTINGS on the BInputDevice with a freshly built
+ * settings message so changes take effect without restarting the input
+ * server.
+ *
+ * @return B_OK on success, or an error code propagated from
+ *         BInputDevice::Control.
+ */
 status_t
 TouchpadPref::UpdateRunningSettings()
 {
@@ -86,6 +162,13 @@ TouchpadPref::UpdateRunningSettings()
 	return fTouchPad->Control(B_SET_TOUCHPAD_SETTINGS, &msg);
 }
 
+
+/**
+ * @brief Resets the in-memory settings to the kit defaults.
+ *
+ * Copies kDefaultTouchpadSettings into fSettings and re-applies the
+ * trackpad speed and acceleration values to the driver.
+ */
 void
 TouchpadPref::Defaults()
 {
@@ -95,6 +178,15 @@ TouchpadPref::Defaults()
 }
 
 
+/**
+ * @brief Computes the absolute path to the per-user settings file.
+ *
+ * Resolves B_USER_SETTINGS_DIRECTORY and appends TOUCHPAD_SETTINGS_FILE.
+ *
+ * @param path  Output BPath to fill on success.
+ * @return B_OK on success, or an error code from find_directory or
+ *         BPath::Append.
+ */
 status_t
 TouchpadPref::GetSettingsPath(BPath& path)
 {
@@ -106,6 +198,21 @@ TouchpadPref::GetSettingsPath(BPath& path)
 }
 
 
+/**
+ * @brief Loads the persisted touchpad settings from disk.
+ *
+ * Tries to unflatten a BMessage from the user settings file. If that
+ * fails the function falls back to a legacy 20-byte plus 8-byte BPoint
+ * binary layout (size == 28) for backwards compatibility, filling
+ * unspecified fields with kDefaultTouchpadSettings values.
+ *
+ * @return B_OK on success or B_ERROR if neither format could be parsed.
+ *         Other status codes are propagated from BFile::InitCheck() and
+ *         GetSettingsPath().
+ *
+ * @note Caller-side fallback (via Defaults()) is expected when this
+ *       function returns anything other than B_OK.
+ */
 status_t
 TouchpadPref::LoadSettings()
 {
@@ -173,6 +280,16 @@ TouchpadPref::LoadSettings()
 }
 
 
+/**
+ * @brief Writes the current settings out to the per-user settings file.
+ *
+ * Builds a BMessage with BuildSettingsMessage(), augments it with the
+ * window position, and flattens the result to disk creating the file if
+ * needed.
+ *
+ * @return B_OK on success or an error code propagated from BFile or
+ *         BMessage::Flatten.
+ */
 status_t
 TouchpadPref::SaveSettings()
 {
@@ -198,6 +315,16 @@ TouchpadPref::SaveSettings()
 	return B_OK;
 }
 
+
+/**
+ * @brief Updates the trackpad speed and pushes it to the driver.
+ *
+ * Maps the slider's 0-1000 range through an exponential curve into the
+ * 8192-524287 range expected by the kernel driver, then writes both the
+ * cached value and the live value through set_mouse_speed.
+ *
+ * @param speed  Slider value in the range 0 (slow) to 1000 (fast).
+ */
 void
 TouchpadPref::SetSpeed(int32 speed)
 {
@@ -209,6 +336,16 @@ TouchpadPref::SetSpeed(int32 speed)
 	}
 }
 
+
+/**
+ * @brief Updates the trackpad acceleration factor and pushes it to the driver.
+ *
+ * Maps the slider's 0-1000 range through a quadratic curve into the
+ * 0-262144 range expected by the kernel driver and writes the resulting
+ * value through set_mouse_acceleration.
+ *
+ * @param accel  Slider value in the range 0 (low) to 1000 (high).
+ */
 void
 TouchpadPref::SetAcceleration(int32 accel)
 {

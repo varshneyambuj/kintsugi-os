@@ -1,13 +1,45 @@
 /*
- * Copyright 2005, Axel Dörfler, axeld@pinc-software.de
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2010-2012 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *      Hamish Morrison, hamish@lavabit.com
- *      Alexander von Gluck, kallisti5@unixzen.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005, Axel Dörfler, axeld@pinc-software.de
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2010-2012 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Hamish Morrison, hamish@lavabit.com
+ *       Alexander von Gluck, kallisti5@unixzen.com
+ */
+
+
+/**
+ * @file Settings.cpp
+ * @brief Implementation of the Settings model for the VirtualMemory preflet.
+ *
+ * Reads and writes both the window-position file and the kernel
+ * @c virtual_memory driver settings file under
+ * @c B_USER_SETTINGS_DIRECTORY/kernel/drivers. Maintains current, initial,
+ * and default snapshots so the UI can offer Revert and Defaults actions.
+ *
+ * @see SettingsWindow
  */
 
 
@@ -27,12 +59,24 @@
 #include <driver_settings.h>
 
 
+/** @brief Filename, relative to B_USER_SETTINGS_DIRECTORY, of the saved window position. */
 static const char* const kWindowSettingsFile = "virtualmemory_preferences";
+/** @brief Driver settings name used by the kernel for the swap configuration. */
 static const char* const kVirtualMemorySettings = "virtual_memory";
+/** @brief One mebibyte expressed in bytes. */
 static const off_t kMegaByte = 1024 * 1024;
+/** @brief One gibibyte expressed in bytes. */
 static const off_t kGigaByte = kMegaByte * 1024;
 
 
+/**
+ * @brief Computes the default swap configuration from system memory and
+ *        the boot volume.
+ *
+ * Defaults are: swap enabled, automatic, size equal to physical RAM (or
+ * doubled when RAM is at most 1 GiB to mirror kernel behaviour), and the
+ * boot volume as the swap host.
+ */
 Settings::Settings()
 {
 	fDefaultSettings.enabled = true;
@@ -52,6 +96,13 @@ Settings::Settings()
 }
 
 
+/**
+ * @brief Sets the swap-enabled flag in the current snapshot.
+ *
+ * @param enabled    New value for the enabled flag.
+ * @param revertable When false, the change is also written to the initial
+ *                   snapshot so it becomes the new Revert baseline.
+ */
 void
 Settings::SetSwapEnabled(bool enabled, bool revertable)
 {
@@ -61,6 +112,12 @@ Settings::SetSwapEnabled(bool enabled, bool revertable)
 }
 
 
+/**
+ * @brief Sets the automatic-swap flag in the current snapshot.
+ *
+ * @param automatic  New value for the automatic flag.
+ * @param revertable When false, also updates the initial snapshot.
+ */
 void
 Settings::SetSwapAutomatic(bool automatic, bool revertable)
 {
@@ -70,6 +127,12 @@ Settings::SetSwapAutomatic(bool automatic, bool revertable)
 }
 
 
+/**
+ * @brief Sets the requested swap file size in the current snapshot.
+ *
+ * @param size       Desired swap size in bytes.
+ * @param revertable When false, also updates the initial snapshot.
+ */
 void
 Settings::SetSwapSize(off_t size, bool revertable)
 {
@@ -79,6 +142,12 @@ Settings::SetSwapSize(off_t size, bool revertable)
 }
 
 
+/**
+ * @brief Sets the swap-hosting volume in the current snapshot.
+ *
+ * @param volume     Device id (@c dev_t) of the chosen volume.
+ * @param revertable When false, also updates the initial snapshot.
+ */
 void
 Settings::SetSwapVolume(dev_t volume, bool revertable)
 {
@@ -89,6 +158,11 @@ Settings::SetSwapVolume(dev_t volume, bool revertable)
 }
 
 
+/**
+ * @brief Records the current preflet window position for later restore.
+ *
+ * @param position Top-left point in screen coordinates.
+ */
 void
 Settings::SetWindowPosition(BPoint position)
 {
@@ -96,6 +170,14 @@ Settings::SetWindowPosition(BPoint position)
 }
 
 
+/**
+ * @brief Loads the previously saved preflet window position from disk.
+ *
+ * @return @c B_OK on success.
+ * @retval B_OK     The stored position was read into @c fWindowPosition.
+ * @retval B_ERROR  The settings directory or file could not be opened, or
+ *                  the file did not contain a full BPoint.
+ */
 status_t
 Settings::ReadWindowSettings()
 {
@@ -115,6 +197,16 @@ Settings::ReadWindowSettings()
 }
 
 
+/**
+ * @brief Persists the preflet window position to the user settings file.
+ *
+ * The file is created (and truncated if present) under
+ * @c B_USER_SETTINGS_DIRECTORY.
+ *
+ * @return @c B_OK on success.
+ * @retval B_OK     The position was written.
+ * @retval B_ERROR  The settings directory or file could not be opened.
+ */
 status_t
 Settings::WriteWindowSettings()
 {
@@ -134,6 +226,20 @@ Settings::WriteWindowSettings()
 }
 
 
+/**
+ * @brief Loads the kernel swap settings and resolves the recorded volume.
+ *
+ * Parses the @c virtual_memory driver settings file. The recorded volume is
+ * matched against the currently mounted set by name, device, capacity, and
+ * filesystem; the highest-scoring persistent, writable, fixed,
+ * non-shared volume wins (provided it scores at least 4).
+ *
+ * @return Status code.
+ * @retval B_OK                       Settings were loaded and the volume found.
+ * @retval kErrorSettingsNotFound     The driver settings file is not present.
+ * @retval kErrorSettingsInvalid      A required field was missing or empty.
+ * @retval kErrorVolumeNotFound       The stored volume could not be matched.
+ */
 status_t
 Settings::ReadSwapSettings()
 {
@@ -206,6 +312,21 @@ Settings::ReadSwapSettings()
 }
 
 
+/**
+ * @brief Writes the current swap configuration to the kernel driver
+ *        settings file.
+ *
+ * Composes a key/value text representation including @c vm,
+ * @c swap_auto, @c swap_size, @c swap_volume_name, @c swap_volume_device,
+ * @c swap_volume_filesystem, and @c swap_volume_capacity, and stores it
+ * under @c B_USER_SETTINGS_DIRECTORY/kernel/drivers/virtual_memory.
+ *
+ * @return @c B_OK on success.
+ * @retval B_OK     The file was written.
+ * @retval B_ERROR  The settings directory could not be located, the file
+ *                  could not be opened, or the chosen volume could not be
+ *                  stat'd.
+ */
 status_t
 Settings::WriteSwapSettings()
 {
@@ -238,6 +359,12 @@ Settings::WriteSwapSettings()
 }
 
 
+/**
+ * @brief Reports whether the current settings differ from the loaded baseline.
+ *
+ * @return @c true when any of enabled, automatic, size, or volume has been
+ *         modified since the last read or non-revertable write.
+ */
 bool
 Settings::IsRevertable()
 {
@@ -248,6 +375,10 @@ Settings::IsRevertable()
 }
 
 
+/**
+ * @brief Restores the current snapshot to the values held in the initial
+ *        snapshot.
+ */
 void
 Settings::RevertSwapSettings()
 {
@@ -258,6 +389,11 @@ Settings::RevertSwapSettings()
 }
 
 
+/**
+ * @brief Reports whether the current settings differ from the computed defaults.
+ *
+ * @return @c true when any field would change if DefaultSwapSettings() ran.
+ */
 bool
 Settings::IsDefaultable()
 {
@@ -268,6 +404,12 @@ Settings::IsDefaultable()
 }
 
 
+/**
+ * @brief Replaces the current snapshot with the computed defaults.
+ *
+ * @param revertable When false, the defaults also become the new initial
+ *                   snapshot, so the Revert button targets them.
+ */
 void
 Settings::DefaultSwapSettings(bool revertable)
 {

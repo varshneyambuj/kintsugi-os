@@ -1,15 +1,44 @@
 /*
- * Copyright 2004-2024 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Mike Berg <mike@berg-net.us>
- *		Julun <host.haiku@gmx.de>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Clemens <mail@Clemens-Zeidler.de>
- *		Hamish Morrison <hamish@lavabit.com>
- *		John Scipione <jscipione@gmail.com>
- *		Niklas Poslovski <ni.pos@yandex.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2024 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Mike Berg <mike@berg-net.us>
+ *       Julun <host.haiku@gmx.de>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Clemens <mail@Clemens-Zeidler.de>
+ *       Hamish Morrison <hamish@lavabit.com>
+ *       John Scipione <jscipione@gmail.com>
+ *       Niklas Poslovski <ni.pos@yandex.com>
+ */
+
+
+/**
+ * @file AnalogClock.cpp
+ * @brief Implementation of the analog clock face used by the Time panel.
+ *
+ * Draws an antialiased dial with hour, minute, and optional second hands,
+ * and supports drag-to-set interaction on the hour and minute hands. Hand
+ * hit-testing is angle-based and tolerant of a small phi delta.
  */
 
 
@@ -25,9 +54,21 @@
 #include "TimeMessages.h"
 
 
+/** @brief Maximum angular delta in radians within which a hand is "hit". */
 #define DRAG_DELTA_PHI 0.2
 
 
+/**
+ * @brief Constructs the analog clock view.
+ *
+ * Initializes all coordinates to zero (DoLayout() recomputes them) and
+ * marks the dial dirty so the first Draw() repaints fully.
+ *
+ * @param name           View name.
+ * @param drawSecondHand When true, render a red second hand.
+ * @param interactive    When true, allow drag-to-set on the hour/minute
+ *                       hands.
+ */
 TAnalogClock::TAnalogClock(const char* name, bool drawSecondHand,
 	bool interactive)
 	:
@@ -49,11 +90,19 @@ TAnalogClock::TAnalogClock(const char* name, bool drawSecondHand,
 }
 
 
+/**
+ * @brief Destructor; nothing to release.
+ */
 TAnalogClock::~TAnalogClock()
 {
 }
 
 
+/**
+ * @brief BView Draw() override; redraws the clock when dirty.
+ *
+ * @param updateRect Update rectangle (unused; the entire dial is redrawn).
+ */
 void
 TAnalogClock::Draw(BRect /*updateRect*/)
 {
@@ -62,6 +111,15 @@ TAnalogClock::Draw(BRect /*updateRect*/)
 }
 
 
+/**
+ * @brief Receives clock-tick observer notices to keep the hands current.
+ *
+ * Looks for B_OBSERVER_NOTICE_CHANGE messages whose change code is
+ * H_TM_CHANGED, extracts hour/minute/second, and forwards them to
+ * SetTime(). All other messages fall through to BView.
+ *
+ * @param message Incoming message.
+ */
 void
 TAnalogClock::MessageReceived(BMessage* message)
 {
@@ -93,6 +151,15 @@ TAnalogClock::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Begins dragging the hour or minute hand if the click hits one.
+ *
+ * In interactive mode, captures pointer events with B_LOCK_WINDOW_FOCUS so
+ * the drag is not interrupted by other widgets. In non-interactive mode,
+ * the click falls through to BView.
+ *
+ * @param point Click location in view coordinates.
+ */
 void
 TAnalogClock::MouseDown(BPoint point)
 {
@@ -119,6 +186,11 @@ TAnalogClock::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Finishes a hand drag and posts an H_USER_CHANGE to the window.
+ *
+ * @param point Mouse-up location (unused, captured by drag state).
+ */
 void
 TAnalogClock::MouseUp(BPoint point)
 {
@@ -144,6 +216,13 @@ TAnalogClock::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Updates the dragged hand to follow the cursor.
+ *
+ * @param point   Cursor position.
+ * @param transit Cursor transit code (unused).
+ * @param message Optional dragged message (unused).
+ */
 void
 TAnalogClock::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 {
@@ -161,6 +240,13 @@ TAnalogClock::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 }
 
 
+/**
+ * @brief Recomputes the dial geometry whenever the view is laid out.
+ *
+ * Centers the clock in its bounds and sets the dial radius to half the
+ * shorter axis less a small inset so antialiased strokes stay inside the
+ * frame.
+ */
 void
 TAnalogClock::DoLayout()
 {
@@ -174,6 +260,9 @@ TAnalogClock::DoLayout()
 }
 
 
+/**
+ * @brief Returns an unbounded maximum size, composed with the explicit max.
+ */
 BSize
 TAnalogClock::MaxSize()
 {
@@ -182,6 +271,9 @@ TAnalogClock::MaxSize()
 }
 
 
+/**
+ * @brief Returns the minimum readable size for the clock face.
+ */
 BSize
 TAnalogClock::MinSize()
 {
@@ -189,6 +281,9 @@ TAnalogClock::MinSize()
 }
 
 
+/**
+ * @brief Returns the preferred size, composed with the explicit preferred.
+ */
 BSize
 TAnalogClock::PreferredSize()
 {
@@ -197,6 +292,16 @@ TAnalogClock::PreferredSize()
 }
 
 
+/**
+ * @brief Updates the displayed time, suppressing changes while dragging.
+ *
+ * No-op when a hand drag is in progress, when an explicit time change is
+ * pending, or when the supplied values match the cached values.
+ *
+ * @param hour   Hour in [0, 23].
+ * @param minute Minute in [0, 59].
+ * @param second Second in [0, 59].
+ */
 void
 TAnalogClock::SetTime(int32 hour, int32 minute, int32 second)
 {
@@ -221,6 +326,9 @@ TAnalogClock::SetTime(int32 hour, int32 minute, int32 second)
 }
 
 
+/**
+ * @brief Returns true while a user-driven time change is still pending.
+ */
 bool
 TAnalogClock::IsChangingTime()
 {
@@ -228,6 +336,9 @@ TAnalogClock::IsChangingTime()
 }
 
 
+/**
+ * @brief Clears the "change in progress" flag set by MouseUp().
+ */
 void
 TAnalogClock::ChangeTimeFinished()
 {
@@ -235,6 +346,13 @@ TAnalogClock::ChangeTimeFinished()
 }
 
 
+/**
+ * @brief Returns the currently displayed time.
+ *
+ * @param hour   Output: hour in [0, 23].
+ * @param minute Output: minute in [0, 59].
+ * @param second Output: second in [0, 59].
+ */
 void
 TAnalogClock::GetTime(int32* hour, int32* minute, int32* second)
 {
@@ -244,6 +362,14 @@ TAnalogClock::GetTime(int32* hour, int32* minute, int32* second)
 }
 
 
+/**
+ * @brief Renders the dial, ticks, and hands directly to the view.
+ *
+ * Locks the looper, paints the background, draws three concentric ring
+ * outlines for the bezel highlight/shadow, then the minute and hour
+ * tick marks, and finally a shadow pass and a foreground pass of the
+ * hour/minute/second hands.
+ */
 void
 TAnalogClock::DrawClock()
 {
@@ -345,6 +471,11 @@ TAnalogClock::DrawClock()
 }
 
 
+/**
+ * @brief Returns true when @a point lies within the hour hand's hit zone.
+ *
+ * @param point Click location in view coordinates.
+ */
 bool
 TAnalogClock::InHourHand(BPoint point)
 {
@@ -359,6 +490,11 @@ TAnalogClock::InHourHand(BPoint point)
 }
 
 
+/**
+ * @brief Returns true when @a point lies within the minute hand's hit zone.
+ *
+ * @param point Click location in view coordinates.
+ */
 bool
 TAnalogClock::InMinuteHand(BPoint point)
 {
@@ -366,6 +502,14 @@ TAnalogClock::InMinuteHand(BPoint point)
 }
 
 
+/**
+ * @brief Snaps the hour hand to the angle of the supplied point.
+ *
+ * Preserves the AM/PM half (above or below 12) so a small drag does not
+ * silently jump twelve hours.
+ *
+ * @param point Cursor position in view coordinates.
+ */
 void
 TAnalogClock::SetHourHand(BPoint point)
 {
@@ -384,6 +528,11 @@ TAnalogClock::SetHourHand(BPoint point)
 }
 
 
+/**
+ * @brief Snaps the minute hand to the angle of the supplied point.
+ *
+ * @param point Cursor position in view coordinates.
+ */
 void
 TAnalogClock::SetMinuteHand(BPoint point)
 {
@@ -398,6 +547,16 @@ TAnalogClock::SetMinuteHand(BPoint point)
 }
 
 
+/**
+ * @brief Returns the clock-face angle (radians) of a center-relative point.
+ *
+ * Angles run clockwise from 12 o'clock so that they map directly onto the
+ * minute scale used by SetMinuteHand() and the hour scale used by
+ * SetHourHand(). The four cardinal directions are special-cased.
+ *
+ * @param point Center-relative point.
+ * @return Angle in radians in the range [0, 2*pi).
+ */
 float
 TAnalogClock::_GetPhi(BPoint point)
 {
@@ -423,6 +582,17 @@ TAnalogClock::_GetPhi(BPoint point)
 }
 
 
+/**
+ * @brief Tests whether @a point falls within a hand's hit zone.
+ *
+ * The hit zone is bounded radially (within @a radius) and angularly
+ * (within DRAG_DELTA_PHI of the hand at @a ticks tick marks past 12).
+ *
+ * @param point  Click location in view coordinates.
+ * @param ticks  Hand position expressed in 60ths of a circle past 12.
+ * @param radius Maximum distance from the clock center to count as a hit.
+ * @return True when the point hits the hand.
+ */
 bool
 TAnalogClock::_InHand(BPoint point, int32 ticks, float radius)
 {
@@ -444,6 +614,21 @@ TAnalogClock::_InHand(BPoint point, int32 ticks, float radius)
 }
 
 
+/**
+ * @brief Draws the hour, minute, and (optionally) second hands plus knob.
+ *
+ * Uses sin/cos to project hand endpoints onto the dial. Called twice per
+ * frame: once with offset coordinates and a shadow color, once with the
+ * normal coordinates and the visible colors.
+ *
+ * @param x            Center X (possibly offset for shadow pass).
+ * @param y            Center Y (possibly offset for shadow pass).
+ * @param radius       Dial radius.
+ * @param hourColor    Color for the hour hand.
+ * @param minuteColor  Color for the minute hand.
+ * @param secondsColor Color for the second hand.
+ * @param knobColor    Color for the center knob.
+ */
 void
 TAnalogClock::_DrawHands(float x, float y, float radius,
 	rgb_color hourColor, rgb_color minuteColor,

@@ -1,12 +1,42 @@
 /*
- * Copyright 2001-2015, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Rafael Romo
- *		Stefano Ceccherini (burton666@libero.it)
- *		Axel Dörfler, axeld@pinc-software.de
- *		Augustin Cavalier <waddlesplash>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Rafael Romo
+ *       Stefano Ceccherini (burton666@libero.it)
+ *       Axel Doerfler, axeld@pinc-software.de
+ *       Augustin Cavalier <waddlesplash>
+ */
+
+
+/**
+ * @file AlertWindow.cpp
+ * @brief Confirmation dialog with countdown for screen-mode changes.
+ *
+ * After the Screen preferences app applies a new display mode, this alert is
+ * shown with a "Keep" / "Undo" choice and a pulsing countdown. If the user
+ * does not respond before the countdown elapses, the mode is reverted
+ * automatically so that an unreadable display does not lock them out.
  */
 
 
@@ -25,6 +55,13 @@
 #define B_TRANSLATION_CONTEXT "Screen"
 
 
+/**
+ * @brief Construct the confirmation alert with a 12 second countdown.
+ *
+ * @param handler Messenger that will receive @c MAKE_INITIAL_MSG when the
+ *                user confirms the change, or @c BUTTON_UNDO_MSG when the
+ *                user reverts (or the countdown expires).
+ */
 AlertWindow::AlertWindow(BMessenger handler)
 	: BAlert(B_TRANSLATE("Confirm changes"),
 			 "", B_TRANSLATE("Undo"), B_TRANSLATE("Keep")),
@@ -42,6 +79,16 @@ AlertWindow::AlertWindow(BMessenger handler)
 }
 
 
+/**
+ * @brief Intercept @c B_PULSE messages to drive the countdown.
+ *
+ * When the countdown reaches zero, sends @c BUTTON_UNDO_MSG to the
+ * configured handler and asks the alert to quit. Other messages are
+ * forwarded to the base implementation.
+ *
+ * @param message Incoming message to dispatch.
+ * @param handler Target handler from the looper.
+ */
 void
 AlertWindow::DispatchMessage(BMessage* message, BHandler* handler)
 {
@@ -58,6 +105,14 @@ AlertWindow::DispatchMessage(BMessage* message, BHandler* handler)
 }
 
 
+/**
+ * @brief Handle button presses and the Escape shortcut.
+ *
+ * Pressing "Keep" sends @c MAKE_INITIAL_MSG, pressing "Undo" or Escape
+ * sends @c BUTTON_UNDO_MSG, and either closes the dialog.
+ *
+ * @param message Incoming alert button (@c 'ALTB') or key-down message.
+ */
 void
 AlertWindow::MessageReceived(BMessage* message)
 {
@@ -95,6 +150,18 @@ AlertWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Refresh the alert text to show the remaining countdown seconds.
+ *
+ * Builds a localized string of the form
+ * "Do you wish to keep these settings? Settings will revert in N seconds."
+ * and applies bold styling to the question while keeping the countdown
+ * line in the original font.
+ *
+ * @note The styling uses BTextView's range-based font API; modifying
+ *       the order of text replacement and font calls will misalign the
+ *       styled regions.
+ */
 void
 AlertWindow::UpdateCountdownView()
 {

@@ -1,10 +1,41 @@
 /*
- * Copyright 2003-2011, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Sikosis
- *		Jérôme Duval
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2011, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Sikosis
+ *       Jérôme Duval
+ */
+
+
+/**
+ * @file MediaViews.cpp
+ * @brief Implementation of the audio and video default-picker settings views.
+ *
+ * Includes the menu-item subclasses (NodeMenuItem, ChannelMenuItem) used
+ * inside the pickers and the AudioSettingsView extension that exposes
+ * the output channel chooser and the Deskbar volume control toggle.
+ *
+ * @see MediaWindow
  */
 
 
@@ -36,11 +67,18 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Media views"
 
+/** @brief Internal message: the default input node was changed via the picker. */
 #define MEDIA_DEFAULT_INPUT_CHANGE 'dich'
+/** @brief Internal message: the default output node was changed via the picker. */
 #define MEDIA_DEFAULT_OUTPUT_CHANGE 'doch'
+/** @brief Internal message: the Deskbar volume control checkbox was toggled. */
 #define MEDIA_SHOW_HIDE_VOLUME_CONTROL 'shvc'
 
 
+/**
+ * @brief Constructs the base settings view with the input and output
+ *        BPopUpMenus pre-populated with a "<none>" placeholder.
+ */
 SettingsView::SettingsView()
 	:
 	BGroupView(B_VERTICAL, B_USE_DEFAULT_SPACING),
@@ -59,6 +97,13 @@ SettingsView::SettingsView()
 }
 
 
+/**
+ * @brief Returns a fresh BButton wired to send @c ML_RESTART_MEDIA_SERVER.
+ *
+ * The button is unparented; the caller adds it to the layout.
+ *
+ * @return Newly allocated BButton; ownership transfers to the caller.
+ */
 BButton*
 SettingsView::MakeRestartButton()
 {
@@ -69,6 +114,11 @@ SettingsView::MakeRestartButton()
 
 
 
+/**
+ * @brief Replaces the input picker contents with @a list.
+ *
+ * @param list Dormant input nodes to expose; not modified.
+ */
 void
 SettingsView::AddInputNodes(NodeList& list)
 {
@@ -79,6 +129,11 @@ SettingsView::AddInputNodes(NodeList& list)
 }
 
 
+/**
+ * @brief Replaces the output picker contents with @a list.
+ *
+ * @param list Dormant output nodes to expose; not modified.
+ */
 void
 SettingsView::AddOutputNodes(NodeList& list)
 {
@@ -89,6 +144,12 @@ SettingsView::AddOutputNodes(NodeList& list)
 }
 
 
+/**
+ * @brief Marks the input picker entry corresponding to @a info as selected.
+ *
+ * @param info Dormant node to highlight; passing one not present in the
+ *             menu just clears the previous selection.
+ */
 void
 SettingsView::SetDefaultInput(const dormant_node_info* info)
 {
@@ -99,6 +160,12 @@ SettingsView::SetDefaultInput(const dormant_node_info* info)
 }
 
 
+/**
+ * @brief Marks the output picker entry corresponding to @a info as selected.
+ *
+ * @param info Dormant node to highlight; passing one not present in the
+ *             menu just clears the previous selection.
+ */
 void
 SettingsView::SetDefaultOutput(const dormant_node_info* info)
 {
@@ -109,6 +176,13 @@ SettingsView::SetDefaultOutput(const dormant_node_info* info)
 }
 
 
+/**
+ * @brief BView message hook: forwards picker selections to the matching
+ *        SetDefaultInput / SetDefaultOutput overrides.
+ *
+ * @param message Incoming message; unhandled messages fall through to
+ *                BGroupView::MessageReceived().
+ */
 void
 SettingsView::MessageReceived(BMessage* message)
 {
@@ -139,6 +213,9 @@ SettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief BView AttachedToWindow hook: routes picker messages back here.
+ */
 void
 SettingsView::AttachedToWindow()
 {
@@ -148,6 +225,12 @@ SettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Returns the containing MediaWindow.
+ *
+ * @return The cast pointer; safe because this view is only ever inserted
+ *         into a MediaWindow.
+ */
 MediaWindow*
 SettingsView::_MediaWindow() const
 {
@@ -155,6 +238,11 @@ SettingsView::_MediaWindow() const
 }
 
 
+/**
+ * @brief Removes and deletes every item in @a menu.
+ *
+ * @param menu Menu to drain.
+ */
 void
 SettingsView::_EmptyMenu(BMenu* menu)
 {
@@ -163,6 +251,13 @@ SettingsView::_EmptyMenu(BMenu* menu)
 }
 
 
+/**
+ * @brief Adds a NodeMenuItem to @a menu for each dormant node in @a nodes.
+ *
+ * @param menu    Destination menu (typically @c fInputMenu or @c fOutputMenu).
+ * @param nodes   Dormant nodes to expose.
+ * @param message Template message; copied per item.
+ */
 void
 SettingsView::_PopulateMenu(BMenu* menu, NodeList& nodes,
 	const BMessage& message)
@@ -177,6 +272,15 @@ SettingsView::_PopulateMenu(BMenu* menu, NodeList& nodes,
 }
 
 
+/**
+ * @brief Locates the NodeMenuItem in @a menu that wraps @a nodeInfo.
+ *
+ * Comparison is by add-on id and flavor id.
+ *
+ * @param menu     Menu to scan.
+ * @param nodeInfo Node identity to match.
+ * @return Pointer to the matching menu item, or @c NULL when none matches.
+ */
 NodeMenuItem*
 SettingsView::_FindNodeItem(BMenu* menu, const dormant_node_info* nodeInfo)
 {
@@ -192,6 +296,11 @@ SettingsView::_FindNodeItem(BMenu* menu, const dormant_node_info* nodeInfo)
 }
 
 
+/**
+ * @brief Clears the marked flag on every item in @a menu.
+ *
+ * @param menu Menu to scrub.
+ */
 void
 SettingsView::_ClearMenuSelection(BMenu* menu)
 {
@@ -202,6 +311,14 @@ SettingsView::_ClearMenuSelection(BMenu* menu)
 }
 
 
+/**
+ * @brief Constructs a NodeMenuItem bound to dormant node @a info.
+ *
+ * @param info      Node identity carried by this item.
+ * @param message   Message dispatched on selection.
+ * @param shortcut  Optional keyboard shortcut.
+ * @param modifiers Optional modifier mask.
+ */
 NodeMenuItem::NodeMenuItem(const dormant_node_info* info, BMessage* message,
 	char shortcut, uint32 modifiers)
 	:
@@ -212,6 +329,13 @@ NodeMenuItem::NodeMenuItem(const dormant_node_info* info, BMessage* message,
 }
 
 
+/**
+ * @brief Suppresses re-invocation when the item is already marked.
+ *
+ * @param message Message override.
+ * @return @c B_OK without firing when already marked; otherwise the
+ *         result of BMenuItem::Invoke().
+ */
 status_t
 NodeMenuItem::Invoke(BMessage* message)
 {
@@ -221,6 +345,14 @@ NodeMenuItem::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Constructs a ChannelMenuItem bound to media_input @a input.
+ *
+ * @param input     Channel identity; ownership transfers to this item.
+ * @param message   Message dispatched on selection.
+ * @param shortcut  Optional keyboard shortcut.
+ * @param modifiers Optional modifier mask.
+ */
 ChannelMenuItem::ChannelMenuItem(media_input* input, BMessage* message,
 	char shortcut, uint32 modifiers)
 	:
@@ -230,12 +362,18 @@ ChannelMenuItem::ChannelMenuItem(media_input* input, BMessage* message,
 }
 
 
+/**
+ * @brief Releases the owned media_input.
+ */
 ChannelMenuItem::~ChannelMenuItem()
 {
 	delete fInput;
 }
 
 
+/**
+ * @brief Returns the destination id of the wrapped media input.
+ */
 int32
 ChannelMenuItem::DestinationID()
 {
@@ -243,6 +381,9 @@ ChannelMenuItem::DestinationID()
 }
 
 
+/**
+ * @brief Returns the wrapped media_input pointer.
+ */
 media_input*
 ChannelMenuItem::Input()
 {
@@ -250,6 +391,13 @@ ChannelMenuItem::Input()
 }
 
 
+/**
+ * @brief Suppresses re-invocation when the item is already marked.
+ *
+ * @param message Message override.
+ * @return @c B_OK without firing when already marked; otherwise the
+ *         result of BMenuItem::Invoke().
+ */
 status_t
 ChannelMenuItem::Invoke(BMessage* message)
 {
@@ -259,6 +407,10 @@ ChannelMenuItem::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Builds the audio settings layout: defaults box, channel picker,
+ *        Deskbar volume toggle, and Restart button.
+ */
 AudioSettingsView::AudioSettingsView()
 {
 	BBox* defaultsBox = new BBox("defaults");
@@ -292,6 +444,12 @@ AudioSettingsView::AudioSettingsView()
 }
 
 
+/**
+ * @brief Marks the channel picker entry whose destination id matches
+ *        @a channelID.
+ *
+ * @param channelID Destination id reported by the media roster.
+ */
 void
 AudioSettingsView::SetDefaultChannel(int32 channelID)
 {
@@ -302,6 +460,9 @@ AudioSettingsView::SetDefaultChannel(int32 channelID)
 }
 
 
+/**
+ * @brief BView AttachedToWindow hook: routes channel and checkbox messages.
+ */
 void
 AudioSettingsView::AttachedToWindow()
 {
@@ -313,6 +474,12 @@ AudioSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief BView message hook: handles channel selection and Deskbar toggle.
+ *
+ * @param message Incoming message; unhandled messages defer to the base
+ *                SettingsView::MessageReceived().
+ */
 void
 AudioSettingsView::MessageReceived(BMessage* message)
 {
@@ -346,6 +513,12 @@ AudioSettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Sets the audio default-input node, refreshes the list view badge,
+ *        and tells the BMediaRoster to switch.
+ *
+ * @param info Dormant input node to make default.
+ */
 void
 AudioSettingsView::SetDefaultInput(const dormant_node_info* info)
 {
@@ -355,6 +528,12 @@ AudioSettingsView::SetDefaultInput(const dormant_node_info* info)
 }
 
 
+/**
+ * @brief Sets the audio default-output node, refreshes badges, repopulates
+ *        the channel picker, and tells the BMediaRoster to switch.
+ *
+ * @param info Dormant output node to make default.
+ */
 void
 AudioSettingsView::SetDefaultOutput(const dormant_node_info* info)
 {
@@ -365,6 +544,11 @@ AudioSettingsView::SetDefaultOutput(const dormant_node_info* info)
 }
 
 
+/**
+ * @brief Creates the channel picker BMenuField with an empty popup.
+ *
+ * @return Newly allocated BMenuField wrapping @c fChannelMenu.
+ */
 BMenuField*
 AudioSettingsView::_MakeChannelMenu()
 {
@@ -376,6 +560,12 @@ AudioSettingsView::_MakeChannelMenu()
 }
 
 
+/**
+ * @brief Creates the Deskbar volume control toggle, mirroring its current state.
+ *
+ * @return Newly allocated BCheckBox; pre-checked when the Deskbar already
+ *         hosts the @c MediaReplicant.
+ */
 BCheckBox*
 AudioSettingsView::_MakeVolumeCheckBox()
 {
@@ -390,6 +580,16 @@ AudioSettingsView::_MakeVolumeCheckBox()
 }
 
 
+/**
+ * @brief Repopulates the channel picker from the inputs of @a nodeInfo.
+ *
+ * Acquires the dormant node (instantiating it as a global flavor when no
+ * existing instance is found), enumerates its inputs into a growable
+ * buffer, and creates one ChannelMenuItem per input. The first input
+ * with destination id zero is marked as default.
+ *
+ * @param nodeInfo Dormant output node whose inputs become channels.
+ */
 void
 AudioSettingsView::_FillChannelMenu(const dormant_node_info* nodeInfo)
 {
@@ -448,6 +648,11 @@ AudioSettingsView::_FillChannelMenu(const dormant_node_info* nodeInfo)
 }
 
 
+/**
+ * @brief Adds the @c desklink-driven volume replicant to the Deskbar.
+ *
+ * Logs to stderr when the addition fails for any reason.
+ */
 void
 AudioSettingsView::_ShowDeskbarVolumeControl()
 {
@@ -467,6 +672,11 @@ AudioSettingsView::_ShowDeskbarVolumeControl()
 }
 
 
+/**
+ * @brief Removes the volume replicant from the Deskbar.
+ *
+ * Logs to stderr when removal fails.
+ */
 void
 AudioSettingsView::_HideDeskbarVolumeControl()
 {
@@ -480,6 +690,12 @@ AudioSettingsView::_HideDeskbarVolumeControl()
 }
 
 
+/**
+ * @brief Returns the channel menu item at @a index, statically cast.
+ *
+ * @param index Zero-based index into @c fChannelMenu.
+ * @return The item; behaviour is undefined if @a index is out of range.
+ */
 ChannelMenuItem*
 AudioSettingsView::_ChannelMenuItemAt(int32 index)
 {
@@ -487,6 +703,9 @@ AudioSettingsView::_ChannelMenuItemAt(int32 index)
 }
 
 
+/**
+ * @brief Builds the video settings layout: defaults box and Restart button.
+ */
 VideoSettingsView::VideoSettingsView()
 {
 	BBox* defaultsBox = new BBox("defaults");
@@ -518,6 +737,12 @@ VideoSettingsView::VideoSettingsView()
 }
 
 
+/**
+ * @brief Sets the video default-input node and asks the BMediaRoster
+ *        to switch.
+ *
+ * @param info Dormant input node to make default.
+ */
 void
 VideoSettingsView::SetDefaultInput(const dormant_node_info* info)
 {
@@ -527,6 +752,12 @@ VideoSettingsView::SetDefaultInput(const dormant_node_info* info)
 }
 
 
+/**
+ * @brief Sets the video default-output node and asks the BMediaRoster
+ *        to switch.
+ *
+ * @param info Dormant output node to make default.
+ */
 void
 VideoSettingsView::SetDefaultOutput(const dormant_node_info* info)
 {

@@ -1,10 +1,39 @@
 /*
- *  Copyright 2010-2012 Haiku, Inc. All rights reserved.
- *  Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *	Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		John Scipione <jscipione@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2012 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       John Scipione <jscipione@gmail.com>
+ */
+
+
+/**
+ * @file FakeScrollBar.cpp
+ * @brief Read-only scroll-bar preview used by the Look-and-feel tab.
+ *
+ * Renders a non-functional scroll bar with the system's current arrow
+ * style and knob style so the user can pick between single- and
+ * double-arrow modes by clicking on the preview.
  */
 
 
@@ -28,6 +57,13 @@ typedef enum {
 } arrow_direction;
 
 
+/**
+ * @brief Constructs a fake scroll-bar preview control.
+ *
+ * @param drawArrows   When @c true, render arrow buttons at each end.
+ * @param doubleArrows When @c true, render the double-arrow style.
+ * @param message      Message posted when the preview is clicked.
+ */
 FakeScrollBar::FakeScrollBar(bool drawArrows, bool doubleArrows,
 	BMessage* message)
 	:
@@ -42,11 +78,23 @@ FakeScrollBar::FakeScrollBar(bool drawArrows, bool doubleArrows,
 }
 
 
+/**
+ * @brief Destructor; nothing to release.
+ */
 FakeScrollBar::~FakeScrollBar(void)
 {
 }
 
 
+/**
+ * @brief Draws the scroll-bar preview, including selection ring and thumb.
+ *
+ * Uses BControlLook to render a horizontal scroll bar with the
+ * configured arrow style and knob style. The selection ring around the
+ * bar reflects the control's current value.
+ *
+ * @param updateRect Region requiring redraw.
+ */
 void
 FakeScrollBar::Draw(BRect updateRect)
 {
@@ -126,6 +174,11 @@ FakeScrollBar::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Forwards the press to BControl; selection happens on MouseUp.
+ *
+ * @param point Mouse location in view coordinates.
+ */
 void
 FakeScrollBar::MouseDown(BPoint point)
 {
@@ -133,6 +186,13 @@ FakeScrollBar::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Forwards mouse-move events to BControl.
+ *
+ * @param point   Mouse location in view coordinates.
+ * @param transit Transit flag passed by the framework.
+ * @param message Optional drag message.
+ */
 void
 FakeScrollBar::MouseMoved(BPoint point, uint32 transit,
 	const BMessage* message)
@@ -141,6 +201,13 @@ FakeScrollBar::MouseMoved(BPoint point, uint32 transit,
 }
 
 
+/**
+ * @brief Marks this preview as selected and posts the bound message.
+ *
+ * Sets the control to ON, repaints, and forwards to BControl.
+ *
+ * @param point Mouse release location in view coordinates.
+ */
 void
 FakeScrollBar::MouseUp(BPoint point)
 {
@@ -153,6 +220,15 @@ FakeScrollBar::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Sets the control value and clears sibling FakeScrollBars.
+ *
+ * Acts as a radio-group: when this control becomes ON, every sibling
+ * FakeScrollBar (including the LabelView of an enclosing BBox) is set
+ * to OFF so only one preview can be selected at a time.
+ *
+ * @param value New control value (B_CONTROL_ON or B_CONTROL_OFF).
+ */
 void
 FakeScrollBar::SetValue(int32 value)
 {
@@ -214,6 +290,11 @@ FakeScrollBar::SetValue(int32 value)
 //	#pragma mark -
 
 
+/**
+ * @brief Toggles whether the preview shows the double-arrow style.
+ *
+ * @param doubleArrows Pass @c true for double arrows, @c false for single.
+ */
 void
 FakeScrollBar::SetDoubleArrows(bool doubleArrows)
 {
@@ -222,6 +303,11 @@ FakeScrollBar::SetDoubleArrows(bool doubleArrows)
 }
 
 
+/**
+ * @brief Updates the knob style used when rendering the thumb.
+ *
+ * @param knobStyle One of the BControlLook knob constants.
+ */
 void
 FakeScrollBar::SetKnobStyle(uint32 knobStyle)
 {
@@ -230,6 +316,11 @@ FakeScrollBar::SetKnobStyle(uint32 knobStyle)
 }
 
 
+/**
+ * @brief Mirrors the system-wide @a info struct into this preview.
+ *
+ * @param info Settings struct returned by @c get_scroll_bar_info().
+ */
 void
 FakeScrollBar::SetFromScrollBarInfo(const scroll_bar_info &info)
 {
@@ -242,6 +333,15 @@ FakeScrollBar::SetFromScrollBarInfo(const scroll_bar_info &info)
 //	#pragma mark -
 
 
+/**
+ * @brief Draws a single arrow button at @a rect in @a direction.
+ *
+ * Currently unused by Draw(); retained for future custom rendering.
+ *
+ * @param direction  BControlLook arrow direction constant.
+ * @param rect       Bounding rectangle of the button.
+ * @param updateRect Region requiring redraw.
+ */
 void
 FakeScrollBar::_DrawArrowButton(int32 direction, BRect rect,
 	const BRect& updateRect)

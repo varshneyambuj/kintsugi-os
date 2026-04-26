@@ -1,9 +1,41 @@
 /*
- * Copyright 2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author:
- *		Preetpal Kaur <preetpalok123@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ */
+
+
+/**
+ * @file InputMouse.cpp
+ * @brief Implementation of InputMouse, the mouse preferences card.
+ *
+ * InputMouse is the BView shown when the user selects a non-touchpad
+ * pointing device in the InputWindow. It hosts a SettingsView with the
+ * full set of mouse controls plus the standard Defaults and Revert
+ * buttons; messages drive a per-device MouseSettings model.
+ *
+ * @see SettingsView, MouseSettings
  */
 
 
@@ -26,6 +58,19 @@
 #define B_TRANSLATION_CONTEXT "InputMouse"
 
 
+/**
+ * @brief Constructs the mouse settings card.
+ *
+ * Stores the per-device MouseSettings, builds the inner SettingsView, and
+ * lays out the Defaults and Revert buttons separated from the controls
+ * with a horizontal separator. The Defaults button reflects whether
+ * @a settings differs from the system defaults.
+ *
+ * @param dev       BInputDevice for the selected mouse; reserved for
+ *                  future per-device behaviour and not yet used.
+ * @param settings  MouseSettings model owned by the InputWindow; must
+ *                  outlive this view.
+ */
 InputMouse::InputMouse(BInputDevice* dev, MouseSettings* settings)
 	:
 	BView("InputMouse", B_WILL_DRAW)
@@ -54,11 +99,32 @@ InputMouse::InputMouse(BInputDevice* dev, MouseSettings* settings)
 }
 
 
+/**
+ * @brief Destroys the card.
+ *
+ * @note The MouseSettings pointer was supplied by the InputWindow and is
+ *       not owned by this view.
+ */
 InputMouse::~InputMouse()
 {
 }
 
 
+/**
+ * @brief Translates user input into MouseSettings updates.
+ *
+ * Handles every mouse-specific message: Defaults/Revert, mouse type,
+ * focus mode, focus-follows-mouse mode, accept-first-click toggle,
+ * double-click speed, mouse speed, acceleration factor, and button
+ * mapping. After each change the Defaults and Revert button enabled
+ * states are re-evaluated against the persisted defaults and the
+ * on-entry snapshot. The mouse-speed and acceleration values are passed
+ * through the same exponential mappings used by the touchpad card to
+ * cover the slow/fast dynamic range expected by the kernel driver.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BView::MessageReceived.
+ */
 void
 InputMouse::MessageReceived(BMessage* message)
 {

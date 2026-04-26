@@ -1,14 +1,45 @@
 /*
- * Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Andrew McCall <mccall@@digitalparadise.co.uk>
- *		Mike Berg <mike@berg-net.us>
- *		Julun <host.haiku@gmx.de>
- *		Philippe Saint-Pierre <stpere@gmail.com>
- *		Hamish Morrison <hamish@lavabit.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Andrew McCall <mccall@@digitalparadise.co.uk>
+ *       Mike Berg <mike@berg-net.us>
+ *       Julun <host.haiku@gmx.de>
+ *       Philippe Saint-Pierre <stpere@gmail.com>
+ *       Hamish Morrison <hamish@lavabit.com>
  */
+
+
+/**
+ * @file DateTimeView.cpp
+ * @brief Implementation of DateTimeView, the Date and time preference page.
+ *
+ * Builds the calendar / date-edit / time-edit / analog-clock layout, listens
+ * for clock-tick notices to refresh visible widgets, and translates user
+ * gestures (calendar selection, drag on the analog clock, edits in the spin
+ * controls) into H_USER_CHANGE messages handled by the parent window.
+ */
+
 
 #include "DateTimeView.h"
 
@@ -47,6 +78,14 @@ using BPrivate::DateEdit;
 using BPrivate::TimeEdit;
 
 
+/**
+ * @brief Constructs the page, builds its layout, and snapshots the launch time.
+ *
+ * Records both wall-clock and monotonic system time so Revert can compute
+ * the equivalent moment after an arbitrary delay.
+ *
+ * @param name View name passed to BGroupView.
+ */
 DateTimeView::DateTimeView(const char* name)
 	:
 	BGroupView(name, B_HORIZONTAL, 5),
@@ -60,11 +99,17 @@ DateTimeView::DateTimeView(const char* name)
 }
 
 
+/**
+ * @brief Destructor; child views are owned by the layout.
+ */
 DateTimeView::~DateTimeView()
 {
 }
 
 
+/**
+ * @brief Adopts parent colors and binds the calendar to this view as target.
+ */
 void
 DateTimeView::AttachedToWindow()
 {
@@ -78,6 +123,16 @@ DateTimeView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles ticks, locale changes, calendar clicks, and Revert.
+ *
+ * Refreshes the on-screen widgets from H_TM_CHANGED notices, rebuilds the
+ * calendar header on B_LOCALE_CHANGED, posts H_USER_CHANGE on calendar
+ * selection, restores the launch-time moment on Revert, and clears the
+ * analog clock's drag state on kChangeTimeFinished.
+ *
+ * @param message Incoming message.
+ */
 void
 DateTimeView::MessageReceived(BMessage* message)
 {
@@ -129,6 +184,10 @@ DateTimeView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Returns true when the wall clock has drifted from the
+ *        launch-time-plus-uptime baseline.
+ */
 bool
 DateTimeView::CheckCanRevert()
 {
@@ -141,6 +200,12 @@ DateTimeView::CheckCanRevert()
 }
 
 
+/**
+ * @brief Restores the system clock to the launch-time moment plus uptime.
+ *
+ * Computes (fTimeAtStart + uptime), splits into local-time fields, and
+ * pushes the result back via set_real_time_clock().
+ */
 void
 DateTimeView::_Revert()
 {
@@ -165,6 +230,9 @@ DateTimeView::_Revert()
 }
 
 
+/**
+ * @brief Returns seconds elapsed since the page was created.
+ */
 time_t
 DateTimeView::_PrefletUptime() const
 {
@@ -172,6 +240,12 @@ DateTimeView::_PrefletUptime() const
 }
 
 
+/**
+ * @brief Builds the calendar, date edit, time edit, and analog clock.
+ *
+ * Splits the page into two side-by-side columns separated by a thin
+ * BBox divider: date controls on the left, time controls on the right.
+ */
 void
 DateTimeView::_InitView()
 {
@@ -207,6 +281,14 @@ DateTimeView::_InitView()
 }
 
 
+/**
+ * @brief Pushes the date and time fields from a notice message into the UI.
+ *
+ * Date fields are coalesced via static "last seen" values so the calendar
+ * does not redraw on every tick. Time fields are forwarded unconditionally.
+ *
+ * @param message Notice message with day/month/year and hour/minute/second.
+ */
 void
 DateTimeView::_UpdateDateTime(BMessage* message)
 {

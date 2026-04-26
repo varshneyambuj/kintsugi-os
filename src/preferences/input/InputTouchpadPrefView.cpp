@@ -1,11 +1,45 @@
 /*
- * Copyright 2019-2025, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Preetpal Kaur <preetpalok123@gmail.com>
- *		Pawan Yerramilli <me@pawanyerramilli.com>
- *		Samuel Rodríguez Pérez <samuelrp84@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019-2025, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ *       Pawan Yerramilli <me@pawanyerramilli.com>
+ *       Samuel Rodríguez Pérez <samuelrp84@gmail.com>
+ */
+
+
+/**
+ * @file InputTouchpadPrefView.cpp
+ * @brief Implementation of TouchpadView and TouchpadPrefView.
+ *
+ * TouchpadView is a small custom BView showing the touchpad area with
+ * draggable scroll-zone delimiters. TouchpadPrefView is the full
+ * touchpad preferences card built around it: scroll behaviour, edge
+ * motion, click handling, tapping sensitivity, padblocker, and
+ * speed/acceleration sliders. The card persists changes through the
+ * embedded TouchpadPref model.
+ *
+ * @see TouchpadPref
  */
 
 
@@ -35,13 +69,24 @@
 #include <keyboard_mouse_driver.h>
 
 
+/** @brief Internal message: user is dragging the X scroll-zone delimiter. */
 const uint32 SCROLL_X_DRAG = 'sxdr';
+/** @brief Internal message: user is dragging the Y scroll-zone delimiter. */
 const uint32 SCROLL_Y_DRAG = 'sydr';
 
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "TouchpadPrefView"
 
 
+/**
+ * @brief Constructs the touchpad preview area.
+ *
+ * Initialises off-screen drawing state, copies @a frame as the preferred
+ * frame, and seeds the scroll-zone delimiters at the right and bottom of
+ * the inset pad rectangle (no scroll zones reserved by default).
+ *
+ * @param frame  Initial bounding rectangle of the preview view.
+ */
 TouchpadView::TouchpadView(BRect frame)
 	:
 	BView(frame, "TouchpadView", B_FOLLOW_NONE, B_WILL_DRAW)
@@ -59,12 +104,23 @@ TouchpadView::TouchpadView(BRect frame)
 }
 
 
+/**
+ * @brief Destroys the preview, releasing the off-screen bitmap.
+ *
+ * @note The off-screen BView is owned by the BBitmap and is released
+ *       transitively when the bitmap is deleted.
+ */
 TouchpadView::~TouchpadView()
 {
 	delete fOffScreenBitmap;
 }
 
 
+/**
+ * @brief Paints the view by delegating to DrawSliders().
+ *
+ * @param updateRect  Update rectangle (unused; the whole view is redrawn).
+ */
 void
 TouchpadView::Draw(BRect updateRect)
 {
@@ -72,6 +128,15 @@ TouchpadView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Starts tracking when the user clicks a scroll-zone delimiter.
+ *
+ * Sets fXTracking or fYTracking and remembers the current scroll-range
+ * values so the drag can be undone if the user opts to abort a large
+ * scroll-zone change in MouseUp.
+ *
+ * @param point  Mouse-down position in view-local coordinates.
+ */
 void
 TouchpadView::MouseDown(BPoint point)
 {
@@ -89,6 +154,16 @@ TouchpadView::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Commits or aborts a scroll-zone drag on mouse-up.
+ *
+ * If the resulting zone exceeds 70% of the pad area the user is asked to
+ * confirm. On confirmation a SCROLL_AREA_CHANGED notification is invoked;
+ * on cancellation the previous range is restored and the view is
+ * redrawn. No-op if neither axis is being tracked.
+ *
+ * @param point  Mouse-up position in view-local coordinates (unused).
+ */
 void
 TouchpadView::MouseUp(BPoint point)
 {
@@ -126,6 +201,13 @@ TouchpadView::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Allocates the off-screen bitmap used for double buffering.
+ *
+ * Creates a same-sized BView and an 8bpp BBitmap on first attach, parents
+ * the view inside the bitmap, and uses the pair to render the touchpad
+ * preview without flicker.
+ */
 void
 TouchpadView::AttachedToWindow()
 {
@@ -141,6 +223,18 @@ TouchpadView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Updates the X and Y scroll-range delimiters and redraws.
+ *
+ * Converts the per-side scroll ratios from the model into absolute
+ * coordinates inside the pad rectangle so DrawSliders() can place the
+ * delimiter lines correctly.
+ *
+ * @param rightRange   Fraction of the pad width reserved for vertical
+ *                     scrolling along the right edge (0.0-1.0).
+ * @param bottomRange  Fraction of the pad height reserved for horizontal
+ *                     scrolling along the bottom edge (0.0-1.0).
+ */
 void
 TouchpadView::SetValues(float rightRange, float bottomRange)
 {
@@ -150,6 +244,12 @@ TouchpadView::SetValues(float rightRange, float bottomRange)
 }
 
 
+/**
+ * @brief Reports the preferred size of the preview view.
+ *
+ * @param width   On return: preferred width in pixels (may be NULL).
+ * @param height  On return: preferred height in pixels (may be NULL).
+ */
 void
 TouchpadView::GetPreferredSize(float* width, float* height)
 {
@@ -160,6 +260,17 @@ TouchpadView::GetPreferredSize(float* width, float* height)
 }
 
 
+/**
+ * @brief Updates scroll ranges in real time while the user drags.
+ *
+ * Clamps the drag position to the pad rectangle and redraws the
+ * delimiters; the model is updated only on mouse-up so that an aborted
+ * drag does not perturb the persisted settings.
+ *
+ * @param point    Current mouse position in view-local coordinates.
+ * @param transit  Transit code (unused).
+ * @param message  Drag message (unused).
+ */
 void
 TouchpadView::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 {
@@ -187,6 +298,14 @@ TouchpadView::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 }
 
 
+/**
+ * @brief Renders the pad rectangle and scroll-zone delimiters off-screen.
+ *
+ * Draws the pad outline, fills the active scroll zones, and strokes the
+ * X and Y delimiter lines plus their drag handles. The composite is then
+ * blitted onto the on-screen view in one DrawBitmap call to avoid
+ * flicker. Caches the drag-zone rectangles for use by MouseDown.
+ */
 void
 TouchpadView::DrawSliders()
 {
@@ -264,6 +383,15 @@ TouchpadView::DrawSliders()
 //	#pragma mark - TouchpadPrefView
 
 
+/**
+ * @brief Constructs the full touchpad settings card.
+ *
+ * Builds the inner control hierarchy via SetupView() and seeds every
+ * widget from the persisted TouchpadPref::Settings.
+ *
+ * @param dev  BInputDevice for the touchpad. Ownership is forwarded into
+ *             the embedded TouchpadPref.
+ */
 TouchpadPrefView::TouchpadPrefView(BInputDevice* dev)
 	:
 	BGroupView(),
@@ -275,11 +403,29 @@ TouchpadPrefView::TouchpadPrefView(BInputDevice* dev)
 }
 
 
+/**
+ * @brief Destroys the card.
+ *
+ * @note The TouchpadPref destructor handles persistence; nothing extra
+ *       is required here.
+ */
 TouchpadPrefView::~TouchpadPrefView()
 {
 }
 
 
+/**
+ * @brief Translates control changes into TouchpadPref updates.
+ *
+ * Handles every touchpad-specific message: scroll area drags, scroll
+ * controls, edge motion, finger click, software button areas, tap
+ * sensitivity, padblocker, speed and acceleration, plus Defaults and
+ * Revert. Every change re-enables the Revert button and pushes the live
+ * settings to the input server.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BView::MessageReceived.
+ */
 void
 TouchpadPrefView::MessageReceived(BMessage* message)
 {
@@ -375,6 +521,13 @@ TouchpadPrefView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Wires every control to this view as the message target.
+ *
+ * Also resizes the parent window to the view's preferred size and
+ * restores the saved window position; if the saved position is the
+ * sentinel (-1, -1) the window is centred.
+ */
 void
 TouchpadPrefView::AttachedToWindow()
 {
@@ -411,6 +564,9 @@ TouchpadPrefView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Persists the window position back into the TouchpadPref model.
+ */
 void
 TouchpadPrefView::DetachedFromWindow()
 {
@@ -418,6 +574,15 @@ TouchpadPrefView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Builds the entire touchpad control hierarchy.
+ *
+ * Constructs the scrolling box (preview, two-finger checkboxes, scroll
+ * sliders), the edge motion option pop-up, finger click and software
+ * button area checkboxes, the tap sensitivity and padblocker sliders,
+ * the trackpad speed and acceleration sliders, and the Defaults/Revert
+ * buttons. All controls share the message codes defined in the header.
+ */
 void
 TouchpadPrefView::SetupView()
 {
@@ -581,6 +746,16 @@ TouchpadPrefView::SetupView()
 }
 
 
+/**
+ * @brief Pushes the supplied settings into every UI control.
+ *
+ * Used both at construction (to seed widgets from the loaded settings)
+ * and after Defaults/Revert (to refresh them from the new model state).
+ * The trackpad speed and acceleration sliders are mapped through the
+ * inverse of the curves used in TouchpadPref::SetSpeed and SetAcceleration.
+ *
+ * @param settings  Settings whose values should be reflected in the UI.
+ */
 void
 TouchpadPrefView::SetValues(touchpad_settings* settings)
 {

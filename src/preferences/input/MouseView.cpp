@@ -1,9 +1,39 @@
 /*
- * Copyright 2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author:
- *		Preetpal Kaur <preetpalok123@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2019, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Author:
+ *       Preetpal Kaur <preetpalok123@gmail.com>
+ */
+
+
+/**
+ * @file MouseView.cpp
+ * @brief Implementation of MouseView, the schematic mouse drawing widget.
+ *
+ * MouseView paints a stylised mouse with one to six labelled buttons,
+ * highlights the button currently held down by the user, and pops up a
+ * mapping menu when the user clicks a button so that they can reassign
+ * its logical role.
  */
 
 
@@ -31,8 +61,11 @@
 #include "MouseSettings.h"
 
 
+/** @brief Top inset of the rendered button strip, in unscaled units. */
 static const int32 kButtonTop = 3;
+/** @brief Width of the rendered mouse-button strip, in unscaled units. */
 static const int32 kMouseDownWidth = 72;
+/** @brief Height of the rendered mouse-button strip, in unscaled units. */
 static const int32 kMouseDownHeight = 35;
 
 #define W kMouseDownWidth / 100
@@ -55,6 +88,13 @@ static const rgb_color kMouseButtonOutlineColor = {0xa0, 0xa0, 0xa0, 255};
 static const rgb_color kButtonPressedColor = {110, 110, 110, 110};
 
 
+/**
+ * @brief Returns the per-button x-offset row appropriate for a given button count.
+ *
+ * @param type  Configured number of buttons (1..6).
+ * @return      Pointer to a static row of cumulative x positions; falls back
+ *              to the 3-button row when @a type is out of range.
+ */
 static const int32*
 getButtonOffsets(int32 type)
 {
@@ -64,6 +104,12 @@ getButtonOffsets(int32 type)
 }
 
 
+/**
+ * @brief Converts a single-bit B_MOUSE_BUTTON mask into its 0-based index.
+ *
+ * @param mapping  Single-bit mask such as B_PRIMARY_MOUSE_BUTTON.
+ * @return         Zero-based index of the set bit, or 0 if @a mapping is 0.
+ */
 static uint32
 getMappingNumber(uint32 mapping)
 {
@@ -78,6 +124,16 @@ getMappingNumber(uint32 mapping)
 }
 
 
+/**
+ * @brief Constructs a MouseView observing the given settings model.
+ *
+ * Sets up event masks needed to render pressed-button feedback in real
+ * time and computes a font-derived scaling factor so the schematic
+ * mouse remains legible at unusual font sizes.
+ *
+ * @param settings  Settings model owned by the parent pane; must outlive
+ *                  this view.
+ */
 MouseView::MouseView(const MouseSettings& settings)
 	:
 	BView("Mouse", B_PULSE_NEEDED | B_WILL_DRAW),
@@ -91,11 +147,19 @@ MouseView::MouseView(const MouseSettings& settings)
 }
 
 
+/**
+ * @brief Destroys the view. The settings reference is not owned.
+ */
 MouseView::~MouseView()
 {
 }
 
 
+/**
+ * @brief Updates the rendered button count and triggers a redraw.
+ *
+ * @param type  Number of buttons to render (1..6).
+ */
 void
 MouseView::SetMouseType(int32 type)
 {
@@ -104,6 +168,9 @@ MouseView::SetMouseType(int32 type)
 }
 
 
+/**
+ * @brief Notifies the view that the underlying button mapping changed.
+ */
 void
 MouseView::MouseMapUpdated()
 {
@@ -111,6 +178,11 @@ MouseView::MouseMapUpdated()
 }
 
 
+/**
+ * @brief Pulls the current button count from the settings and applies it.
+ *
+ * @note Aborts with debugger() if the settings report more than 6 buttons.
+ */
 void
 MouseView::UpdateFromSettings()
 {
@@ -120,6 +192,12 @@ MouseView::UpdateFromSettings()
 }
 
 
+/**
+ * @brief Reports the natural drawing size of the schematic mouse.
+ *
+ * @param _width   Output for preferred width; may be NULL.
+ * @param _height  Output for preferred height; may be NULL.
+ */
 void
 MouseView::GetPreferredSize(float* _width, float* _height)
 {
@@ -130,6 +208,9 @@ MouseView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Initialises font metrics and the cached button outline picture.
+ */
 void
 MouseView::AttachedToWindow()
 {
@@ -145,6 +226,9 @@ MouseView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Clears the pressed-buttons state and redraws the button strip.
+ */
 void
 MouseView::MouseUp(BPoint)
 {
@@ -154,6 +238,15 @@ MouseView::MouseUp(BPoint)
 }
 
 
+/**
+ * @brief Handles a click on the schematic mouse.
+ *
+ * Updates the pressed-buttons state for visual feedback. If the click
+ * lands on a recognised button, opens a popup menu for choosing which
+ * logical mouse button (1..6) is mapped to that physical button.
+ *
+ * @param where  Click position in view coordinates.
+ */
 void
 MouseView::MouseDown(BPoint where)
 {
@@ -212,6 +305,15 @@ MouseView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Renders the schematic mouse, its buttons, and per-button labels.
+ *
+ * Draws the mouse body using radial gradients, strokes the outline,
+ * highlights any buttons currently held down, and centres the mapped
+ * logical-button number over each physical button.
+ *
+ * @param updateFrame  Region requested for redraw (currently unused).
+ */
 void
 MouseView::Draw(BRect updateFrame)
 {
@@ -315,6 +417,11 @@ MouseView::Draw(BRect updateFrame)
 }
 
 
+/**
+ * @brief Returns the rectangle containing the entire button strip.
+ *
+ * @return Frame in view coordinates, scaled by the font-derived factor.
+ */
 BRect
 MouseView::_ButtonsRect() const
 {
@@ -323,6 +430,13 @@ MouseView::_ButtonsRect() const
 }
 
 
+/**
+ * @brief Returns the rectangle for the @a index -th button in visual order.
+ *
+ * @param offsets  Cumulative x-offsets row from getButtonOffsets().
+ * @param index    Zero-based visual button index.
+ * @return         Frame in view coordinates, scaled by the font-derived factor.
+ */
 BRect
 MouseView::_ButtonRect(const int32* offsets, int index) const
 {
@@ -332,8 +446,16 @@ MouseView::_ButtonRect(const int32* offsets, int index) const
 }
 
 
-/** The buttons on a mouse are normally 1 (left), 2 (right), 3 (middle) so
- * we need to reorder them */
+/**
+ * @brief Maps a visual button index to its logical button index.
+ *
+ * The buttons on a mouse are normally 1 (left), 2 (right), 3 (middle)
+ * so we need to swap the indices for the second and third visual
+ * buttons when at least three buttons are present.
+ *
+ * @param i  Visual button index (left-to-right).
+ * @return   Corresponding logical button index used by mouse_map.
+ */
 int32
 MouseView::_ConvertFromVisualOrder(int32 i)
 {
@@ -353,6 +475,12 @@ MouseView::_ConvertFromVisualOrder(int32 i)
 }
 
 
+/**
+ * @brief Records a clipping picture matching the mouse-button outline.
+ *
+ * The recorded BPicture is used during Draw() to clip per-button
+ * highlighting and labels to the curved button area.
+ */
 void
 MouseView::_CreateButtonsPicture()
 {

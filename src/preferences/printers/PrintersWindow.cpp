@@ -1,10 +1,42 @@
 /*
- * Copyright 2001-2011, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Pfeiffer
- *		Philippe Houdoin
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2011, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Pfeiffer
+ *       Philippe Houdoin
+ */
+
+
+/**
+ * @file PrintersWindow.cpp
+ * @brief Main window of the Printers preference panel.
+ *
+ * Hosts two boxes: the printer list (with Add / Remove / Make default /
+ * Print test page actions) and the job list (with Cancel / Restart). Also
+ * defines the small TestPageWindow used to render a test page off-screen
+ * before spooling it.
+ *
+ * @see PrinterListView, JobListView, AddPrinterDialog
  */
 
 
@@ -40,6 +72,13 @@
 #define B_TRANSLATION_CONTEXT "PrintersWindow"
 
 
+/**
+ * @brief Off-screen window that renders and spools a single test page.
+ *
+ * The window is never shown to the user; it lives only long enough for
+ * the BPrintJob to drive the TestPageView through draw / spool / commit
+ * before quitting itself.
+ */
 class TestPageWindow : public BWindow {
 public:
 						TestPageWindow(BPrintJob* job, PrinterItem* printer);
@@ -52,6 +91,17 @@ private:
 };
 
 
+/**
+ * @brief Constructs the off-screen TestPageWindow.
+ *
+ * Positions the window far off-screen (-20000, -20000) so the BWindow
+ * machinery has somewhere to attach the view tree without flashing it on
+ * the user's display.
+ *
+ * @param job     BPrintJob configured by the caller; the window takes
+ *                ownership.
+ * @param printer Target printer used by TestPageView for status text.
+ */
 TestPageWindow::TestPageWindow(BPrintJob* job, PrinterItem* printer)
 	: BWindow(job->PaperRect().OffsetByCopy(-20000, -20000),
 		B_TRANSLATE("Test page"),
@@ -64,12 +114,22 @@ TestPageWindow::TestPageWindow(BPrintJob* job, PrinterItem* printer)
 }
 
 
+/** @brief Destructor; releases the held BPrintJob. */
 TestPageWindow::~TestPageWindow()
 {
 	delete fJob;
 }
 
 
+/**
+ * @brief Drives the BPrintJob through one page when kMsgPrintTestPage
+ *        arrives.
+ *
+ * Calls BeginJob -> DrawView -> SpoolPage -> CommitJob then quits the
+ * window so its destructor frees the print job.
+ *
+ * @param message Incoming BMessage; only kMsgPrintTestPage is handled.
+ */
 void
 TestPageWindow::MessageReceived(BMessage* message)
 {
@@ -95,6 +155,14 @@ TestPageWindow::MessageReceived(BMessage* message)
 // #pragma mark PrintersWindow main class
 
 
+/**
+ * @brief Constructs the main window using a persisted frame.
+ *
+ * Builds the GUI and ensures the saved position falls on a visible
+ * screen. Takes ownership of @a settings.
+ *
+ * @param settings Persisted screen settings; freed in the destructor.
+ */
 PrintersWindow::PrintersWindow(ScreenSettings* settings)
 	:
 	BWindow(settings->WindowFrame(), B_TRANSLATE_SYSTEM_NAME("Printers"),
@@ -108,12 +176,24 @@ PrintersWindow::PrintersWindow(ScreenSettings* settings)
 }
 
 
+/**
+ * @brief Destructor; persists the screen settings and frees them.
+ */
 PrintersWindow::~PrintersWindow()
 {
 	delete fSettings;
 }
 
 
+/**
+ * @brief Saves window geometry then quits the application.
+ *
+ * Writes the current Frame() into ScreenSettings before deferring to the
+ * BWindow base class. If the base allows the close, also tells the
+ * BApplication to quit.
+ *
+ * @return Whatever BWindow::QuitRequested() returns.
+ */
 bool
 PrintersWindow::QuitRequested()
 {
@@ -127,6 +207,16 @@ PrintersWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Dispatches messages from the printer and job lists and toolbar
+ *        buttons.
+ *
+ * Reacts to selection changes, add/remove/make-default actions, the test
+ * page button, cancel/restart job buttons, and B_PRINTER_CHANGED
+ * broadcasts forwarded by PrintersApp.
+ *
+ * @param msg Incoming BMessage.
+ */
 void
 PrintersWindow::MessageReceived(BMessage* msg)
 {
@@ -234,6 +324,15 @@ PrintersWindow::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Configures and submits a test page on @a printer.
+ *
+ * Calls BPrintJob::ConfigPage() so the user can pick paper / orientation
+ * settings, then forces single-copy / all-pages settings and hands the
+ * job to a TestPageWindow which drives it through to the spool folder.
+ *
+ * @param printer PrinterItem identifying the destination printer.
+ */
 void
 PrintersWindow::PrintTestPage(PrinterItem* printer)
 {
@@ -259,6 +358,16 @@ PrintersWindow::PrintTestPage(PrinterItem* printer)
 }
 
 
+/**
+ * @brief SpoolFolder callback invoked when a new job is queued.
+ *
+ * Adds the job to the visible JobListView when its printer is currently
+ * selected, refreshes the printer-row pending-jobs string, and updates
+ * the toolbar buttons.
+ *
+ * @param folder SpoolFolder reporting the change.
+ * @param job    Newly queued job.
+ */
 void
 PrintersWindow::AddJob(SpoolFolder* folder, Job* job)
 {
@@ -269,6 +378,13 @@ PrintersWindow::AddJob(SpoolFolder* folder, Job* job)
 }
 
 
+/**
+ * @brief SpoolFolder callback invoked when a job is removed from the
+ *        spool.
+ *
+ * @param folder SpoolFolder reporting the change.
+ * @param job    Job that disappeared.
+ */
 void
 PrintersWindow::RemoveJob(SpoolFolder* folder, Job* job)
 {
@@ -279,6 +395,12 @@ PrintersWindow::RemoveJob(SpoolFolder* folder, Job* job)
 }
 
 
+/**
+ * @brief SpoolFolder callback invoked when a job's attributes change.
+ *
+ * @param folder SpoolFolder reporting the change.
+ * @param job    Job whose attributes have changed.
+ */
 void
 PrintersWindow::UpdateJob(SpoolFolder* folder, Job* job)
 {
@@ -294,6 +416,13 @@ PrintersWindow::UpdateJob(SpoolFolder* folder, Job* job)
 // #pragma mark -
 
 
+/**
+ * @brief Builds the entire window layout.
+ *
+ * Creates the printers and jobs boxes, wires up buttons, and finally
+ * normalises the widths of the right-column action buttons so the two
+ * boxes align visually.
+ */
 void
 PrintersWindow::_BuildGUI()
 {
@@ -406,6 +535,13 @@ PrintersWindow::_BuildGUI()
 }
 
 
+/**
+ * @brief Returns true when @a printer matches the currently selected row.
+ *
+ * @param printer Candidate PrinterItem.
+ *
+ * @return True when the row is currently selected.
+ */
 bool
 PrintersWindow::_IsSelected(PrinterItem* printer)
 {
@@ -413,6 +549,13 @@ PrintersWindow::_IsSelected(PrinterItem* printer)
 }
 
 
+/**
+ * @brief Refreshes the enabled state of printer-related toolbar buttons.
+ *
+ * Remove is enabled only when a printer is selected and has no pending
+ * jobs; Make default is offered for non-active printers; Print test page
+ * is offered whenever a printer is selected.
+ */
 void
 PrintersWindow::_UpdatePrinterButtons()
 {
@@ -423,6 +566,10 @@ PrintersWindow::_UpdatePrinterButtons()
 }
 
 
+/**
+ * @brief Refreshes the enabled state of the Cancel / Restart buttons
+ *        based on the currently selected job.
+ */
 void
 PrintersWindow::_UpdateJobButtons()
 {

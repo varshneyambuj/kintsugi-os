@@ -1,9 +1,41 @@
 /*
- * Copyright 2001-2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Pfeiffer
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Pfeiffer
+ */
+
+
+/**
+ * @file PrinterListView.cpp
+ * @brief BListView and row class showing every installed printer.
+ *
+ * PrinterListView watches the user printers directory for changes via a
+ * FolderWatcher and rebuilds itself whenever printer definition nodes are
+ * added, removed or modified. Each row is a PrinterItem with the printer's
+ * name, driver, transport and pending-job summary.
+ *
+ * @see SpoolFolder, FolderWatcher
  */
 
 
@@ -36,6 +68,11 @@
 // #pragma mark -- PrinterListView
 
 
+/**
+ * @brief Constructs an empty single-selection printer list view.
+ *
+ * @param frame Initial layout frame.
+ */
 PrinterListView::PrinterListView(BRect frame)
 	: Inherited(frame, "printers_list", B_SINGLE_SELECTION_LIST, B_FOLLOW_ALL,
 		B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE | B_FULL_UPDATE_ON_RESIZE),
@@ -47,6 +84,9 @@ PrinterListView::PrinterListView(BRect frame)
 }
 
 
+/**
+ * @brief Destructor; deletes every owned PrinterItem.
+ */
 PrinterListView::~PrinterListView()
 {
 	while (!IsEmpty())
@@ -54,6 +94,13 @@ PrinterListView::~PrinterListView()
 }
 
 
+/**
+ * @brief Rebuilds the list from the user printers directory.
+ *
+ * Clears existing entries and walks every node under
+ * B_USER_PRINTERS_DIRECTORY adding qualifying printer definitions. Called
+ * during initial population and after major folder events.
+ */
 void
 PrinterListView::BuildPrinterList()
 {
@@ -80,6 +127,14 @@ PrinterListView::BuildPrinterList()
 }
 
 
+/**
+ * @brief Sets up message routing and starts watching the printers
+ *        directory.
+ *
+ * Hooks the selection and invocation messages, creates the printers
+ * directory if missing, allocates the FolderWatcher, populates the list,
+ * and selects whichever row corresponds to the currently active printer.
+ */
 void
 PrinterListView::AttachedToWindow()
 {
@@ -119,6 +174,11 @@ PrinterListView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Releases the folder watcher when the window closes.
+ *
+ * @return Always true; the list view does not block closing.
+ */
 bool
 PrinterListView::QuitRequested()
 {
@@ -127,6 +187,13 @@ PrinterListView::QuitRequested()
 }
 
 
+/**
+ * @brief Refreshes a single row after its underlying state changed.
+ *
+ * Rebuilds its pending-job string and asks the list to redraw it.
+ *
+ * @param item Row to refresh; must currently be in this list.
+ */
 void
 PrinterListView::UpdateItem(PrinterItem* item)
 {
@@ -135,6 +202,12 @@ PrinterListView::UpdateItem(PrinterItem* item)
 }
 
 
+/**
+ * @brief Returns the row tagged as the active printer.
+ *
+ * @return PrinterItem corresponding to the system default, or NULL when
+ *         none has been identified yet.
+ */
 PrinterItem*
 PrinterListView::ActivePrinter() const
 {
@@ -142,6 +215,11 @@ PrinterListView::ActivePrinter() const
 }
 
 
+/**
+ * @brief Updates the cached pointer to the active printer row.
+ *
+ * @param item PrinterItem for the new active printer; may be NULL.
+ */
 void
 PrinterListView::SetActivePrinter(PrinterItem* item)
 {
@@ -149,6 +227,11 @@ PrinterListView::SetActivePrinter(PrinterItem* item)
 }
 
 
+/**
+ * @brief Returns the currently selected printer row.
+ *
+ * @return Selected PrinterItem, or NULL if nothing is selected.
+ */
 PrinterItem*
 PrinterListView::SelectedItem() const
 {
@@ -158,6 +241,12 @@ PrinterListView::SelectedItem() const
 
 // FolderListener interface
 
+/**
+ * @brief FolderListener callback for new printer entries.
+ *
+ * @param node  Node reference of the newly created directory.
+ * @param entry Entry reference (currently unused).
+ */
 void
 PrinterListView::EntryCreated(node_ref* node, entry_ref* entry)
 {
@@ -166,6 +255,11 @@ PrinterListView::EntryCreated(node_ref* node, entry_ref* entry)
 }
 
 
+/**
+ * @brief FolderListener callback for removed printer entries.
+ *
+ * @param node Node reference of the directory that disappeared.
+ */
 void
 PrinterListView::EntryRemoved(node_ref* node)
 {
@@ -180,6 +274,14 @@ PrinterListView::EntryRemoved(node_ref* node)
 }
 
 
+/**
+ * @brief FolderListener callback for printer attribute changes.
+ *
+ * Re-evaluates the directory in case the change made a previously
+ * non-printer node qualify (or vice versa).
+ *
+ * @param node Node reference whose attributes changed.
+ */
 void
 PrinterListView::AttributeChanged(node_ref* node)
 {
@@ -190,6 +292,16 @@ PrinterListView::AttributeChanged(node_ref* node)
 
 // private methods
 
+/**
+ * @brief Adds @a printer to the list if it is a printer-definition node.
+ *
+ * Checks the directory's MIME type, state attribute, and ensures it is not
+ * already represented before allocating a new PrinterItem.
+ *
+ * @param printer         Candidate directory.
+ * @param calculateLayout When true, re-run column-width layout after
+ *                        adding.
+ */
 void
 PrinterListView::_AddPrinter(BDirectory& printer, bool calculateLayout)
 {
@@ -217,6 +329,13 @@ PrinterListView::_AddPrinter(BDirectory& printer, bool calculateLayout)
 }
 
 
+/**
+ * @brief Recomputes the maximum left and right column widths.
+ *
+ * Walks every PrinterItem to find the widest name/driver and pending-jobs
+ * /transport strings, stores the results in fLayoutData, and asks for a
+ * redraw so the new widths take effect.
+ */
 void
 PrinterListView::_LayoutPrinterItems()
 {
@@ -240,6 +359,13 @@ PrinterListView::_LayoutPrinterItems()
 }
 
 
+/**
+ * @brief Looks up the row whose underlying directory matches @a node.
+ *
+ * @param node Node reference to compare against each item.
+ *
+ * @return Matching PrinterItem or NULL if none is present.
+ */
 PrinterItem*
 PrinterListView::_FindItem(node_ref* node) const
 {
@@ -257,10 +383,25 @@ PrinterListView::_FindItem(node_ref* node) const
 // #pragma mark -- PrinterItem
 
 
+/** @brief Cached generic printer icon shared by every PrinterItem. */
 BBitmap* PrinterItem::sIcon = NULL;
+/** @brief Cached printer icon with a check-mark overlay used for the
+    active printer row. */
 BBitmap* PrinterItem::sSelectedIcon = NULL;
 
 
+/**
+ * @brief Constructs a row tied to a printer-definition directory.
+ *
+ * Lazily creates the shared sIcon and sSelectedIcon bitmaps the first
+ * time, reads the printer name, comments, transport, address and driver
+ * attributes off @a node, then creates a SpoolFolder watcher rooted at
+ * the printer's spool directory.
+ *
+ * @param window     Owning PrintersWindow (for spool-folder callbacks).
+ * @param node       Printer-definition directory.
+ * @param layoutData Shared layout struct holding column-width caches.
+ */
 PrinterItem::PrinterItem(PrintersWindow* window, const BDirectory& node,
 		PrinterListLayoutData& layoutData)
 	: BListItem(0, false),
@@ -321,12 +462,24 @@ PrinterItem::PrinterItem(PrintersWindow* window, const BDirectory& node,
 }
 
 
+/**
+ * @brief Destructor; releases the SpoolFolder.
+ */
 PrinterItem::~PrinterItem()
 {
 	delete fFolder;
 }
 
 
+/**
+ * @brief Reports the widths needed for the left and right text columns.
+ *
+ * Used by PrinterListView::_LayoutPrinterItems() to keep all rows aligned.
+ *
+ * @param view        View used for font metrics.
+ * @param leftColumn  Output: maximum width of the left-hand columns.
+ * @param rightColumn Output: maximum width of the right-hand columns.
+ */
 void
 PrinterItem::GetColumnWidth(BView* view, float& leftColumn, float& rightColumn)
 {
@@ -342,6 +495,13 @@ PrinterItem::GetColumnWidth(BView* view, float& leftColumn, float& rightColumn)
 }
 
 
+/**
+ * @brief Computes row height from font metrics, leaving room for three
+ *        text lines plus padding.
+ *
+ * @param owner View that owns the row.
+ * @param font  Font supplying the metrics.
+ */
 void
 PrinterItem::Update(BView *owner, const BFont *font)
 {
@@ -354,6 +514,16 @@ PrinterItem::Update(BView *owner, const BFont *font)
 }
 
 
+/**
+ * @brief Asks print_server to delete the printer this row represents.
+ *
+ * Sends a B_DELETE_PROPERTY scripting message specifying the row's index
+ * inside @a view.
+ *
+ * @param view List view used to compute the printer's index.
+ *
+ * @return True when print_server acknowledged the request, false otherwise.
+ */
 bool PrinterItem::Remove(BListView* view)
 {
 	BMessenger msgr;
@@ -369,6 +539,17 @@ bool PrinterItem::Remove(BListView* view)
 }
 
 
+/**
+ * @brief Renders the printer row.
+ *
+ * Paints the selection background, draws the printer icon (with a
+ * check-mark overlay when this is the active printer), and lays out three
+ * lines of text: name + pending jobs, driver + comments, and transport
+ * details.
+ *
+ * @param owner    BListView doing the drawing.
+ * @param complete Forwarded by the base class; unused here.
+ */
 void
 PrinterItem::DrawItem(BView *owner, BRect /*bounds*/, bool complete)
 {
@@ -478,6 +659,12 @@ PrinterItem::DrawItem(BView *owner, BRect /*bounds*/, bool complete)
 }
 
 
+/**
+ * @brief Returns true when this row represents the system default
+ *        printer.
+ *
+ * @return True if the row's name matches print_server's active printer.
+ */
 bool
 PrinterItem::IsActivePrinter() const
 {
@@ -485,6 +672,12 @@ PrinterItem::IsActivePrinter() const
 }
 
 
+/**
+ * @brief Returns whether the row has any spooled jobs.
+ *
+ * @return True when at least one job exists in the printer's spool
+ *         folder.
+ */
 bool
 PrinterItem::HasPendingJobs() const
 {
@@ -492,6 +685,12 @@ PrinterItem::HasPendingJobs() const
 }
 
 
+/**
+ * @brief Returns the SpoolFolder backing this printer.
+ *
+ * @return Pointer owned by this item, or NULL if the spool directory
+ *         could not be opened.
+ */
 SpoolFolder*
 PrinterItem::Folder() const
 {
@@ -499,6 +698,12 @@ PrinterItem::Folder() const
 }
 
 
+/**
+ * @brief Returns the BDirectory wrapping this printer's definition node.
+ *
+ * @return Pointer to the cached BDirectory; valid for the lifetime of the
+ *         item.
+ */
 BDirectory*
 PrinterItem::Node()
 {
@@ -506,6 +711,12 @@ PrinterItem::Node()
 }
 
 
+/**
+ * @brief Re-counts spooled jobs and updates the cached display string.
+ *
+ * The string uses a localized BStringFormat plural pattern so the row
+ * can show "No pending jobs", "1 pending job", or "N pending jobs".
+ */
 void
 PrinterItem::UpdatePendingJobs()
 {
@@ -522,6 +733,13 @@ PrinterItem::UpdatePendingJobs()
 }
 
 
+/**
+ * @brief Reads a string attribute from the printer definition node.
+ *
+ * @param propName  Attribute name to read.
+ * @param outString Output BString receiving the value (untouched on
+ *                  failure).
+ */
 void
 PrinterItem::_GetStringProperty(const char* propName, BString& outString)
 {
@@ -529,6 +747,17 @@ PrinterItem::_GetStringProperty(const char* propName, BString& outString)
 }
 
 
+/**
+ * @brief Loads and rasterises a vector icon resource from the
+ *        application's resources.
+ *
+ * @param resourceName Name of the B_VECTOR_ICON_TYPE resource.
+ * @param iconSize     Side length, in pixels, of the requested raster
+ *                     bitmap.
+ *
+ * @return Newly allocated BBitmap (caller takes ownership) or NULL when
+ *         the resource is missing or rasterisation fails.
+ */
 BBitmap*
 PrinterItem::_LoadVectorIcon(const char* resourceName, float iconSize)
 {

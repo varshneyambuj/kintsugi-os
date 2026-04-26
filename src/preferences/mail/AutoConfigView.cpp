@@ -1,7 +1,34 @@
 /*
- * Copyright 2007-2015, Haiku, Inc. All rights reserved.
- * Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2015, Haiku, Inc. All rights reserved.
+ *   Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file AutoConfigView.cpp
+ * @brief Implements the two wizard pages used by the new-account flow:
+ *        AutoConfigView for the identity form and ServerSettingsView for
+ *        per-protocol server review.
  */
 
 
@@ -28,6 +55,16 @@
 #define B_TRANSLATION_CONTEXT "E-Mail"
 
 
+/**
+ * @brief Constructs the identity-collection page and lays out its text
+ *        controls in a two-column grid.
+ *
+ * Pre-fills the real-name field from the local @c passwd entry so that
+ * users with a populated GECOS field do not have to retype it.
+ *
+ * @param config  Reference to the wizard-owned AutoConfig instance, kept
+ *                so the view can re-use its cached database lookups.
+ */
 AutoConfigView::AutoConfigView(AutoConfig &config)
 	:
 	BBox("auto config"),
@@ -82,6 +119,11 @@ AutoConfigView::AutoConfigView(AutoConfig &config)
 }
 
 
+/**
+ * @brief Hooks the view into its window: tightens its height to fit, adopts
+ *        parent colors, retargets the e-mail field to this view, and gives
+ *        it focus.
+ */
 void
 AutoConfigView::AttachedToWindow()
 {
@@ -97,6 +139,16 @@ AutoConfigView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles control-change notifications from the e-mail field.
+ *
+ * On every edit it proposes a login name (if the user has not entered one)
+ * and copies the e-mail into the account-name slot when that field is
+ * still empty.
+ *
+ * @param msg  Incoming BMessage; the only one handled is
+ *             @c kEMailChangedMsg.
+ */
 void
 AutoConfigView::MessageReceived(BMessage *msg)
 {
@@ -121,6 +173,18 @@ AutoConfigView::MessageReceived(BMessage *msg)
 }
 
 
+/**
+ * @brief Gathers the user-entered fields into @a info for the next wizard
+ *        step.
+ *
+ * Determines whether the user picked POP or IMAP based on the protocol
+ * menu label and copies the SMTP add-on ref located at construction time.
+ *
+ * @param info  Destination account_info; filled even when no protocol is
+ *              selected.
+ * @return @c true if a marked inbound protocol was found, @c false if the
+ *         menu was empty (caller should report an error).
+ */
 bool
 AutoConfigView::GetBasicAccountInfo(account_info &info)
 {
@@ -151,6 +215,17 @@ AutoConfigView::GetBasicAccountInfo(account_info &info)
 }
 
 
+/**
+ * @brief Builds the inbound-protocol pop-up menu by scanning the user and
+ *        system inbound add-on directories.
+ *
+ * If an "IMAP" entry is found it is marked as the default; otherwise the
+ * last add-on encountered remains marked.
+ *
+ * @return Newly allocated BPopUpMenu owned by the caller (typically
+ *         attached to a BMenuField).
+ * @todo Switch to BPathFinder instead of hand-rolled directory traversal.
+ */
 BPopUpMenu*
 AutoConfigView::_SetupProtocolMenu()
 {
@@ -191,6 +266,19 @@ AutoConfigView::_SetupProtocolMenu()
 }
 
 
+/**
+ * @brief Locates the SMTP outbound-protocol add-on and stores a ref to it
+ *        in @a ref.
+ *
+ * Prefers the user-specific add-ons directory; falls back to the system
+ * add-ons directory.
+ *
+ * @param ref  Output entry_ref; only meaningful on @c B_OK.
+ * @retval B_OK              SMTP add-on found in one of the searched
+ *                           directories.
+ * @retval B_ENTRY_NOT_FOUND No SMTP add-on installed.
+ * @retval B_ERROR           Could not resolve the requested directory.
+ */
 status_t
 AutoConfigView::_GetSMTPAddOnRef(entry_ref *ref)
 {
@@ -218,6 +306,14 @@ AutoConfigView::_GetSMTPAddOnRef(entry_ref *ref)
 }
 
 
+/**
+ * @brief Returns the local-part of an e-mail address (everything before the
+ *        last @c '@').
+ *
+ * @param email  Full e-mail address; must contain at least one @c '@'.
+ * @return BString holding the local-part. Behavior is undefined if @a email
+ *         has no @c '@'.
+ */
 BString
 AutoConfigView::_ExtractLocalPart(const char* email)
 {
@@ -226,6 +322,13 @@ AutoConfigView::_ExtractLocalPart(const char* email)
 }
 
 
+/**
+ * @brief Pre-fills the login-name field based on the provider's preferred
+ *        username pattern.
+ *
+ * Falls back to using the full e-mail address when AutoConfig has no entry
+ * for the domain.
+ */
 void
 AutoConfigView::_ProposeUsername()
 {
@@ -254,6 +357,17 @@ AutoConfigView::_ProposeUsername()
 }
 
 
+/**
+ * @brief Performs a coarse syntactic check that @a email looks like an
+ *        e-mail address.
+ *
+ * Requires both an @c '@' and at least one dot in the domain portion. This
+ * is intentionally permissive; the daemon performs the real validation.
+ *
+ * @param email  Address to validate.
+ * @return @c true if both required separators are present, @c false
+ *         otherwise.
+ */
 bool
 AutoConfigView::IsValidMailAddress(BString email)
 {
@@ -271,6 +385,16 @@ AutoConfigView::IsValidMailAddress(BString email)
 // #pragma mark -
 
 
+/**
+ * @brief Builds the second wizard page from the populated provider_info
+ *        in @a info.
+ *
+ * Lays out two BBoxes (incoming and outgoing) each containing a server
+ * hostname text control plus the protocol-specific authentication and
+ * encryption menus pulled in from the chosen protocol add-ons.
+ *
+ * @param info  Populated account_info from the first wizard page.
+ */
 ServerSettingsView::ServerSettingsView(const account_info &info)
 	:
 	BGroupView("server", B_VERTICAL),
@@ -403,6 +527,13 @@ ServerSettingsView::ServerSettingsView(const account_info &info)
 }
 
 
+/**
+ * @brief Detaches the protocol-supplied auth/encryption menus before
+ *        unloading their backing add-on.
+ *
+ * @note The menus are removed manually because their code lives in the
+ *       loaded image and is unmapped on @c unload_add_on().
+ */
 ServerSettingsView::~ServerSettingsView()
 {
 	// Remove manually, as their code may be located in an add-on
@@ -414,6 +545,15 @@ ServerSettingsView::~ServerSettingsView()
 }
 
 
+/**
+ * @brief Copies the user-edited server hostnames and menu selections back
+ *        into @a info.
+ *
+ * Also calls _DetectMenuChanges() to synthesise a kServerChangedMsg if the
+ * user toggled any auth/encryption value while on this page.
+ *
+ * @param info  account_info to update in place.
+ */
 void
 ServerSettingsView::GetServerInfo(account_info& info)
 {
@@ -465,6 +605,11 @@ ServerSettingsView::GetServerInfo(account_info& info)
 }
 
 
+/**
+ * @brief Posts @c kServerChangedMsg to the parent window when any of the
+ *        auth or encryption menus differ from the values they held when
+ *        the page was first shown.
+ */
 void
 ServerSettingsView::_DetectMenuChanges()
 {
@@ -481,6 +626,16 @@ ServerSettingsView::_DetectMenuChanges()
 }
 
 
+/**
+ * @brief Helper that tests whether the currently marked item of @a field
+ *        differs from @a originalItem.
+ *
+ * @param field         Menu field to inspect; may be @c NULL (returns
+ *                      false).
+ * @param originalItem  The item that was marked when the page opened.
+ * @return @c true if the marked item changed; @c false if @a field is
+ *         @c NULL or unchanged.
+ */
 bool
 ServerSettingsView::_HasMarkedChanged(BMenuField* field,
 	BMenuItem* originalItem)
@@ -494,6 +649,19 @@ ServerSettingsView::_HasMarkedChanged(BMenuField* field,
 }
 
 
+/**
+ * @brief Extracts the @c "auth_method" and @c "flavor" BMenuField widgets
+ *        from a protocol add-on's settings view.
+ *
+ * @param protocol   entry_ref of the protocol add-on (currently unused
+ *                   pending the upstream rework noted inline).
+ * @param authField  Output: pointer to the extracted auth-method menu
+ *                   field; @c NULL if missing.
+ * @param sslField   Output: pointer to the extracted SSL/TLS flavor menu
+ *                   field; @c NULL if missing.
+ * @todo Wire this back to a real CreateConfigView call once the protocol
+ *       add-on API is finalised.
+ */
 void
 ServerSettingsView::_GetAuthEncrMenu(entry_ref protocol,
 	BMenuField*& authField, BMenuField*& sslField)

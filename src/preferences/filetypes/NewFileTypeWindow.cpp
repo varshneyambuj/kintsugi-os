@@ -1,6 +1,33 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file NewFileTypeWindow.cpp
+ * @brief Implementation of the modal "New file type" dialog. Builds a
+ *        new MIME identifier from a chosen super-type and a user-entered
+ *        subtype name, validates it, and installs it into the system MIME
+ *        database via BMimeType::Install().
  */
 
 
@@ -30,14 +57,31 @@
 #define B_TRANSLATION_CONTEXT "New File Type Window"
 
 
+/** @brief A normal super-type item was selected in the pop-up menu. */
 const uint32 kMsgSupertypeChosen = 'sptc';
+/** @brief The "Add new group" item was selected. */
 const uint32 kMsgNewSupertypeChosen = 'nstc';
 
+/** @brief The internal-name text control was edited. */
 const uint32 kMsgNameUpdated = 'nmup';
 
+/** @brief The user pressed the "Add type" / "Add group" button. */
 const uint32 kMsgAddType = 'atyp';
 
 
+/**
+ * @brief Constructs the modal dialog and pre-selects the super-type
+ *        closest to @a currentType.
+ *
+ * Populates the super-type pop-up from BMimeType::GetInstalledSupertypes,
+ * adds the special "Add new group" entry, and configures the internal
+ * name text control to filter out characters disallowed in MIME types.
+ *
+ * @param target       FileTypesWindow that should learn about a newly
+ *                     installed type via kMsgSelectNewType.
+ * @param currentType  Currently selected MIME type used to bias the
+ *                     initial super-type choice. May be NULL.
+ */
 NewFileTypeWindow::NewFileTypeWindow(FileTypesWindow* target,
 	const char* currentType)
 	:
@@ -121,11 +165,25 @@ NewFileTypeWindow::NewFileTypeWindow(FileTypesWindow* target,
 }
 
 
+/**
+ * @brief Destructor; layout-managed children are released by BWindow.
+ */
 NewFileTypeWindow::~NewFileTypeWindow()
 {
 }
 
 
+/**
+ * @brief Handles dialog interactions: super-type changes, live name
+ *        validation, and the final "Add" action that installs the new
+ *        MIME type.
+ *
+ * On success a kMsgSelectNewType message carrying the new type's
+ * identifier is sent to @a fTarget so the parent window can highlight
+ * the freshly installed entry.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 NewFileTypeWindow::MessageReceived(BMessage* message)
 {
@@ -196,6 +254,12 @@ NewFileTypeWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Notifies the owning FileTypesWindow that this dialog is going
+ *        away, then permits the close.
+ *
+ * @return Always true.
+ */
 bool
 NewFileTypeWindow::QuitRequested()
 {

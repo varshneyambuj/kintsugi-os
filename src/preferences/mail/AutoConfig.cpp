@@ -1,3 +1,41 @@
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2011, Haiku, Inc. All rights reserved.
+ *   Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file AutoConfig.cpp
+ * @brief Implements AutoConfig, the provider lookup helper used by the
+ *        Mail preferences auto-configuration wizard.
+ *
+ * Resolution proceeds in three stages: a local on-disk provider database
+ * (under @c B_USER_SETTINGS_DIRECTORY/Mail/ProviderInfo), an MX-record
+ * DNS lookup via DNSQuery, and finally a name heuristic that prepends
+ * "mail." to the domain.
+ */
+
+
 #include "AutoConfig.h"
 #include "DNSQuery.h"
 
@@ -9,6 +47,23 @@
 #include <stdio.h>
 
 
+/**
+ * @brief Populates @a info for the given e-mail address using the layered
+ *        lookup strategy.
+ *
+ * The local provider database is consulted first. If that misses, an MX
+ * record query is attempted; if that fails as well, the server names are
+ * guessed from the domain part. The function only returns @c B_OK when the
+ * local database matched; otherwise it returns @c B_ENTRY_NOT_FOUND even
+ * though @a info has been filled with a best-effort guess.
+ *
+ * @param email  Full e-mail address whose provider should be resolved.
+ * @param info   Destination structure populated with server names, auth
+ *               types, and SSL flags. Must not be @c NULL.
+ * @retval B_OK              The provider database supplied an exact match.
+ * @retval B_ENTRY_NOT_FOUND No database hit; @a info contains MX or guessed
+ *                           values.
+ */
 status_t
 AutoConfig::GetInfoFromMailAddress(const char* email, provider_info *info)
 {
@@ -28,6 +83,18 @@ AutoConfig::GetInfoFromMailAddress(const char* email, provider_info *info)
 }
 
 
+/**
+ * @brief Resolves provider hostnames from the highest-priority MX record of
+ *        @a provider.
+ *
+ * The first MX record's serverName is used for IMAP, POP, and SMTP entries.
+ * Auth and username pattern fields are reset to their default zero values.
+ *
+ * @param provider  Bare domain (the part after the @c '@' in an address).
+ * @param info      Destination provider_info; must not be @c NULL.
+ * @retval B_OK     One or more MX records were retrieved successfully.
+ * @retval B_ERROR  No DNS server reachable or no MX records returned.
+ */
 status_t
 AutoConfig::GetMXRecord(const char* provider, provider_info *info)
 {
@@ -52,6 +119,14 @@ AutoConfig::GetMXRecord(const char* provider, provider_info *info)
 }
 
 
+/**
+ * @brief Last-ditch heuristic that fills the server fields with
+ *        @c "mail.<provider>".
+ *
+ * @param provider  Bare domain to prefix with @c "mail.".
+ * @param info      Destination provider_info; must not be @c NULL.
+ * @return Always @c B_OK.
+ */
 status_t
 AutoConfig::GuessServerName(const char* provider, provider_info* info)
 {
@@ -69,6 +144,11 @@ AutoConfig::GuessServerName(const char* provider, provider_info* info)
 }
 
 
+/**
+ * @brief Debug helper that dumps the contents of @a pInfo to stdout.
+ *
+ * @param pInfo  Provider record to print; must not be @c NULL.
+ */
 void
 AutoConfig::PrintProviderInfo(provider_info* pInfo)
 {
@@ -84,6 +164,13 @@ AutoConfig::PrintProviderInfo(provider_info* pInfo)
 }
 
 
+/**
+ * @brief Extracts the domain portion that follows the last @c '@' in
+ *        @a email.
+ *
+ * @param email  Full e-mail address.
+ * @return The domain substring; an empty BString if no @c '@' is present.
+ */
 BString
 AutoConfig::ExtractProvider(const char* email)
 {
@@ -96,6 +183,17 @@ AutoConfig::ExtractProvider(const char* email)
 
 
 
+/**
+ * @brief Looks up @a provider as a file in the user-settings provider
+ *        database and parses its BFS attributes into @a info.
+ *
+ * @param provider  Bare domain used as the filename in
+ *                  @c B_USER_SETTINGS_DIRECTORY/Mail/ProviderInfo.
+ * @param info      Destination provider_info; must not be @c NULL.
+ * @retval B_OK              File present and at least one attribute read.
+ * @retval B_ENTRY_NOT_FOUND No matching provider file exists.
+ * @retval B_ERROR           File present but no recognisable attributes.
+ */
 status_t
 AutoConfig::LoadProviderInfo(const BString &provider, provider_info* info)
 {
@@ -118,6 +216,18 @@ AutoConfig::LoadProviderInfo(const BString &provider, provider_info* info)
 }
 
 
+/**
+ * @brief Reads the per-provider BFS attributes off @a node and copies them
+ *        into @a info.
+ *
+ * Each attribute is optional; the function records whether at least one
+ * recognisable value was found.
+ *
+ * @param node  Open BNode for the provider file.
+ * @param info  Destination provider_info; must not be @c NULL.
+ * @return @c true if any attribute was successfully read, @c false if the
+ *         node carried no provider attributes.
+ */
 bool
 AutoConfig::ReadProviderInfo(BNode *node, provider_info* info)
 {

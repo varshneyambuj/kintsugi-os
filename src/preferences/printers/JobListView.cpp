@@ -1,9 +1,37 @@
 /*
- * Copyright 2001-2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Pfeiffer
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Pfeiffer
+ */
+
+
+/**
+ * @file JobListView.cpp
+ * @brief BListView-derived widgets for displaying spooled print jobs.
+ *
+ * Defines JobListView (the list itself, watching a SpoolFolder) and
+ * JobItem (a per-row drawable with name, status, page count and size).
  */
 
 
@@ -33,6 +61,11 @@
 // #pragma mark -- JobListView
 
 
+/**
+ * @brief Constructs an empty single-selection job list view.
+ *
+ * @param frame Initial layout frame.
+ */
 JobListView::JobListView(BRect frame)
 	:
 	Inherited(frame, "jobs_list", B_SINGLE_SELECTION_LIST, B_FOLLOW_ALL,
@@ -41,6 +74,9 @@ JobListView::JobListView(BRect frame)
 }
 
 
+/**
+ * @brief Destructor; deletes every owned JobItem.
+ */
 JobListView::~JobListView()
 {
 	while (!IsEmpty())
@@ -48,6 +84,12 @@ JobListView::~JobListView()
 }
 
 
+/**
+ * @brief Attaches selection routing once the view is in a window.
+ *
+ * Sets the selection message to kMsgJobSelected and points it at the
+ * containing window so PrintersWindow can update its buttons.
+ */
 void
 JobListView::AttachedToWindow()
 {
@@ -58,6 +100,14 @@ JobListView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Replaces the contents of the list with jobs from @a folder.
+ *
+ * Clears the existing items, then adds one JobItem per Job in @a folder.
+ * Passing NULL just clears the list.
+ *
+ * @param folder Spool folder to mirror, or NULL to clear.
+ */
 void
 JobListView::SetSpoolFolder(SpoolFolder* folder)
 {
@@ -74,6 +124,13 @@ JobListView::SetSpoolFolder(SpoolFolder* folder)
 }
 
 
+/**
+ * @brief Looks up the JobItem that wraps @a job.
+ *
+ * @param job Job to search for.
+ *
+ * @return Matching JobItem or NULL if no row owns @a job.
+ */
 JobItem*
 JobListView::FindJob(Job* job) const
 {
@@ -87,6 +144,11 @@ JobListView::FindJob(Job* job) const
 }
 
 
+/**
+ * @brief Returns the currently selected JobItem.
+ *
+ * @return Selected JobItem, or NULL if nothing is selected.
+ */
 JobItem*
 JobListView::SelectedItem() const
 {
@@ -94,6 +156,11 @@ JobListView::SelectedItem() const
 }
 
 
+/**
+ * @brief Appends a JobItem wrapping @a job and redraws the view.
+ *
+ * @param job Job to display; ownership stays with the SpoolFolder.
+ */
 void
 JobListView::AddJob(Job* job)
 {
@@ -102,6 +169,11 @@ JobListView::AddJob(Job* job)
 }
 
 
+/**
+ * @brief Removes the row that wraps @a job.
+ *
+ * @param job Job whose row should be removed; no-op if not present.
+ */
 void
 JobListView::RemoveJob(Job* job)
 {
@@ -114,6 +186,11 @@ JobListView::RemoveJob(Job* job)
 }
 
 
+/**
+ * @brief Refreshes the row associated with @a job after metadata changes.
+ *
+ * @param job Job whose attributes have changed; no-op if not in the list.
+ */
 void
 JobListView::UpdateJob(Job* job)
 {
@@ -125,6 +202,12 @@ JobListView::UpdateJob(Job* job)
 }
 
 
+/**
+ * @brief Re-queues the currently selected job if it failed.
+ *
+ * Sets the job's status back to kWaiting; the SpoolFolder watcher will
+ * pick up the resulting attribute change and notify the UI.
+ */
 void
 JobListView::RestartJob()
 {
@@ -137,6 +220,14 @@ JobListView::RestartJob()
 }
 
 
+/**
+ * @brief Cancels the currently selected job if it is not already
+ *        processing.
+ *
+ * Marks the job as failed and removes it from the spool. Jobs in the
+ * kProcessing state are left alone because print_server is actively using
+ * them.
+ */
 void
 JobListView::CancelJob()
 {
@@ -151,6 +242,15 @@ JobListView::CancelJob()
 // #pragma mark -- JobItem
 
 
+/**
+ * @brief Constructs a row tied to @a job.
+ *
+ * Acquires a reference on @a job so the SpoolFolder cannot delete it
+ * underneath us, then calls Update() to read attributes off the spool
+ * file.
+ *
+ * @param job Job to display; reference counted by this item.
+ */
 JobItem::JobItem(Job* job)
 	:
 	BListItem(0, false),
@@ -162,6 +262,10 @@ JobItem::JobItem(Job* job)
 }
 
 
+/**
+ * @brief Destructor; releases the held Job reference and frees the cached
+ *        icon.
+ */
 JobItem::~JobItem()
 {
 	fJob->Release();
@@ -169,6 +273,13 @@ JobItem::~JobItem()
 }
 
 
+/**
+ * @brief Refreshes cached display strings from the underlying spool file.
+ *
+ * Reads the job description, MIME type, page count, byte size and status
+ * attributes; lazily fetches the application icon corresponding to the
+ * MIME type the first time it is needed.
+ */
 void
 JobItem::Update()
 {
@@ -241,6 +352,14 @@ JobItem::Update()
 }
 
 
+/**
+ * @brief Computes row height from the owning view's font metrics.
+ *
+ * Reserves space for two lines plus padding.
+ *
+ * @param owner View whose font metrics drive the calculation.
+ * @param font  Active font used to compute line height.
+ */
 void
 JobItem::Update(BView *owner, const BFont *font)
 {
@@ -253,6 +372,17 @@ JobItem::Update(BView *owner, const BFont *font)
 }
 
 
+/**
+ * @brief Renders the row inside @a owner.
+ *
+ * Paints the selection background, optional MIME-type icon, then the job
+ * description and status on the left and the page count / byte size on the
+ * right. Strings that overflow are middle-truncated.
+ *
+ * @param owner    BListView doing the drawing.
+ * @param complete When true redraw the entire row; honoured by the base
+ *                 list view.
+ */
 void
 JobItem::DrawItem(BView *owner, BRect, bool complete)
 {

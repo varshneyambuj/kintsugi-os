@@ -1,11 +1,43 @@
 /*
- * Copyright 2004-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, <axeld@pinc-software.de>
- *		Alexander von Gluck, kallisti5@unixzen.com
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, <axeld@pinc-software.de>
+ *       Alexander von Gluck, kallisti5@unixzen.com
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file InterfaceView.cpp
+ * @brief Implementation of InterfaceView, the live status / control pane
+ *        for a single network interface.
+ *
+ * Reads the interface flags, hardware address, media type, byte counters,
+ * and (for wireless interfaces) the list of nearby networks. Hosts the
+ * Disable/Enable toggle and Renegotiate button. The wireless menu is
+ * repopulated on a longer cadence than the rest of the fields so the UI
+ * stays responsive while the radio scans.
  */
 
 
@@ -29,8 +61,11 @@
 #include "WirelessNetworkMenuItem.h"
 
 
+/** @brief Toggle-button message: enable/disable the interface (IFF_UP). */
 static const uint32 kMsgInterfaceToggle = 'onof';
+/** @brief Renegotiate-button message: re-run address acquisition. */
 static const uint32 kMsgInterfaceRenegotiate = 'redo';
+/** @brief Wireless menu message: join the selected network. */
 static const uint32 kMsgJoinNetwork = 'join';
 
 
@@ -41,6 +76,10 @@ static const uint32 kMsgJoinNetwork = 'join';
 // #pragma mark - InterfaceView
 
 
+/**
+ * @brief Builds the static layout (status grid, network picker, buttons)
+ *        and enables pulse delivery.
+ */
 InterfaceView::InterfaceView()
 	:
 	BGroupView(B_VERTICAL),
@@ -108,11 +147,19 @@ InterfaceView::InterfaceView()
 }
 
 
+/**
+ * @brief Destructor. Owned controls are deleted by the BView hierarchy.
+ */
 InterfaceView::~InterfaceView()
 {
 }
 
 
+/**
+ * @brief Binds the view to the named interface.
+ *
+ * @param name  Interface device name (e.g. "/dev/net/eth0").
+ */
 void
 InterfaceView::SetTo(const char* name)
 {
@@ -120,6 +167,10 @@ InterfaceView::SetTo(const char* name)
 }
 
 
+/**
+ * @brief Performs an initial _Update() and retargets buttons once the view
+ *        joins a window.
+ */
 void
 InterfaceView::AttachedToWindow()
 {
@@ -131,6 +182,11 @@ InterfaceView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Routes wireless join, interface toggle, and renegotiate messages.
+ *
+ * @param message  Incoming BMessage; @c what selects the action.
+ */
 void
 InterfaceView::MessageReceived(BMessage* message)
 {
@@ -177,6 +233,12 @@ InterfaceView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Periodic refresh hook.
+ *
+ * Called once per pulse; a full wireless rescan happens every fifth tick to
+ * keep the menu lively without thrashing the radio.
+ */
 void
 InterfaceView::Pulse()
 {
@@ -185,8 +247,17 @@ InterfaceView::Pulse()
 }
 
 
-/*!	Populate fields with current settings.
-*/
+/**
+ * @brief Populate fields with current settings.
+ *
+ * Refreshes status, MAC address, link speed, and TX/RX counters, then -- for
+ * wireless devices -- reconciles the network menu against the current scan
+ * result. When @a updateWirelessNetworks is false the wireless block is
+ * skipped to limit work between full rescans.
+ *
+ * @param updateWirelessNetworks  Refresh and rebuild the wireless menu.
+ * @return Always B_OK.
+ */
 status_t
 InterfaceView::_Update(bool updateWirelessNetworks)
 {

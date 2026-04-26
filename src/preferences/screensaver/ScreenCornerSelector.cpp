@@ -1,11 +1,42 @@
 /*
- * Copyright 2003-2013 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Phipps
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2013 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Phipps
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+
+/**
+ * @file ScreenCornerSelector.cpp
+ * @brief Implementation of the four-corner picker BControl.
+ *
+ * Draws a stylized 4:3 monitor and lets the user click or use the keyboard
+ * to choose one of the four corners or no corner. Used twice in the
+ * ScreenSaver preflet to configure the "fade now" and "never fade"
+ * hot corners.
+ */
+
 
 #include "ScreenCornerSelector.h"
 
@@ -21,12 +52,24 @@
 #include "Utility.h"
 
 
+/** @brief Aspect ratio (width/height) of the painted monitor. */
 static const float kAspectRatio = 4.0f / 3.0f;
+/** @brief Pixel thickness of the monitor's outer bezel. */
 static const float kMonitorBorderSize = 3.0f;
+/** @brief Side length of the corner-arrow triangle. */
 static const float kArrowSize = 11.0f;
+/** @brief Diameter of the "no corner" stop glyph. */
 static const float kStopSize = 15.0f;
 
 
+/**
+ * @brief Constructs the selector with no initial corner.
+ *
+ * @param frame        Frame rectangle in parent coordinates.
+ * @param name         Internal BView name.
+ * @param message      Message dispatched on value changes.
+ * @param resizingMode BView resizing flags.
+ */
 ScreenCornerSelector::ScreenCornerSelector(BRect frame, const char* name,
 	BMessage* message, uint32 resizingMode)
 	:
@@ -39,6 +82,11 @@ ScreenCornerSelector::ScreenCornerSelector(BRect frame, const char* name,
 }
 
 
+/**
+ * @brief Returns the largest 4:3 rectangle centered inside Bounds().
+ *
+ * @return Frame in view coordinates fit inside Bounds() at @c kAspectRatio.
+ */
 BRect
 ScreenCornerSelector::_MonitorFrame() const
 {
@@ -56,6 +104,13 @@ ScreenCornerSelector::_MonitorFrame() const
 }
 
 
+/**
+ * @brief Computes the inner content rectangle inside @a monitorFrame.
+ *
+ * @param monitorFrame Outer monitor frame returned by _MonitorFrame().
+ * @return Frame insetted by the bezel size, accounting for an extra
+ *         pixel margin used by the focus highlight.
+ */
 BRect
 ScreenCornerSelector::_InnerFrame(BRect monitorFrame) const
 {
@@ -64,6 +119,12 @@ ScreenCornerSelector::_InnerFrame(BRect monitorFrame) const
 }
 
 
+/**
+ * @brief Computes the central rectangle that maps to the "no corner" hit area.
+ *
+ * @param innerFrame Inner content rectangle.
+ * @return Frame insetted on each side by @c kArrowSize.
+ */
 BRect
 ScreenCornerSelector::_CenterFrame(BRect innerFrame) const
 {
@@ -71,6 +132,17 @@ ScreenCornerSelector::_CenterFrame(BRect innerFrame) const
 }
 
 
+/**
+ * @brief BView Draw hook: paints the bezel, screen, focus ring, and glyph.
+ *
+ * The chassis is redrawn in full only when needed; focus changes redraw
+ * only the inner frame. Depending on @c fCurrentCorner the inner area
+ * shows either an arrow pointing at the selected corner or a no-entry
+ * stop glyph.
+ *
+ * @param updateRect Region the app_server requested; used to skip the
+ *                   chassis when only the inner frame is dirty.
+ */
 void
 ScreenCornerSelector::Draw(BRect updateRect)
 {
@@ -136,6 +208,11 @@ ScreenCornerSelector::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Returns the currently selected corner as an int32.
+ *
+ * @return The @c screen_corner enum cast to int32.
+ */
 int32
 ScreenCornerSelector::Value()
 {
@@ -143,6 +220,15 @@ ScreenCornerSelector::Value()
 }
 
 
+/**
+ * @brief Sets the selected corner, validates it, and invokes the message.
+ *
+ * Unknown values are silently coerced to @c NO_CORNER. If the new value
+ * differs from the previous one, the inner area is invalidated and
+ * Invoke() is called so observers receive the message.
+ *
+ * @param corner New corner value.
+ */
 void
 ScreenCornerSelector::SetValue(int32 corner)
 {
@@ -166,6 +252,9 @@ ScreenCornerSelector::SetValue(int32 corner)
 }
 
 
+/**
+ * @brief Returns the currently selected corner.
+ */
 screen_corner
 ScreenCornerSelector::Corner() const
 {
@@ -173,6 +262,13 @@ ScreenCornerSelector::Corner() const
 }
 
 
+/**
+ * @brief Sets the selected corner using the typed enum.
+ *
+ * Routes through SetValue() so that out-of-range values are normalized.
+ *
+ * @param corner New corner value.
+ */
 void
 ScreenCornerSelector::SetCorner(screen_corner corner)
 {
@@ -181,6 +277,11 @@ ScreenCornerSelector::SetCorner(screen_corner corner)
 }
 
 
+/**
+ * @brief Draws the "no corner" stop glyph: a red circle with a slash.
+ *
+ * @param innerFrame Inner content rectangle to draw inside.
+ */
 void
 ScreenCornerSelector::_DrawStop(BRect innerFrame)
 {
@@ -212,6 +313,14 @@ ScreenCornerSelector::_DrawStop(BRect innerFrame)
 }
 
 
+/**
+ * @brief Draws a black triangle pointing at the currently selected corner.
+ *
+ * The triangle's orientation is chosen from @c fCurrentCorner so the
+ * hypotenuse points away from the selected screen corner.
+ *
+ * @param innerFrame Inner content rectangle to draw inside.
+ */
 void
 ScreenCornerSelector::_DrawArrow(BRect innerFrame)
 {
@@ -231,6 +340,18 @@ ScreenCornerSelector::_DrawArrow(BRect innerFrame)
 }
 
 
+/**
+ * @brief Maps a point in view coordinates to the corner it lies in.
+ *
+ * Points outside the inner frame return @a previousCorner so that
+ * dragging off the widget keeps the previously selected corner. Points in
+ * the central rectangle resolve to @c NO_CORNER.
+ *
+ * @param point          Point in view coordinates.
+ * @param previousCorner Value to return when @a point is outside the
+ *                       inner frame.
+ * @return Resolved corner enum.
+ */
 screen_corner
 ScreenCornerSelector::_ScreenCorner(BPoint point,
 	screen_corner previousCorner) const
@@ -252,6 +373,11 @@ ScreenCornerSelector::_ScreenCorner(BPoint point,
 }
 
 
+/**
+ * @brief BView MouseDown hook: starts a drag and records the previous corner.
+ *
+ * @param where Mouse location in view coordinates.
+ */
 void
 ScreenCornerSelector::MouseDown(BPoint where)
 {
@@ -262,6 +388,11 @@ ScreenCornerSelector::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief BView MouseUp hook: ends the drag.
+ *
+ * @param where Mouse location in view coordinates (unused).
+ */
 void
 ScreenCornerSelector::MouseUp(BPoint where)
 {
@@ -269,6 +400,15 @@ ScreenCornerSelector::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief BView MouseMoved hook: updates the corner during drag.
+ *
+ * Does nothing when no drag is in progress.
+ *
+ * @param where        Mouse location in view coordinates.
+ * @param transit      Transit code (unused).
+ * @param dragMessage  Drag-and-drop message (unused).
+ */
 void
 ScreenCornerSelector::MouseMoved(BPoint where, uint32 transit,
 	const BMessage* dragMessage)
@@ -280,6 +420,16 @@ ScreenCornerSelector::MouseMoved(BPoint where, uint32 transit,
 }
 
 
+/**
+ * @brief BView KeyDown hook: lets arrow and numpad keys select corners.
+ *
+ * Arrow keys move the selection between the corners along an edge;
+ * numpad home/page-up/page-down/end keys jump directly to the matching
+ * corner. Unhandled keys fall through to BControl::KeyDown().
+ *
+ * @param bytes    Raw key bytes.
+ * @param numBytes Length of @a bytes.
+ */
 void
 ScreenCornerSelector::KeyDown(const char* bytes, int32 numBytes)
 {

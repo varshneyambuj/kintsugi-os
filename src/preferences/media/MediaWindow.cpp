@@ -1,10 +1,42 @@
 /*
- * Copyright 2003-2015, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Sikosis, Jérôme Duval
- *		yourpalal, Alex Wilson
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2015, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Sikosis, Jérôme Duval
+ *       yourpalal, Alex Wilson
+ */
+
+
+/**
+ * @file MediaWindow.cpp
+ * @brief Implements MediaWindow, the main window of the Media preferences
+ *        application.
+ *
+ * Lists the registered audio and video nodes plus a few synthetic items
+ * (audio settings, video settings, MIDI, audio mixer) and routes
+ * selection changes either to a custom settings sub-view or to a
+ * dynamically constructed BMediaTheme parameter web. Manages restart of
+ * media_server in a background thread.
  */
 
 
@@ -42,14 +74,34 @@
 #define B_TRANSLATION_CONTEXT "Media Window"
 
 
+/** @brief Listview selection-change notification. */
 const uint32 ML_SELECTED_NODE = 'MlSN';
+/** @brief Posted by the media-server-restart worker thread once it has
+           finished shutting the server down. */
 const uint32 ML_RESTART_THREAD_FINISHED = 'MlRF';
 
 
+/**
+ * @brief Visitor that walks the listview and toggles a default-input or
+ *        default-output flag on the @c NodeListItem matching a target.
+ *
+ * Used after the user picks a new default audio/video input/output so the
+ * matching row is highlighted while siblings have the flag cleared.
+ */
 class NodeListItemUpdater : public MediaListItem::Visitor {
 public:
+	/** @brief Member-pointer type for the per-item update method to
+	           invoke. */
 	typedef void (NodeListItem::*UpdateMethod)(bool);
 
+	/**
+	 * @brief Constructs the updater for one default-flag pass.
+	 *
+	 * @param target  Item that should receive @c true; all others get
+	 *                @c false.
+	 * @param action  NodeListItem method called with the comparison
+	 *                result (e.g. SetDefaultInput).
+	 */
 	NodeListItemUpdater(NodeListItem* target, UpdateMethod action)
 		:
 		fComparator(target),
@@ -58,9 +110,18 @@ public:
 	}
 
 
+	/** @brief Mixer rows are not node rows; ignore. */
 	virtual	void	Visit(AudioMixerListItem*){}
+	/** @brief Device-header rows have no per-node flag; ignore. */
 	virtual	void	Visit(DeviceListItem*){}
+	/** @brief MIDI rows have no per-node flag; ignore. */
 	virtual	void	Visit(MidiListItem*){}
+	/**
+	 * @brief Updates a NodeListItem's flag based on whether it matches the
+	 *        cached comparator's target.
+	 *
+	 * @param item  Listview row to update.
+	 */
 	virtual void	Visit(NodeListItem* item)
 	{
 		item->Accept(fComparator);
@@ -74,6 +135,13 @@ private:
 };
 
 
+/**
+ * @brief Constructs an unbound SmartNode that will deliver media events
+ *        to @a notifyHandler once a node is set.
+ *
+ * @param notifyHandler  Recipient of BMediaRoster watch notifications for
+ *                       the current node.
+ */
 MediaWindow::SmartNode::SmartNode(const BMessenger& notifyHandler)
 	:
 	fNode(NULL),
@@ -82,12 +150,19 @@ MediaWindow::SmartNode::SmartNode(const BMessenger& notifyHandler)
 }
 
 
+/** @brief Releases the held media_node, unsubscribing from the watcher. */
 MediaWindow::SmartNode::~SmartNode()
 {
 	_FreeNode();
 }
 
 
+/**
+ * @brief Resolves @a info to a live media_node, instantiating a global
+ *        node if one is not already running, and starts watching it.
+ *
+ * @param info  Dormant-node descriptor; @c NULL clears the binding.
+ */
 void
 MediaWindow::SmartNode::SetTo(const dormant_node_info* info)
 {
@@ -118,6 +193,11 @@ MediaWindow::SmartNode::SetTo(const dormant_node_info* info)
 }
 
 
+/**
+ * @brief Adopts an already-instantiated @a node and starts watching it.
+ *
+ * @param node  Live media_node to track.
+ */
 void
 MediaWindow::SmartNode::SetTo(const media_node& node)
 {
@@ -128,6 +208,11 @@ MediaWindow::SmartNode::SetTo(const media_node& node)
 }
 
 
+/**
+ * @brief Reports whether a node is currently bound.
+ *
+ * @return @c true when SetTo() has been called and not yet cleared.
+ */
 bool
 MediaWindow::SmartNode::IsSet()
 {
@@ -135,6 +220,12 @@ MediaWindow::SmartNode::IsSet()
 }
 
 
+/**
+ * @brief Converts the SmartNode to a media_node value, returning a default
+ *        node when nothing is bound.
+ *
+ * @return The bound media_node, or a value-initialised one when unbound.
+ */
 MediaWindow::SmartNode::operator media_node()
 {
 	if (fNode)
@@ -144,6 +235,13 @@ MediaWindow::SmartNode::operator media_node()
 }
 
 
+/**
+ * @brief Stops watching the held node, releases it via the media_roster,
+ *        and clears the pointer.
+ *
+ * @note Releases unconditionally even when StopWatching() reports an
+ *       error so the descriptor never leaks.
+ */
 void
 MediaWindow::SmartNode::_FreeNode()
 {
@@ -173,6 +271,13 @@ MediaWindow::SmartNode::_FreeNode()
 // #pragma mark -
 
 
+/**
+ * @brief Builds the window layout, queries the media_roster for the
+ *        current node graph, and subscribes to media-server lifecycle
+ *        events.
+ *
+ * @param frame  Initial window frame.
+ */
 MediaWindow::MediaWindow(BRect frame)
 	:
 	BWindow(frame, B_TRANSLATE_SYSTEM_NAME("Media"), B_TITLED_WINDOW,
@@ -197,6 +302,13 @@ MediaWindow::MediaWindow(BRect frame)
 }
 
 
+/**
+ * @brief Persists the window frame and unwinds all media_roster
+ *        subscriptions before destruction.
+ *
+ * Writes a tiny @c MediaPrefs config file under
+ * @c B_USER_SETTINGS_DIRECTORY so the next launch can restore the frame.
+ */
 MediaWindow::~MediaWindow()
 {
 	_EmptyNodeLists();
@@ -224,6 +336,13 @@ MediaWindow::~MediaWindow()
 }
 
 
+/**
+ * @brief Reports whether the window successfully initialised the
+ *        media_roster on construction.
+ *
+ * @return @c B_OK when the roster is available; the failure code from
+ *         _InitMedia() otherwise.
+ */
 status_t
 MediaWindow::InitCheck()
 {
@@ -231,6 +350,12 @@ MediaWindow::InitCheck()
 }
 
 
+/**
+ * @brief Switches the right-hand pane to a parameter web for the chosen
+ *        dormant node.
+ *
+ * @param node  Selected dormant-node descriptor.
+ */
 void
 MediaWindow::SelectNode(const dormant_node_info* node)
 {
@@ -240,6 +365,12 @@ MediaWindow::SelectNode(const dormant_node_info* node)
 }
 
 
+/**
+ * @brief Shows the AudioSettingsView in the right-hand card and updates
+ *        the title bar.
+ *
+ * @param title  Localised title text.
+ */
 void
 MediaWindow::SelectAudioSettings(const char* title)
 {
@@ -248,6 +379,12 @@ MediaWindow::SelectAudioSettings(const char* title)
 }
 
 
+/**
+ * @brief Shows the VideoSettingsView in the right-hand card and updates
+ *        the title bar.
+ *
+ * @param title  Localised title text.
+ */
 void
 MediaWindow::SelectVideoSettings(const char* title)
 {
@@ -256,6 +393,12 @@ MediaWindow::SelectVideoSettings(const char* title)
 }
 
 
+/**
+ * @brief Selects the system audio mixer node and renders its parameter
+ *        web in the right-hand pane.
+ *
+ * @param title  Localised title text.
+ */
 void
 MediaWindow::SelectAudioMixer(const char* title)
 {
@@ -268,6 +411,12 @@ MediaWindow::SelectAudioMixer(const char* title)
 }
 
 
+/**
+ * @brief Shows the MidiSettingsView in the right-hand card and updates
+ *        the title bar.
+ *
+ * @param title  Localised title text.
+ */
 void
 MediaWindow::SelectMidiSettings(const char* title)
 {
@@ -276,6 +425,13 @@ MediaWindow::SelectMidiSettings(const char* title)
 }
 
 
+/**
+ * @brief Marks @a node as the new default input for @a type and updates
+ *        every NodeListItem flag accordingly.
+ *
+ * @param type  AUDIO_TYPE or VIDEO_TYPE.
+ * @param node  Newly designated default input node.
+ */
 void
 MediaWindow::UpdateInputListItem(MediaListItem::media_type type,
 	const dormant_node_info* node)
@@ -290,6 +446,13 @@ MediaWindow::UpdateInputListItem(MediaListItem::media_type type,
 }
 
 
+/**
+ * @brief Marks @a node as the new default output for @a type and updates
+ *        every NodeListItem flag accordingly.
+ *
+ * @param type  AUDIO_TYPE or VIDEO_TYPE.
+ * @param node  Newly designated default output node.
+ */
 void
 MediaWindow::UpdateOutputListItem(MediaListItem::media_type type,
 	const dormant_node_info* node)
@@ -304,6 +467,15 @@ MediaWindow::UpdateOutputListItem(MediaListItem::media_type type,
 }
 
 
+/**
+ * @brief Allows the window to close, optionally warning the user if a
+ *        media-server restart is in flight.
+ *
+ * Stops node watching and tells the BApplication to quit, then returns.
+ *
+ * @return Always @c true; the close is unconditional even when the
+ *         restart warning fires.
+ */
 bool
 MediaWindow::QuitRequested()
 {
@@ -326,6 +498,16 @@ MediaWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Routes media_roster events, listview selection changes, and the
+ *        restart-thread completion message.
+ *
+ * Restart requests spawn a background worker; the @c
+ * ML_RESTART_THREAD_FINISHED message arrives when the worker has shut
+ * the server down so we can drive the UI back to a clean state.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 MediaWindow::MessageReceived(BMessage* message)
 {
@@ -380,6 +562,13 @@ MediaWindow::MessageReceived(BMessage* message)
 // #pragma mark - private
 
 
+/**
+ * @brief Builds the window's static layout: listview on the left, title
+ *        bar plus card layout on the right.
+ *
+ * Calls _InitMedia() at the end and posts a quit if the media stack is
+ * unavailable.
+ */
 void
 MediaWindow::_InitWindow()
 {
@@ -428,6 +617,20 @@ MediaWindow::_InitWindow()
 }
 
 
+/**
+ * @brief Re-queries the media_roster for nodes and rebuilds the listview
+ *        on the left.
+ *
+ * On first launch, prompts the user to start the media_server when one
+ * is not already running. The previous selection (audio or video) is
+ * preserved across reinitialisations.
+ *
+ * @param first  @c true on the very first call after construction;
+ *               relaxes some preconditions and shows the start-server
+ *               alert when needed.
+ * @retval B_OK     Listview rebuilt and one row selected.
+ * @retval B_ERROR  User declined to start the media_server.
+ */
 status_t
 MediaWindow::_InitMedia(bool first)
 {
@@ -538,6 +741,10 @@ MediaWindow::_InitMedia(bool first)
 }
 
 
+/**
+ * @brief Discovers the eight standard physical input/output node lists
+ *        across the four media-format categories.
+ */
 void
 MediaWindow::_FindNodes()
 {
@@ -552,6 +759,21 @@ MediaWindow::_FindNodes()
 }
 
 
+/**
+ * @brief Queries the media_roster for dormant nodes that match @a type
+ *        and @a kind and appends them to @a into.
+ *
+ * The format constraint is attached to the input or output side based on
+ * the kind flag so the call resolves either consumers or producers.
+ *
+ * @param type  Required media type (e.g. B_MEDIA_RAW_AUDIO).
+ * @param kind  Bitmap with one of @c B_PHYSICAL_INPUT or
+ *              @c B_PHYSICAL_OUTPUT set.
+ * @param into  Owning list to append matching dormant_node_info copies
+ *              to.
+ * @todo Improve error reporting once the media_roster surfaces richer
+ *       failure codes.
+ */
 void
 MediaWindow::_FindNodes(media_type type, uint64 kind, NodeList& into)
 {
@@ -595,6 +817,14 @@ MediaWindow::_FindNodes(media_type type, uint64 kind, NodeList& into)
 }
 
 
+/**
+ * @brief Adds a NodeListItem to the listview for every node in @a list
+ *        that is not already represented.
+ *
+ * @param list  Source list of dormant_node_info.
+ * @param type  Discriminator passed to NodeListItem so it knows whether
+ *              the node is audio or video.
+ */
 void
 MediaWindow::_AddNodeItems(NodeList& list, MediaListItem::media_type type)
 {
@@ -607,6 +837,9 @@ MediaWindow::_AddNodeItems(NodeList& list, MediaListItem::media_type type)
 }
 
 
+/**
+ * @brief Clears every per-direction node cache before a re-enumeration.
+ */
 void
 MediaWindow::_EmptyNodeLists()
 {
@@ -617,6 +850,14 @@ MediaWindow::_EmptyNodeLists()
 }
 
 
+/**
+ * @brief Finds the existing NodeListItem that already represents @a info,
+ *        if any.
+ *
+ * @param info  Dormant-node descriptor to match.
+ * @return Borrowed pointer to the matching listview item, or @c NULL when
+ *         no row currently represents @a info.
+ */
 NodeListItem*
 MediaWindow::_FindNodeListItem(dormant_node_info* info)
 {
@@ -640,6 +881,12 @@ MediaWindow::_FindNodeListItem(dormant_node_info* info)
 }
 
 
+/**
+ * @brief Resizes the listview so its minimum width fits the widest row.
+ *
+ * Avoids cropping localised row labels with descenders or wide
+ * characters.
+ */
 void
 MediaWindow::_UpdateListViewMinWidth()
 {
@@ -653,6 +900,17 @@ MediaWindow::_UpdateListViewMinWidth()
 }
 
 
+/**
+ * @brief Worker-thread entry point that asks the media_server to shut
+ *        down and then notifies the window.
+ *
+ * Closes the modal "Restarting" alert once the shutdown completes so the
+ * window can re-enumerate nodes.
+ *
+ * @param data  Pointer to the MediaWindow that spawned the worker.
+ * @return Whatever PostMessage() returned for
+ *         @c ML_RESTART_THREAD_FINISHED.
+ */
 status_t
 MediaWindow::_RestartMediaServices(void* data)
 {
@@ -669,6 +927,13 @@ MediaWindow::_RestartMediaServices(void* data)
 }
 
 
+/**
+ * @brief Removes the dynamically added parameter-web view, if one is
+ *        currently shown, and frees the BParameterWeb backing it.
+ *
+ * The three permanent settings views (audio, video, MIDI) are left in
+ * place.
+ */
 void
 MediaWindow::_ClearParamView()
 {
@@ -686,6 +951,13 @@ MediaWindow::_ClearParamView()
 }
 
 
+/**
+ * @brief Builds the BMediaTheme parameter view for the current node and
+ *        installs it in the right-hand card.
+ *
+ * Falls back to _MakeEmptyParamView() when the node exposes no controls
+ * or the theme cannot render a view.
+ */
 void
 MediaWindow::_MakeParamView()
 {
@@ -708,6 +980,10 @@ MediaWindow::_MakeParamView()
 }
 
 
+/**
+ * @brief Installs a centred placeholder string in the right-hand card
+ *        when no parameter web is available.
+ */
 void
 MediaWindow::_MakeEmptyParamView()
 {

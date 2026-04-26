@@ -1,12 +1,45 @@
 /*
- * Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
- * Copyright 2009, Pier Luigi Fiorini.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
- *		Brian Hill, supernova@tycho.email
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
+ *   Copyright 2009, Pier Luigi Fiorini.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
+ *       Brian Hill, supernova@tycho.email
  */
+
+
+/**
+ * @file PrefletWin.cpp
+ * @brief Implementation of PrefletWin, the Notifications preflet's main
+ *        window.
+ *
+ * Builds the tab view and the global Defaults/Revert button strip, drives
+ * the Apply / Revert / Defaults flow across every tab, and persists the
+ * combined settings to a flattened BMessage in the user settings
+ * directory. As the SettingsHost it routes pane-level edits back through
+ * Apply (with optional sample notification).
+ */
+
 
 #include "PrefletWin.h"
 
@@ -28,9 +61,15 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "PrefletWin"
 
+/** @brief Stable message identifier used for the Apply-with-example
+           preview notification. */
 const BString kSampleMessageID("NotificationsSample");
 
 
+/**
+ * @brief Constructs the window, builds the layout, loads persisted
+ *        settings, and shows itself centered on screen.
+ */
 PrefletWin::PrefletWin()
 	:
 	BWindow(BRect(0, 0, 160 + 20 * be_plain_font->Size(), 300),
@@ -64,7 +103,7 @@ PrefletWin::PrefletWin()
 				B_USE_WINDOW_SPACING)
 		.End();
 	fButtonsLayout = fButtonsView->GroupLayout();
-	
+
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.SetInsets(0, B_USE_DEFAULT_SPACING, 0, 0)
 		.Add(fMainView)
@@ -80,6 +119,16 @@ PrefletWin::PrefletWin()
 }
 
 
+/**
+ * @brief Window message dispatcher.
+ *
+ * Handles Apply / Apply-with-example (which iterates panes, writes the
+ * combined settings file, and updates button enable state), Defaults and
+ * Revert (which delegate to the panes), and the kShowButtons toggle from
+ * PrefletView.
+ *
+ * @param msg  Incoming BMessage.
+ */
 void
 PrefletWin::MessageReceived(BMessage* msg)
 {
@@ -150,6 +199,12 @@ PrefletWin::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Forwards quit to the application so the process terminates when
+ *        the window closes.
+ *
+ * @return Always true.
+ */
 bool
 PrefletWin::QuitRequested()
 {
@@ -158,6 +213,12 @@ PrefletWin::QuitRequested()
 }
 
 
+/**
+ * @brief SettingsHost callback. Posts an Apply (optionally with sample
+ *        preview) when a pane reports an edit.
+ *
+ * @param showExample  When true also display a sample notification.
+ */
 void
 PrefletWin::SettingChanged(bool showExample)
 {
@@ -168,6 +229,14 @@ PrefletWin::SettingChanged(bool showExample)
 }
 
 
+/**
+ * @brief Reloads the settings file from disk and pushes the values into
+ *        each pane's Load().
+ *
+ * Also recomputes whether the Defaults button should be enabled.
+ *
+ * @todo Avoid loading the file once per tab; share the parsed BMessage.
+ */
 void
 PrefletWin::ReloadSettings()
 {
@@ -194,6 +263,11 @@ PrefletWin::ReloadSettings()
 }
 
 
+/**
+ * @brief Calls Revert() on every settings pane.
+ *
+ * @return Always B_OK.
+ */
 status_t
 PrefletWin::_Revert()
 {
@@ -208,6 +282,11 @@ PrefletWin::_Revert()
 }
 
 
+/**
+ * @brief Reports whether any pane has an edit that Revert() could undo.
+ *
+ * @return true when at least one pane reports RevertPossible().
+ */
 bool
 PrefletWin::_RevertPossible()
 {
@@ -222,6 +301,11 @@ PrefletWin::_RevertPossible()
 }
 
 
+/**
+ * @brief Calls Defaults() on every settings pane.
+ *
+ * @return Always B_OK.
+ */
 status_t
 PrefletWin::_Defaults()
 {
@@ -236,6 +320,11 @@ PrefletWin::_Defaults()
 }
 
 
+/**
+ * @brief Reports whether any pane is currently not at its default values.
+ *
+ * @return true when at least one pane reports DefaultsPossible().
+ */
 bool
 PrefletWin::_DefaultsPossible()
 {
@@ -250,6 +339,10 @@ PrefletWin::_DefaultsPossible()
 }
 
 
+/**
+ * @brief Posts a sample BNotification so the user can preview the live
+ *        appearance of their settings.
+ */
 void
 PrefletWin::_SendExampleNotification()
 {

@@ -1,11 +1,46 @@
 /*
- * Copyright 2008-2009, Oliver Ruiz Dorantes, <oliver.ruiz.dorantes@gmail.com>
- * Copyright 2021, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- * 		Fredrik Modéen <fredrik_at_modeen.se>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2009, Oliver Ruiz Dorantes,
+ *       <oliver.ruiz.dorantes@gmail.com>
+ *   Copyright 2021, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Fredrik Modéen <fredrik_at_modeen.se>
  */
+
+
+/**
+ * @file InquiryPanel.cpp
+ * @brief Implementation of InquiryPanel, the device-discovery floating window.
+ *
+ * InquiryPanel orchestrates the BT_GIAC inquiry against the chosen
+ * LocalDevice, displays a progress bar driven by per-second BMessageRunner
+ * ticks, lists each discovered RemoteDevice as a DeviceListItem, then
+ * walks the result set retrieving friendly names. Selected devices can be
+ * forwarded to the main remote-devices list via kMsgAddToRemoteList.
+ *
+ * @see RemoteDevicesView, DiscoveryAgent
+ */
+
 
 #include <Alert.h>
 #include <Button.h>
@@ -38,22 +73,41 @@ using Bluetooth::DeviceListItem;
 // private funcionaility provided by kit
 extern uint8 GetInquiryTime();
 
+/** @brief Internal message: discovery agent reported InquiryStarted. */
 static const uint32 kMsgStart = 'InSt';
+/** @brief Internal message: discovery agent reported InquiryCompleted. */
 static const uint32 kMsgFinish = 'InFn';
 static const uint32 kMsgShowDebug = 'ShDG';
 
+/** @brief Window message: user pressed the Inquiry button. */
 static const uint32 kMsgInquiry = 'iQbt';
+/** @brief Internal message: append a DeviceListItem to the result list. */
 static const uint32 kMsgAddListDevice = 'aDdv';
 
+/** @brief List-view selection-changed notification. */
 static const uint32 kMsgSelected = 'isLt';
+/** @brief Per-second tick used to update the scan progress bar. */
 static const uint32 kMsgSecond = 'sCMs';
+/** @brief Tick used to drive friendly-name retrieval after the scan. */
 static const uint32 kMsgRetrieve = 'IrEt';
 
 
+/**
+ * @brief Bluetooth kit listener that forwards discovery events to the panel.
+ *
+ * PanelDiscoveryListener subclasses DiscoveryListener so that asynchronous
+ * inquiry callbacks from the kit are turned into BMessages posted to the
+ * owning InquiryPanel, keeping all UI work on the panel's looper thread.
+ */
 class PanelDiscoveryListener : public DiscoveryListener {
 
 public:
 
+	/**
+	 * @brief Constructs the listener bound to a single InquiryPanel.
+	 *
+	 * @param iPanel  Panel that should receive translated discovery events.
+	 */
 	PanelDiscoveryListener(InquiryPanel* iPanel)
 		:
 		DiscoveryListener(),
@@ -63,6 +117,15 @@ public:
 	}
 
 
+	/**
+	 * @brief Called by the kit when a remote device is discovered.
+	 *
+	 * Wraps @a btDevice in a Bluetooth::DeviceListItem and posts a
+	 * kMsgAddListDevice message to the panel.
+	 *
+	 * @param btDevice  Newly discovered remote device.
+	 * @param cod       Class of device reported by the remote.
+	 */
 	void
 	DeviceDiscovered(RemoteDevice* btDevice, DeviceClass cod)
 	{
@@ -72,6 +135,11 @@ public:
 	}
 
 
+	/**
+	 * @brief Called by the kit when the inquiry phase finishes.
+	 *
+	 * @param discType  Discovery termination type (unused here).
+	 */
 	void
 	InquiryCompleted(int discType)
 	{
@@ -80,6 +148,11 @@ public:
 	}
 
 
+	/**
+	 * @brief Called by the kit when the inquiry has actually started.
+	 *
+	 * @param status  Status code from the kit (unused here).
+	 */
 	void
 	InquiryStarted(status_t status)
 	{
@@ -93,6 +166,19 @@ private:
 };
 
 
+/**
+ * @brief Constructs the inquiry floating window.
+ *
+ * Builds the status bar, the description BTextView, the result BListView
+ * inside a BScrollView, and the Inquiry/Add buttons. If a LocalDevice is
+ * available the panel is wired to its DiscoveryAgent; otherwise the
+ * description explains that no Bluetooth adapter is available and the
+ * Inquiry button is disabled.
+ *
+ * @param frame    Initial window rectangle.
+ * @param lDevice  LocalDevice to scan with; if NULL, falls back to
+ *                 LocalDevice::GetLocalDevice().
+ */
 InquiryPanel::InquiryPanel(BRect frame, LocalDevice* lDevice)
 	:
 	BWindow(frame, B_TRANSLATE_SYSTEM_NAME("Bluetooth"), B_FLOATING_WINDOW,
@@ -165,6 +251,17 @@ InquiryPanel::InquiryPanel(BRect frame, LocalDevice* lDevice)
 }
 
 
+/**
+ * @brief Drives the inquiry/retrieval state machine.
+ *
+ * Implements the per-second progress tick, the friendly-name retrieval
+ * after the inquiry completes, the kMsgInquiry start request, and
+ * kMsgAddToRemoteList forwarding back to the main application. Static
+ * locals carry the small amount of progress state across messages.
+ *
+ * @param message  Incoming BMessage. Unhandled messages fall through to
+ *                 BWindow::MessageReceived.
+ */
 void
 InquiryPanel::MessageReceived(BMessage* message)
 {
@@ -315,6 +412,12 @@ InquiryPanel::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Enables or disables the Add button based on list/scan state.
+ *
+ * The Add button is only meaningful when an item is selected and no
+ * scan or name-retrieval pass is currently running.
+ */
 void
 InquiryPanel::UpdateListStatus(void)
 {
@@ -325,6 +428,11 @@ InquiryPanel::UpdateListStatus(void)
 }
 
 
+/**
+ * @brief Allows the inquiry window to close unconditionally.
+ *
+ * @return Always true.
+ */
 bool
 InquiryPanel::QuitRequested(void)
 {

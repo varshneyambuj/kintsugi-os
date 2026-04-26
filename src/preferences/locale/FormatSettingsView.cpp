@@ -1,6 +1,36 @@
 /*
- * Copyright 2009, Adrien Destugues, pulkomandy@gmail.com. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Adrien Destugues, pulkomandy@gmail.com.
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file FormatSettingsView.cpp
+ * @brief Implementation of FormatSettingsView, the format-preview locale pane.
+ *
+ * Builds the four boxed example groups, captures the initial
+ * formatting conventions and filesystem-translation flag, and updates
+ * the live previews whenever the user changes a setting. Persists
+ * changes through the MutableLocaleRoster.
  */
 
 
@@ -51,6 +81,13 @@ using BPrivate::MutableLocaleRoster;
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the formatting preferences pane and seeds the example boxes.
+ *
+ * Creates the language-strings, filesystem-translation, and 12/24
+ * hour controls, pre-populates the date, time, number, and currency
+ * preview labels, then assembles them into four titled BBoxes.
+ */
 FormatSettingsView::FormatSettingsView()
 	:
 	BView("WindowsSettingsView", B_FRAME_EVENTS)
@@ -248,11 +285,17 @@ FormatSettingsView::FormatSettingsView()
 }
 
 
+/**
+ * @brief Destroys the view; child controls are owned by the layout system.
+ */
 FormatSettingsView::~FormatSettingsView()
 {
 }
 
 
+/**
+ * @brief Wires control targets so messages reach the right looper on attach.
+ */
 void
 FormatSettingsView::AttachedToWindow()
 {
@@ -263,6 +306,15 @@ FormatSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Routes locale-changed and per-toggle messages to the underlying conventions.
+ *
+ * Updates the active BFormattingConventions on every meaningful
+ * change and notifies the parent window so it can refresh its
+ * Revert/Defaults buttons.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 FormatSettingsView::MessageReceived(BMessage* message)
 {
@@ -317,6 +369,9 @@ FormatSettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Restores the conventions and filesystem-translation flag captured at startup.
+ */
 void
 FormatSettingsView::Revert()
 {
@@ -329,6 +384,12 @@ FormatSettingsView::Revert()
 }
 
 
+/**
+ * @brief Re-reads the active conventions and refreshes every preview.
+ *
+ * @param setInitial  When true, also captures the freshly read state as
+ *                    the snapshot Revert() should restore to.
+ */
 void
 FormatSettingsView::Refresh(bool setInitial)
 {
@@ -356,8 +417,12 @@ FormatSettingsView::Refresh(bool setInitial)
 }
 
 
-// Return true if the Revert button should be enabled (i.e. something has been
-// changed)
+/**
+ * @brief Returns true when the user's edits diverge from the captured snapshot.
+ *
+ * @return true if either the conventions or the filesystem-translation
+ *         flag differ from their initial values.
+ */
 bool
 FormatSettingsView::IsReversible() const
 {
@@ -369,6 +434,13 @@ FormatSettingsView::IsReversible() const
 }
 
 
+/**
+ * @brief Reformats every preview label using the currently active conventions.
+ *
+ * The format objects are intentionally constructed locally on each
+ * call so they pick up the latest conventions from the locale roster.
+ * Failed conversions display a translated "ERROR" placeholder.
+ */
 void
 FormatSettingsView::_UpdateExamples()
 {

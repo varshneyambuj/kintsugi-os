@@ -1,6 +1,35 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file ApplicationTypesWindow.cpp
+ * @brief Implementation of the application MIME-types browser window and
+ *        of the modal progress dialog used while pruning application
+ *        signatures whose executables are no longer installed on disk.
+ *
+ * @todo  Think about adopting Tracker's info window style here
+ *        (pressable path).
  */
 
 
@@ -40,13 +69,14 @@
 #include <strings.h>
 
 
-// TODO: think about adopting Tracker's info window style here (pressable path)
-
-
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "Application Types Window"
 
 
+/**
+ * @brief Modal progress window with abort button used while iterating
+ *        the application list looking for stale signatures.
+ */
 class ProgressWindow : public BWindow {
 	public:
 		ProgressWindow(const char* message, int32 max,
@@ -61,12 +91,23 @@ class ProgressWindow : public BWindow {
 		volatile bool*	fQuitListener;
 };
 
+/** @brief Sent by the list view when the selected row changes. */
 const uint32 kMsgTypeSelected = 'typs';
+/** @brief Sent when an item is double-clicked or otherwise invoked. */
 const uint32 kMsgTypeInvoked = 'typi';
+/** @brief Triggers the "Remove uninstalled" sweep. */
 const uint32 kMsgRemoveUninstalled = 'runs';
+/** @brief Triggers the per-application editor (Edit button). */
 const uint32 kMsgEdit = 'edit';
 
 
+/**
+ * @brief Maps a B_*_VERSION variety constant to its translated label.
+ *
+ * @param variety  Variety code as found in version_info.
+ * @return         Translated, user-facing string. "-" when @a variety
+ *                 is unknown.
+ */
 const char*
 variety_to_text(uint32 variety)
 {
@@ -92,6 +133,14 @@ variety_to_text(uint32 variety)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the centred progress window.
+ *
+ * @param message     Localised text shown above the progress bar.
+ * @param max         Total number of steps.
+ * @param signalQuit  Pointer to a flag the worker polls to honour the
+ *                    Abort button. May be NULL.
+ */
 ProgressWindow::ProgressWindow(const char* message,
 	int32 max, volatile bool* signalQuit)
 	:
@@ -123,11 +172,21 @@ ProgressWindow::ProgressWindow(const char* message,
 }
 
 
+/**
+ * @brief Destructor; layout-managed children are released by BWindow.
+ */
 ProgressWindow::~ProgressWindow()
 {
 }
 
 
+/**
+ * @brief Routes B_UPDATE_STATUS_BAR ticks and the B_CANCEL action; on
+ *        cancel the abort button is greyed out and the externally
+ *        owned quit flag is raised.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 ProgressWindow::MessageReceived(BMessage* message)
 {
@@ -156,6 +215,17 @@ ProgressWindow::MessageReceived(BMessage* message)
 //	#pragma mark -
 
 
+/**
+ * @brief Builds the application types browser at the frame stored in
+ *        @a settings.
+ *
+ * Lays out the application list on the left and the Information,
+ * Version, and action buttons groups on the right, then registers for
+ * MIME database notifications and resets to the empty selection state.
+ *
+ * @param settings  Persistent settings BMessage carrying frame and view
+ *                  state fields.
+ */
 ApplicationTypesWindow::ApplicationTypesWindow(const BMessage& settings)
 	: BWindow(_Frame(settings), B_TRANSLATE("Application types"),
 		B_TITLED_WINDOW,
@@ -264,12 +334,22 @@ ApplicationTypesWindow::ApplicationTypesWindow(const BMessage& settings)
 }
 
 
+/**
+ * @brief Stops MIME database watching and tears the window down.
+ */
 ApplicationTypesWindow::~ApplicationTypesWindow()
 {
 	BMimeType::StopWatching(this);
 }
 
 
+/**
+ * @brief Returns the saved window frame from @a settings or a default
+ *        rectangle if none is recorded.
+ *
+ * @param settings  Persistent settings message.
+ * @return          Frame rectangle in screen coordinates.
+ */
 BRect
 ApplicationTypesWindow::_Frame(const BMessage& settings) const
 {
@@ -281,6 +361,18 @@ ApplicationTypesWindow::_Frame(const BMessage& settings) const
 }
 
 
+/**
+ * @brief Walks the full list of application signatures and removes
+ *        every entry whose executable is not found by a BEOS:APP_SIG
+ *        query on any mounted, query-capable volume.
+ *
+ * Runs on the looper thread; pumps the looper periodically via
+ * UpdateIfNeeded() so MIME change events can be processed during the
+ * sweep. Reports the number of removed entries via an info alert at
+ * the end.
+ *
+ * @note This is invoked from the "Remove uninstalled" button.
+ */
 void
 ApplicationTypesWindow::_RemoveUninstalled()
 {
@@ -354,6 +446,22 @@ ApplicationTypesWindow::_RemoveUninstalled()
 }
 
 
+/**
+ * @brief Updates the right-hand pane to reflect the application
+ *        signature @a type.
+ *
+ * When @a type is NULL the pane is cleared and all action buttons are
+ * disabled. Otherwise the application's name, signature, path,
+ * version, and long description are read via BAppFileInfo and rendered.
+ * The Launch and Show-In-Tracker buttons are wired to send refs to the
+ * Tracker application.
+ *
+ * @param type         Signature to display, or NULL to clear.
+ * @param forceUpdate  Bitmask of B_*_CHANGED flags hinting which
+ *                     subsections need re-reading. B_EVERYTHING_CHANGED
+ *                     is implied when @a type differs from the previous
+ *                     selection.
+ */
 void
 ApplicationTypesWindow::_SetType(BMimeType* type, int32 forceUpdate)
 {
@@ -496,6 +604,12 @@ ApplicationTypesWindow::_SetType(BMimeType* type, int32 forceUpdate)
 }
 
 
+/**
+ * @brief Routes list selection, edit/launch invocation, the prune
+ *        action, and incremental MIME database notifications.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 ApplicationTypesWindow::MessageReceived(BMessage* message)
 {
@@ -568,6 +682,12 @@ ApplicationTypesWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Persists the current window frame and notifies the BApplication
+ *        that this window is closing.
+ *
+ * @return Always true.
+ */
 bool
 ApplicationTypesWindow::QuitRequested()
 {

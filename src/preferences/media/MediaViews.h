@@ -1,17 +1,28 @@
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-//
-//	Copyright (c) 2003, Haiku
-//
-//  This software is part of the Haiku distribution and is covered
-//  by the MIT License.
-//
-//
-//  File:        MediaViews.h
-//  Author:      Sikosis, Jérôme Duval
-//  Description: Media Preferences
-//  Created :    June 25, 2003
-// 
-// ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2003, Haiku.
+ * Original authors: Sikosis, Jérôme Duval.
+ */
+
+/** @file MediaViews.h
+    @brief Settings views and helper menu items for audio and video defaults. */
+
 #ifndef __MEDIAVIEWS_H__
 #define __MEDIAVIEWS_H__
 #include <GroupView.h>
@@ -32,10 +43,15 @@ class BStringView;
 class MediaWindow;
 
 
+/** @brief Message asking MediaWindow to restart the media services. */
 const uint32 ML_RESTART_MEDIA_SERVER = 'resr';
+/** @brief Message dispatched by AudioSettingsView when the default channel changes. */
 const uint32 ML_DEFAULT_CHANNEL_CHANGED = 'chch';
 
 
+/**
+ * @brief Menu item bound to a dormant_node_info, used in the input/output pickers.
+ */
 class NodeMenuItem : public BMenuItem
 {
 public:
@@ -44,6 +60,7 @@ public:
 									uint32 modifiers = 0);
 	virtual	status_t			Invoke(BMessage* message = NULL);
 
+			/** @brief Returns the dormant_node_info this item represents. */
 			const dormant_node_info* NodeInfo() const {return fInfo;}
 private:
 
@@ -51,6 +68,11 @@ private:
 };
 
 
+/**
+ * @brief Menu item bound to a media_input, used in the audio channel picker.
+ *
+ * Owns its @c media_input pointer; deletion is performed by the destructor.
+ */
 class ChannelMenuItem : public BMenuItem
 {
 public:
@@ -69,6 +91,13 @@ private:
 };
 
 
+/**
+ * @brief Base BGroupView for the audio and video default-picker panes.
+ *
+ * Builds and owns the input/output BPopUpMenus, populates them from
+ * dormant-node lists, and routes selections back to the concrete
+ * SetDefaultInput()/SetDefaultOutput() overrides.
+ */
 class SettingsView : public BGroupView
 {
 public:
@@ -87,7 +116,9 @@ public:
 
 protected:
 
+			/** @brief Returns the input picker menu owned by this view. */
 			BMenu*				InputMenu() {return fInputMenu;}
+			/** @brief Returns the output picker menu owned by this view. */
 			BMenu*				OutputMenu() {return fOutputMenu;}
 
 			BButton*			MakeRestartButton();
@@ -104,9 +135,13 @@ private:
 
 			BMenu* 				fInputMenu;
 			BMenu* 				fOutputMenu;
-};	
+};
 
 
+/**
+ * @brief Settings view for audio defaults: input/output nodes, output
+ *        channel, and the Deskbar volume control toggle.
+ */
 class AudioSettingsView : public SettingsView
 {
 public:
@@ -135,6 +170,9 @@ private:
 };
 
 
+/**
+ * @brief Settings view for video defaults: just input and output node pickers.
+ */
 class VideoSettingsView : public SettingsView
 {
 public:

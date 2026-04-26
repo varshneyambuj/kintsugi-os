@@ -1,11 +1,42 @@
 /*
- * Copyright 1999-2009 Jeremy Friesner
- * Copyright 2009-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jeremy Friesner
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 1999-2009 Jeremy Friesner
+ *   Copyright 2009-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jeremy Friesner
  */
+
+
+/**
+ * @file ShortcutsSpec.cpp
+ * @brief Implementation of ShortcutsSpec, a single hotkey row.
+ *
+ * Holds modifier-state indices, key code, and command string, and provides
+ * editing entry points called from the column list view as well as
+ * archiving routines used to ship hotkey definitions to the input_server
+ * filter.
+ */
+
 
 #include "ShortcutsSpec.h"
 
@@ -36,12 +67,17 @@
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "ShortcutsSpec"
 
+/** @brief Default row height for the shortcuts list view. */
 const float _height = 20.0f;
 
+/** @brief Per-modifier shared state-map table indexed by column. */
 static MetaKeyStateMap sMetaMaps[ShortcutsSpec::NUM_META_COLUMNS];
 
+/** @brief True once sViewFont has been populated from a host BView. */
 static bool sFontCached = false;
+/** @brief Cached BFont taken from the first row's owning view. */
 static BFont sViewFont;
+/** @brief Cached font height (ascent - descent) of sViewFont. */
 static float sFontHeight;
 
 const char* ShortcutsSpec::sShiftName;
@@ -54,6 +90,16 @@ const char* ShortcutsSpec::sCommandName;
 #define ICON_BITMAP_SPACE B_RGBA32
 
 
+/**
+ * @brief Returns the character at offset @a pos within @a str.
+ *
+ * Walks the string one byte at a time so the caller does not have to
+ * pre-validate the length.
+ *
+ * @param str NUL-terminated source string.
+ * @param pos Zero-based byte offset.
+ * @return The character at the offset, or '\0' if @a pos lies past the end.
+ */
 // Returns the (pos)'th char in the string, or '\0' if (pos) if off the end of
 // the string
 static char
@@ -67,6 +113,18 @@ GetLetterAt(const char* str, int pos)
 }
 
 
+/**
+ * @brief Populates a MetaKeyStateMap with the standard five chord states.
+ *
+ * Adds None / Either / Left / Right / Both states for the supplied paired
+ * modifier bits. The map name is stored verbatim from @a name.
+ *
+ * @param map   Map to configure.
+ * @param name  Display name (e.g. "Shift").
+ * @param both  Modifier bit set when either side is pressed.
+ * @param left  Modifier bit set when the left side alone is pressed.
+ * @param right Modifier bit set when the right side alone is pressed.
+ */
 // Setup the states in a standard manner for a pair of meta-keys.
 static void
 SetupStandardMap(MetaKeyStateMap& map, const char* name, uint32 both,
@@ -92,6 +150,12 @@ SetupStandardMap(MetaKeyStateMap& map, const char* name, uint32 both,
 }
 
 
+/**
+ * @brief Returns the shared MetaKeyStateMap for the requested column index.
+ *
+ * @param which Column index in the range [0, NUM_META_COLUMNS).
+ * @return Reference to the requested map.
+ */
 MetaKeyStateMap&
 GetNthKeyMap(int which)
 {
@@ -99,6 +163,11 @@ GetNthKeyMap(int which)
 }
 
 
+/**
+ * @brief Initializes the four shared modifier state maps on first use.
+ *
+ * Idempotent; subsequent calls are no-ops.
+ */
 /*static*/ void
 ShortcutsSpec::InitializeMetaMaps()
 {
@@ -123,6 +192,11 @@ ShortcutsSpec::InitializeMetaMaps()
 }
 
 
+/**
+ * @brief Constructs a fresh hotkey row for the given command string.
+ *
+ * @param cmd Command line for the new entry; copied internally.
+ */
 ShortcutsSpec::ShortcutsSpec(const char* cmd)
 	:
 	BRow(),
@@ -139,6 +213,11 @@ ShortcutsSpec::ShortcutsSpec(const char* cmd)
 }
 
 
+/**
+ * @brief Copy constructor; duplicates state, command, and field strings.
+ *
+ * @param from Source spec to copy.
+ */
 ShortcutsSpec::ShortcutsSpec(const ShortcutsSpec& from)
 	:
 	BRow(),
@@ -161,6 +240,14 @@ ShortcutsSpec::ShortcutsSpec(const ShortcutsSpec& from)
 }
 
 
+/**
+ * @brief Reconstructs a hotkey row from a flattened BMessage.
+ *
+ * Reads the command string, key code, and per-column modifier state
+ * indices. Logs a diagnostic if any expected field is missing.
+ *
+ * @param from Source archive message.
+ */
 ShortcutsSpec::ShortcutsSpec(BMessage* from)
 	:
 	BRow(),
@@ -196,6 +283,11 @@ ShortcutsSpec::ShortcutsSpec(BMessage* from)
 }
 
 
+/**
+ * @brief Replaces the entry's command string and updates the displayed cell.
+ *
+ * @param command New command line; copied into the internal buffer.
+ */
 void
 ShortcutsSpec::SetCommand(const char* command)
 {
@@ -209,6 +301,12 @@ ShortcutsSpec::SetCommand(const char* command)
 }
 
 
+/**
+ * @brief Returns the display name of the Nth modifier column.
+ *
+ * @param i Column index in the range [0, NUM_META_COLUMNS).
+ * @return Pointer to the modifier name (owned by the global state map).
+ */
 const char*
 ShortcutsSpec::GetColumnName(int i)
 {
@@ -216,6 +314,18 @@ ShortcutsSpec::GetColumnName(int i)
 }
 
 
+/**
+ * @brief Serializes this spec into the given BMessage.
+ *
+ * Emits both the prefs-applet payload (command, key, mcidx fields) and the
+ * input_server payload (an archived MinMatchFieldTester and CommandActuator)
+ * so a single archive round-trip can drive both sides.
+ *
+ * @param into Destination BMessage.
+ * @param deep Forwarded to BArchivable::Archive().
+ * @retval B_NO_ERROR  On success.
+ * @retval other       Status code from the underlying Archive() calls.
+ */
 status_t
 ShortcutsSpec::Archive(BMessage* into, bool deep) const
 {
@@ -258,6 +368,15 @@ ShortcutsSpec::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief BArchivable factory; constructs a ShortcutsSpec from a message.
+ *
+ * Accepts both modern "ShortcutsSpec" archives and legacy "SpicyKeysSpec"
+ * archives so older settings files keep loading.
+ *
+ * @param from Candidate archive message.
+ * @return A newly allocated spec on success, or NULL when validation fails.
+ */
 BArchivable*
 ShortcutsSpec::Instantiate(BMessage* from)
 {
@@ -275,6 +394,9 @@ ShortcutsSpec::Instantiate(BMessage* from)
 }
 
 
+/**
+ * @brief Destructor; releases the command string and cached bitmap name.
+ */
 ShortcutsSpec::~ShortcutsSpec()
 {
 	delete[] fCommand;
@@ -282,6 +404,11 @@ ShortcutsSpec::~ShortcutsSpec()
 }
 
 
+/**
+ * @brief Caches the owning view's font on first invocation.
+ *
+ * @param owner The BView whose font should be sampled.
+ */
 void
 ShortcutsSpec::_CacheViewFont(BView* owner)
 {
@@ -295,6 +422,17 @@ ShortcutsSpec::_CacheViewFont(BView* owner)
 }
 
 
+/**
+ * @brief Returns the display text for a given column.
+ *
+ * Branches on the well-known column indices: KEY produces a key name (or a
+ * hexadecimal fallback for high USB-HID codes), STRING returns the command
+ * line, and the remaining columns return the active modifier state's
+ * description (with parenthesized states blanked).
+ *
+ * @param whichColumn Column index.
+ * @return Pointer to the text to render; never NULL.
+ */
 const char*
 ShortcutsSpec::GetCellText(int whichColumn) const
 {
@@ -329,6 +467,12 @@ ShortcutsSpec::GetCellText(int whichColumn) const
 }
 
 
+/**
+ * @brief Translates a mouse click on a modifier column into a state cycle.
+ *
+ * @param whichColumn Column the user clicked.
+ * @return True when the click changed the spec; false otherwise.
+ */
 bool
 ShortcutsSpec::ProcessColumnMouseClick(int whichColumn)
 {
@@ -343,6 +487,17 @@ ShortcutsSpec::ProcessColumnMouseClick(int whichColumn)
 }
 
 
+/**
+ * @brief Applies a string-typed update to a column.
+ *
+ * The STRING column receives the new command, the KEY column resolves the
+ * string to a key code, and modifier columns delegate to
+ * ProcessColumnKeyStroke().
+ *
+ * @param whichColumn Column to update.
+ * @param string      New text value.
+ * @return True when the spec changed.
+ */
 bool
 ShortcutsSpec::ProcessColumnTextString(int whichColumn, const char* string)
 {
@@ -367,6 +522,16 @@ ShortcutsSpec::ProcessColumnTextString(int whichColumn, const char* string)
 }
 
 
+/**
+ * @brief Performs Bash-style tab completion on the trailing command argument.
+ *
+ * Splits the command line, finds the last argument, treats anything after
+ * the last '/' as a filename fragment, and extends the fragment to the
+ * longest common prefix among matching directory entries. Beeps and gives
+ * up if no unique extension exists.
+ *
+ * @return True when the command string was modified.
+ */
 bool
 ShortcutsSpec::_AttemptTabCompletion()
 {
@@ -484,6 +649,18 @@ ShortcutsSpec::_AttemptTabCompletion()
 }
 
 
+/**
+ * @brief Updates the spec in response to a keystroke directed at a column.
+ *
+ * Handles key-code capture in the KEY column, character-level editing
+ * (including tab completion) in the STRING column, and modifier-state
+ * cycling or letter-jumping for the modifier columns.
+ *
+ * @param whichColumn Column receiving the keystroke.
+ * @param bytes       Typed bytes (may be NULL when only @a key matters).
+ * @param key         Raw key code, or -1 when only @a bytes is meaningful.
+ * @return True when the spec changed.
+ */
 bool
 ShortcutsSpec::ProcessColumnKeyStroke(int whichColumn, const char* bytes,
 	int32 key)
@@ -611,6 +788,12 @@ ShortcutsSpec::ProcessColumnKeyStroke(int whichColumn, const char* bytes,
 }
 
 
+/**
+ * @brief Initializes the static modifier-name strings via the Catalog kit.
+ *
+ * Called once from InitializeMetaMaps() so the names are localized at
+ * runtime instead of frozen at compile time.
+ */
 /*static*/ void
 ShortcutsSpec::_InitModifierNames()
 {

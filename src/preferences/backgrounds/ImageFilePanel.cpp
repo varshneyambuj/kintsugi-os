@@ -1,9 +1,42 @@
 /*
- * Copyright 2002-2009 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jerome Duval, jerome.duval@free.fr
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jerome Duval, jerome.duval@free.fr
+ */
+
+
+/**
+ * @file ImageFilePanel.cpp
+ * @brief BFilePanel specialization with an image preview for the
+ *        Backgrounds preferences app.
+ *
+ * Augments the standard file panel with a small thumbnail view plus
+ * resolution and image-type readouts using BTranslationUtils to decode the
+ * selected file. ImageFilter restricts the visible entries to directories
+ * and files with an image MIME supertype.
+ *
+ * @see BFilePanel, BTranslationUtils
  */
 
 
@@ -26,6 +59,23 @@
 //	#pragma mark - ImageFilePanel
 
 
+/**
+ * @brief Forwards all parameters to BFilePanel and zeroes preview view
+ *        pointers.
+ *
+ * The preview views are created lazily in Show() so they are only added if
+ * the panel is actually displayed.
+ *
+ * @param mode                    File panel mode (open, save, etc.).
+ * @param target                  Messenger that will receive selection events.
+ * @param startDirectory          Initial directory; may be NULL.
+ * @param nodeFlavors             Allowed node flavors (file, directory, ...).
+ * @param allowMultipleSelection  Whether the user can select more than one.
+ * @param message                 Custom message template; may be NULL.
+ * @param filter                  Optional ref filter (e.g. ImageFilter).
+ * @param modal                   Whether the panel runs modally.
+ * @param hideWhenDone            Whether to hide instead of close on accept.
+ */
 ImageFilePanel::ImageFilePanel(file_panel_mode mode, BMessenger* target,
 	const entry_ref* startDirectory, uint32 nodeFlavors,
 	bool allowMultipleSelection, BMessage* message, BRefFilter* filter,
@@ -40,6 +90,9 @@ ImageFilePanel::ImageFilePanel(file_panel_mode mode, BMessenger* target,
 }
 
 
+/**
+ * @brief Deletes the ref filter installed via the constructor, if any.
+ */
 ImageFilePanel::~ImageFilePanel()
 {
 	if (RefFilter())
@@ -47,6 +100,14 @@ ImageFilePanel::~ImageFilePanel()
 }
 
 
+/**
+ * @brief Adds the preview, resolution and image-type views on first show.
+ *
+ * Locks the underlying panel window, temporarily clamps the resizing modes
+ * of the standard file panel views so growing the window only affects the
+ * panel itself, then resizes downward to make room for the preview strip.
+ * Subsequent calls just defer to BFilePanel::Show().
+ */
 void
 ImageFilePanel::Show()
 {
@@ -105,6 +166,13 @@ ImageFilePanel::Show()
 }
 
 
+/**
+ * @brief Refreshes the preview thumbnail and metadata for the selection.
+ *
+ * Reads the selected ref through BTranslationUtils, scales the bitmap to
+ * fit the preview view while preserving aspect, and shows the resolution
+ * plus a short MIME description. Non-file selections clear the preview.
+ */
 void
 ImageFilePanel::SelectionChanged()
 {
@@ -174,6 +242,13 @@ ImageFilePanel::SelectionChanged()
 //	#pragma mark - ImageFilter
 
 
+/**
+ * @brief Constructs an image filter that may be enabled or disabled.
+ *
+ * @param filtering  When @c true, only directories and image MIME types are
+ *                   accepted; when @c false the filter passes directories
+ *                   only (and rejects all files).
+ */
 ImageFilter::ImageFilter(bool filtering)
 	:
 	fImageFiltering(filtering)
@@ -181,6 +256,18 @@ ImageFilter::ImageFilter(bool filtering)
 }
 
 
+/**
+ * @brief Decides whether the file panel should display an entry.
+ *
+ * Directories are always shown when filtering is enabled; files are shown
+ * only when their sniffed MIME type is contained by the "image" supertype.
+ *
+ * @param ref       Entry being considered.
+ * @param node      Open BNode for sniffing the MIME type.
+ * @param stat      Stat block (unused here).
+ * @param filetype  Type string supplied by the panel (unused here).
+ * @return          @c true to display the entry, @c false to hide it.
+ */
 bool
 ImageFilter::Filter(const entry_ref* ref, BNode* node,
 	struct stat_beos* stat, const char* filetype)

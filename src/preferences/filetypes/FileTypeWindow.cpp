@@ -1,6 +1,34 @@
 /*
- * Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file FileTypeWindow.cpp
+ * @brief Implementation of the per-file MIME-type editor window. Edits the
+ *        BEOS:TYPE and BEOS:PREF_APP attributes of one or several entries
+ *        and lets the user pick a type from the database, drop another
+ *        file as a "same as" reference, or drop an executable to set the
+ *        preferred application.
  */
 
 
@@ -34,19 +62,40 @@
 #define B_TRANSLATION_CONTEXT "FileType Window"
 
 
+/** @brief Type text control was edited; commit the new MIME type. */
 const uint32 kMsgTypeEntered = 'type';
+/** @brief Open the modal type chooser. */
 const uint32 kMsgSelectType = 'sltp';
+/** @brief A type was picked in the chooser. */
 const uint32 kMsgTypeSelected = 'tpsd';
+/** @brief Open the file panel to copy the type from another file. */
 const uint32 kMsgSameTypeAs = 'stpa';
+/** @brief The file panel returned a "same type as" target. */
 const uint32 kMsgSameTypeAsOpened = 'stpO';
 
+/** @brief A preferred-application menu entry was chosen. */
 const uint32 kMsgPreferredAppChosen = 'papc';
+/** @brief Open the file panel to pick a preferred application. */
 const uint32 kMsgSelectPreferredApp = 'slpa';
+/** @brief Open the file panel to copy the preferred app from another file. */
 const uint32 kMsgSamePreferredAppAs = 'spaa';
+/** @brief The file panel returned a preferred-app executable. */
 const uint32 kMsgPreferredAppOpened = 'paOp';
+/** @brief The file panel returned a "same preferred app as" target. */
 const uint32 kMsgSamePreferredAppAsOpened = 'spaO';
 
 
+/**
+ * @brief Builds the editor window and populates it from the entry refs
+ *        carried by @a refs.
+ *
+ * Creates the File Type, Icon, and Preferred Application boxes, registers
+ * for MIME database notifications via BMimeType::StartWatching, and
+ * pipes the initial state through _SetTo().
+ *
+ * @param position  Top-left corner where the window should appear.
+ * @param refs      Message containing one or more "refs" entries to edit.
+ */
 FileTypeWindow::FileTypeWindow(BPoint position, const BMessage& refs)
 	:
 	BWindow(BRect(0.0f, 0.0f, 300.0f, 200.0f).OffsetBySelf(position),
@@ -132,12 +181,25 @@ FileTypeWindow::FileTypeWindow(BPoint position, const BMessage& refs)
 }
 
 
+/**
+ * @brief Stops MIME database watching and tears the window down.
+ */
 FileTypeWindow::~FileTypeWindow()
 {
 	BMimeType::StopWatching(this);
 }
 
 
+/**
+ * @brief Computes the window title for @a refs.
+ *
+ * For a single ref the file name is used. For multiple refs the title
+ * mentions the common parent directory when all entries share one,
+ * otherwise the generic "[Multiple files]" form.
+ *
+ * @param refs  Message holding the refs being edited.
+ * @return      Localized window title.
+ */
 BString
 FileTypeWindow::_Title(const BMessage& refs)
 {
@@ -182,6 +244,16 @@ FileTypeWindow::_Title(const BMessage& refs)
 }
 
 
+/**
+ * @brief Reads each ref in @a refs and updates the controls to show the
+ *        common type, common preferred app, and (when single) the icon.
+ *
+ * Refs whose node info is unreadable are skipped. The internal entry
+ * list is populated for later writebacks; the icon view is switched to
+ * "icon heap" mode when more than one entry is shown.
+ *
+ * @param refs  Message containing one or more "refs" entries.
+ */
 void
 FileTypeWindow::_SetTo(const BMessage& refs)
 {
@@ -237,6 +309,15 @@ FileTypeWindow::_SetTo(const BMessage& refs)
 }
 
 
+/**
+ * @brief Reads the MIME type of the file referenced in @a message and
+ *        applies it to every entry currently being edited.
+ *
+ * Used as the handler for "Same type as..." drops and file-panel
+ * results. Errors are reported via error_alert().
+ *
+ * @param message  Message containing exactly one "refs" entry.
+ */
 void
 FileTypeWindow::_AdoptType(BMessage* message)
 {
@@ -270,6 +351,12 @@ FileTypeWindow::_AdoptType(BMessage* message)
 }
 
 
+/**
+ * @brief Writes @a fCommonType into the BEOS:TYPE attribute of every
+ *        edited entry.
+ *
+ * Entries whose node or node info cannot be opened are silently skipped.
+ */
 void
 FileTypeWindow::_AdoptType()
 {
@@ -285,6 +372,15 @@ FileTypeWindow::_AdoptType()
 }
 
 
+/**
+ * @brief Resolves a preferred-application choice from @a message and
+ *        applies it to every edited entry.
+ *
+ * @param message  Refs message from a file panel or drop.
+ * @param sameAs   True when the dropped entry should be treated as a
+ *                 reference whose preferred app is to be reused; false
+ *                 when the dropped entry is itself the application.
+ */
 void
 FileTypeWindow::_AdoptPreferredApp(BMessage* message, bool sameAs)
 {
@@ -296,6 +392,10 @@ FileTypeWindow::_AdoptPreferredApp(BMessage* message, bool sameAs)
 }
 
 
+/**
+ * @brief Writes @a fCommonPreferredApp into the BEOS:PREF_APP attribute
+ *        of every edited entry, or removes the attribute when empty.
+ */
 void
 FileTypeWindow::_AdoptPreferredApp()
 {
@@ -316,6 +416,10 @@ FileTypeWindow::_AdoptPreferredApp()
 }
 
 
+/**
+ * @brief Rebuilds the preferred-application pop-up to reflect the
+ *        current MIME type and selected signature.
+ */
 void
 FileTypeWindow::_UpdatePreferredApps()
 {
@@ -325,6 +429,13 @@ FileTypeWindow::_UpdatePreferredApps()
 }
 
 
+/**
+ * @brief Routes UI events: type editing, type chooser, file-panel
+ *        results, preferred-app menu and panel handling, drag-and-drop
+ *        of refs, and MIME database change notifications.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 FileTypeWindow::MessageReceived(BMessage* message)
 {
@@ -449,6 +560,12 @@ FileTypeWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Notifies the BApplication that this window is closing so the
+ *        live-window counter can be decremented.
+ *
+ * @return Always true.
+ */
 bool
 FileTypeWindow::QuitRequested()
 {

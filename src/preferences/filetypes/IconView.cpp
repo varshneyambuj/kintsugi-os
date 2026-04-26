@@ -1,6 +1,39 @@
 /*
- * Copyright 2006-2024, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2024, Axel Dörfler, axeld@pinc-software.de.
+ *   All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file IconView.cpp
+ * @brief Reusable icon container plus the IconView control used across
+ *        the FileTypes preference panes.
+ *
+ * The Icon helper class owns the three icon representations (large
+ * bitmap, mini bitmap, vector data) and serialises them to and from
+ * BAppFileInfo, BMimeType, BMessage, and entry_refs. IconView is a
+ * BControl that paints an Icon, supports drag-and-drop with both bitmap
+ * and HVIF payloads, and dispatches edits to Icon-O-Matic.
  */
 
 
@@ -39,6 +72,27 @@
 using namespace std;
 
 
+/**
+ * @brief Resolves the vector icon for @a type using the same fallback
+ *        chain Tracker uses.
+ *
+ * Looks first at the type's own icon, then at the type's preferred
+ * application's per-type icon, then at the supertype, then at the
+ * supertype's preferred application. Reports which step succeeded via
+ * @a _source.
+ *
+ * @param type     MIME type to resolve.
+ * @param _data    Output: malloc'd buffer with the HVIF data; caller
+ *                 frees with free().
+ * @param _size    Output: size of @a *_data in bytes.
+ * @param _source  Optional output: which fallback rung produced the icon
+ *                 (kOwnIcon, kApplicationIcon, kSupertypeIcon, or kNoIcon
+ *                 on failure).
+ * @retval B_OK         Icon found and ownership of @a *_data transferred
+ *                      to the caller.
+ * @retval B_BAD_VALUE  @a _data or @a _size was @c NULL.
+ * @retval B_ERROR      No icon found at any rung.
+ */
 status_t
 icon_for_type(const BMimeType& type, uint8** _data, size_t* _size,
 	icon_source* _source)
@@ -97,6 +151,20 @@ icon_for_type(const BMimeType& type, uint8** _data, size_t* _size,
 }
 
 
+/**
+ * @brief Bitmap-output overload of icon_for_type() used when the caller
+ *        already has an allocated BBitmap to render into.
+ *
+ * Walks the same fallback chain as the vector overload but stops as soon
+ * as a bitmap of the requested @a size is found.
+ *
+ * @param type     MIME type to resolve.
+ * @param bitmap   Destination bitmap; must already match @a size.
+ * @param size     Pixel size requested (e.g. B_LARGE_ICON, B_MINI_ICON).
+ * @param _source  Optional output: which fallback rung produced the icon.
+ * @retval B_OK     Bitmap was filled in.
+ * @retval B_ERROR  No bitmap icon found at any rung.
+ */
 status_t
 icon_for_type(const BMimeType& type, BBitmap& bitmap, icon_size size,
 	icon_source* _source)
@@ -149,6 +217,7 @@ icon_for_type(const BMimeType& type, BBitmap& bitmap, icon_size size,
 //	#pragma mark -
 
 
+/** @brief Constructs an empty Icon with no large, mini, or vector data. */
 Icon::Icon()
 	:
 	fLarge(NULL),
@@ -159,6 +228,11 @@ Icon::Icon()
 }
 
 
+/**
+ * @brief Deep-copies @a source via the assignment operator.
+ *
+ * @param source  Icon to clone.
+ */
 Icon::Icon(const Icon& source)
 	:
 	fLarge(NULL),
@@ -170,6 +244,7 @@ Icon::Icon(const Icon& source)
 }
 
 
+/** @brief Releases the bitmaps and free()s the vector data. */
 Icon::~Icon()
 {
 	delete fLarge;
@@ -178,6 +253,16 @@ Icon::~Icon()
 }
 
 
+/**
+ * @brief Loads the icon registered for @a type out of @a info.
+ *
+ * Tries the vector representation first; if present, the large/mini
+ * bitmaps are skipped because the vector icon is sufficient on its own.
+ *
+ * @param info  BAppFileInfo wrapping the application file.
+ * @param type  Optional MIME type whose per-type icon should be used;
+ *              @c NULL means the application's own icon.
+ */
 void
 Icon::SetTo(const BAppFileInfo& info, const char* type)
 {
@@ -206,6 +291,14 @@ Icon::SetTo(const BAppFileInfo& info, const char* type)
 }
 
 
+/**
+ * @brief Convenience overload that opens @a ref as a BAppFileInfo and
+ *        delegates to the BAppFileInfo overload.
+ *
+ * @param ref   File whose icon should be loaded.
+ * @param type  Optional MIME type for per-type icons; @c NULL for the
+ *              file's own icon.
+ */
 void
 Icon::SetTo(const entry_ref& ref, const char* type)
 {
@@ -218,6 +311,13 @@ Icon::SetTo(const entry_ref& ref, const char* type)
 }
 
 
+/**
+ * @brief Loads the icon for the MIME type @a type using the
+ *        Tracker-equivalent fallback chain.
+ *
+ * @param type     MIME type to resolve.
+ * @param _source  Optional output: which fallback rung produced the icon.
+ */
 void
 Icon::SetTo(const BMimeType& type, icon_source* _source)
 {
@@ -245,6 +345,21 @@ Icon::SetTo(const BMimeType& type, icon_source* _source)
 }
 
 
+/**
+ * @brief Writes the held icon into @a info.
+ *
+ * Each representation (large, mini, vector) is written only when it is
+ * present, unless @a force is @c true in which case @c NULL/0 is written
+ * to clear that representation.
+ *
+ * @param info   Destination application file info.
+ * @param type   Optional per-type icon target; @c NULL writes the file's
+ *               own icon.
+ * @param force  When @c true, missing representations are written as
+ *               @c NULL to remove any previously stored value.
+ * @return The last status returned by SetIconForType(); @c B_OK on
+ *         success.
+ */
 status_t
 Icon::CopyTo(BAppFileInfo& info, const char* type, bool force) const
 {
@@ -261,6 +376,16 @@ Icon::CopyTo(BAppFileInfo& info, const char* type, bool force) const
 }
 
 
+/**
+ * @brief Convenience overload that wraps @a ref in a BAppFileInfo and
+ *        delegates.
+ *
+ * @param ref    Destination file.
+ * @param type   Optional per-type icon target.
+ * @param force  Forwarded to the BAppFileInfo overload.
+ * @return Whatever the BAppFileInfo overload returned, or an init error
+ *         from BFile/BAppFileInfo.
+ */
 status_t
 Icon::CopyTo(const entry_ref& ref, const char* type, bool force) const
 {
@@ -278,6 +403,13 @@ Icon::CopyTo(const entry_ref& ref, const char* type, bool force) const
 }
 
 
+/**
+ * @brief Writes the held icon directly to the MIME type entry.
+ *
+ * @param type   Destination MIME type (typically the type being edited).
+ * @param force  When @c true, missing representations are cleared.
+ * @return The last status returned by SetIcon(); @c B_OK on success.
+ */
 status_t
 Icon::CopyTo(BMimeType& type, bool force) const
 {
@@ -294,6 +426,17 @@ Icon::CopyTo(BMimeType& type, bool force) const
 }
 
 
+/**
+ * @brief Archives the icon into @a message under the conventional
+ *        @c icon/large, @c icon/mini, and @c icon keys.
+ *
+ * Used as the payload for clipboard and drag-and-drop operations.
+ *
+ * @param message  Destination message; existing keys are left intact.
+ * @return Always @c B_OK; per-representation errors are silently ignored
+ *         after the first failure since the message may still carry
+ *         partial data.
+ */
 status_t
 Icon::CopyTo(BMessage& message) const
 {
@@ -318,6 +461,11 @@ Icon::CopyTo(BMessage& message) const
 }
 
 
+/**
+ * @brief Replaces the large bitmap by deep-copying @a large.
+ *
+ * @param large  Source bitmap; @c NULL clears the held large icon.
+ */
 void
 Icon::SetLarge(const BBitmap* large)
 {
@@ -334,6 +482,11 @@ Icon::SetLarge(const BBitmap* large)
 }
 
 
+/**
+ * @brief Replaces the mini bitmap by deep-copying @a mini.
+ *
+ * @param mini  Source bitmap; @c NULL clears the held mini icon.
+ */
 void
 Icon::SetMini(const BBitmap* mini)
 {
@@ -350,6 +503,12 @@ Icon::SetMini(const BBitmap* mini)
 }
 
 
+/**
+ * @brief Replaces the held HVIF vector data with a copy of @a data.
+ *
+ * @param data  Source bytes; @c NULL clears the held vector data.
+ * @param size  Length of @a data in bytes.
+ */
 void
 Icon::SetData(const uint8* data, size_t size)
 {
@@ -367,6 +526,10 @@ Icon::SetData(const uint8* data, size_t size)
 }
 
 
+/**
+ * @brief Releases all icon representations and resets the cached size to
+ *        zero.
+ */
 void
 Icon::Unset()
 {
@@ -379,6 +542,12 @@ Icon::Unset()
 }
 
 
+/**
+ * @brief Reports whether at least one icon representation has been
+ *        loaded.
+ *
+ * @return @c true when any of large, mini, or vector data is set.
+ */
 bool
 Icon::HasData() const
 {
@@ -386,6 +555,16 @@ Icon::HasData() const
 }
 
 
+/**
+ * @brief Returns a freshly allocated copy of one bitmap representation.
+ *
+ * @param which    Either @c B_LARGE_ICON or @c B_MINI_ICON.
+ * @param _bitmap  Output: newly allocated BBitmap; caller takes ownership.
+ * @retval B_OK              Bitmap returned via @a _bitmap.
+ * @retval B_BAD_VALUE       @a which was neither large nor mini.
+ * @retval B_ENTRY_NOT_FOUND The requested representation is empty.
+ * @retval B_NO_MEMORY       Allocation failed.
+ */
 status_t
 Icon::GetData(icon_size which, BBitmap** _bitmap) const
 {
@@ -415,6 +594,15 @@ Icon::GetData(icon_size which, BBitmap** _bitmap) const
 }
 
 
+/**
+ * @brief Returns a malloc'd copy of the held HVIF vector data.
+ *
+ * @param _data  Output: malloc'd buffer; caller frees with free().
+ * @param _size  Output: number of bytes in @a *_data.
+ * @retval B_OK              Buffer returned via @a _data.
+ * @retval B_ENTRY_NOT_FOUND No vector data is held.
+ * @retval B_NO_MEMORY       Allocation failed.
+ */
 status_t
 Icon::GetData(uint8** _data, size_t* _size) const
 {
@@ -432,6 +620,19 @@ Icon::GetData(uint8** _data, size_t* _size) const
 }
 
 
+/**
+ * @brief Renders the icon into @a bitmap at the bitmap's existing size.
+ *
+ * Prefers the vector representation when present; otherwise picks the
+ * closest of the cached large/mini bitmaps and rescales it via an
+ * intermediate offscreen view.
+ *
+ * @param bitmap  Destination bitmap; must be initialised with the desired
+ *                size and color space.
+ * @retval B_OK              Bitmap was filled.
+ * @retval B_BAD_VALUE       @a bitmap was @c NULL.
+ * @retval B_ENTRY_NOT_FOUND Neither vector nor bitmap data is held.
+ */
 status_t
 Icon::GetIcon(BBitmap* bitmap) const
 {
@@ -483,6 +684,13 @@ Icon::GetIcon(BBitmap* bitmap) const
 }
 
 
+/**
+ * @brief Deep-copy assignment operator that mirrors all three
+ *        representations from @a source.
+ *
+ * @param source  Icon to copy from.
+ * @return Reference to @c *this.
+ */
 Icon&
 Icon::operator=(const Icon& source)
 {
@@ -496,6 +704,13 @@ Icon::operator=(const Icon& source)
 }
 
 
+/**
+ * @brief Takes ownership of @a large, replacing any previous large
+ *        bitmap.
+ *
+ * @param large  New bitmap; ownership transfers to this Icon. May be
+ *               @c NULL.
+ */
 void
 Icon::AdoptLarge(BBitmap *large)
 {
@@ -504,6 +719,12 @@ Icon::AdoptLarge(BBitmap *large)
 }
 
 
+/**
+ * @brief Takes ownership of @a mini, replacing any previous mini bitmap.
+ *
+ * @param mini  New bitmap; ownership transfers to this Icon. May be
+ *              @c NULL.
+ */
 void
 Icon::AdoptMini(BBitmap *mini)
 {
@@ -512,6 +733,13 @@ Icon::AdoptMini(BBitmap *mini)
 }
 
 
+/**
+ * @brief Takes ownership of @a data, replacing any previous vector data.
+ *
+ * @param data  Malloc'd buffer; ownership transfers to this Icon (which
+ *              will free() it). May be @c NULL.
+ * @param size  Length of @a data in bytes.
+ */
 void
 Icon::AdoptData(uint8* data, size_t size)
 {
@@ -521,6 +749,18 @@ Icon::AdoptData(uint8* data, size_t size)
 }
 
 
+/**
+ * @brief Allocates a BBitmap sized according to the system control look,
+ *        for use as a render target.
+ *
+ * Special-cases @c B_CMAP8 to allocate the legacy 8-bit-indexed bitmap
+ * without any compose-size scaling.
+ *
+ * @param size   Logical icon size (e.g. B_LARGE_ICON or B_MINI_ICON).
+ * @param space  Color space; @c -1 selects @c B_RGBA32.
+ * @return Newly allocated BBitmap (caller owns), or @c NULL on
+ *         allocation failure.
+ */
 /*static*/ BBitmap*
 Icon::AllocateBitmap(icon_size size, int32 space)
 {
@@ -548,6 +788,12 @@ Icon::AllocateBitmap(icon_size size, int32 space)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the icon control at the default large-icon size.
+ *
+ * @param name   View name forwarded to BControl.
+ * @param flags  Additional creation flags OR'd with @c B_WILL_DRAW.
+ */
 IconView::IconView(const char* name, uint32 flags)
 	:
 	BControl(name, NULL, NULL, B_WILL_DRAW | flags),
@@ -567,6 +813,8 @@ IconView::IconView(const char* name, uint32 flags)
 }
 
 
+/** @brief Destroys the cached bitmap and the modification-message
+           template. */
 IconView::~IconView()
 {
 	delete fIconBitmap;
@@ -574,6 +822,10 @@ IconView::~IconView()
 }
 
 
+/**
+ * @brief Adopts parent colors and starts watching the bound source if one
+ *        was provided before the BLooper was available.
+ */
 void
 IconView::AttachedToWindow()
 {
@@ -587,6 +839,8 @@ IconView::AttachedToWindow()
 }
 
 
+/** @brief Stops node and MIME-type watching when the view leaves the
+           window. */
 void
 IconView::DetachedFromWindow()
 {
@@ -594,6 +848,17 @@ IconView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Routes drop messages, popup-menu commands, and node-monitor /
+ *        MIME-database notifications to the appropriate update path.
+ *
+ * Drop messages are converted into either a vector-data icon assignment
+ * or, if only refs are present, the file-import path. Other notifications
+ * trigger Update() so the displayed bitmap stays in sync with the
+ * external source.
+ *
+ * @param message  Incoming BMessage.
+ */
 void
 IconView::MessageReceived(BMessage* message)
 {
@@ -716,6 +981,15 @@ IconView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Reports whether the view should accept @a message as a drop.
+ *
+ * Accepts a single ref drop (so long as it is not the file the view is
+ * already bound to), or a message carrying any of the icon archive keys.
+ *
+ * @param message  Drag message to inspect.
+ * @return @c true when the drop would be acted on by MessageReceived().
+ */
 bool
 IconView::AcceptsDrag(const BMessage* message)
 {
@@ -746,6 +1020,11 @@ IconView::AcceptsDrag(const BMessage* message)
 }
 
 
+/**
+ * @brief Returns the local rectangle used to render the icon bitmap.
+ *
+ * @return Cached frame matched to the current icon size.
+ */
 BRect
 IconView::BitmapRect() const
 {
@@ -753,6 +1032,14 @@ IconView::BitmapRect() const
 }
 
 
+/**
+ * @brief Paints the cached icon, focus ring, and drop-target frame.
+ *
+ * Falls through to a one-pixel placeholder rectangle when no icon is
+ * loaded and the empty-frame option is on.
+ *
+ * @param updateRect  Region the system asks us to repaint.
+ */
 void
 IconView::Draw(BRect updateRect)
 {
@@ -790,6 +1077,12 @@ IconView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Reports the bitmap rect's width and height as the preferred size.
+ *
+ * @param _width   Optional output: preferred width in pixels.
+ * @param _height  Optional output: preferred height in pixels.
+ */
 void
 IconView::GetPreferredSize(float* _width, float* _height)
 {
@@ -801,6 +1094,7 @@ IconView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/** @brief Returns the bitmap rect size as the minimum layout size. */
 BSize
 IconView::MinSize()
 {
@@ -810,6 +1104,8 @@ IconView::MinSize()
 }
 
 
+/** @brief Returns the same value as MinSize() so the layout fixes the
+           view at its preferred size. */
 BSize
 IconView::PreferredSize()
 {
@@ -817,6 +1113,8 @@ IconView::PreferredSize()
 }
 
 
+/** @brief Returns the same value as MinSize() so the layout never grows
+           the icon. */
 BSize
 IconView::MaxSize()
 {
@@ -824,6 +1122,13 @@ IconView::MaxSize()
 }
 
 
+/**
+ * @brief Handles primary-button clicks (single click starts drag, double
+ *        click invokes Icon-O-Matic) and secondary-button clicks
+ *        (context menu).
+ *
+ * @param where  Mouse-down location in view coordinates.
+ */
 void
 IconView::MouseDown(BPoint where)
 {
@@ -884,6 +1189,11 @@ IconView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Resets drag/tracking flags and erases the drop-target ring.
+ *
+ * @param where  Mouse-up location (unused).
+ */
 void
 IconView::MouseUp(BPoint where)
 {
@@ -897,6 +1207,18 @@ IconView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Initiates a drag once the cursor has moved a few pixels with the
+ *        primary button held, and tracks drop-target highlighting for
+ *        incoming drags.
+ *
+ * The drag bitmap is built from the current icon, alpha-blended with a
+ * translucent gray so the user can see the icon being lifted.
+ *
+ * @param where        Cursor location in view coordinates.
+ * @param transit      Standard BView transit code.
+ * @param dragMessage  Drag message attached to an in-flight drag.
+ */
 void
 IconView::MouseMoved(BPoint where, uint32 transit, const BMessage* dragMessage)
 {
@@ -954,6 +1276,13 @@ IconView::MouseMoved(BPoint where, uint32 transit, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Handles delete/backspace as remove-icon and enter/space as
+ *        invoke; everything else falls through to BControl.
+ *
+ * @param bytes     UTF-8 bytes for the keystroke.
+ * @param numBytes  Length of @a bytes.
+ */
 void
 IconView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -974,6 +1303,12 @@ IconView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Forces a redraw whenever the focus state actually changes.
+ *
+ * @param focus  @c true if the view is gaining focus, @c false if it is
+ *               losing focus.
+ */
 void
 IconView::MakeFocus(bool focus)
 {
@@ -984,6 +1319,14 @@ IconView::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Binds the view to a file's icon, optionally restricted to a
+ *        per-type icon.
+ *
+ * @param ref       Source file.
+ * @param fileType  Optional MIME type to read instead of the file's own
+ *                  icon.
+ */
 void
 IconView::SetTo(const entry_ref& ref, const char* fileType)
 {
@@ -1001,6 +1344,11 @@ IconView::SetTo(const entry_ref& ref, const char* fileType)
 }
 
 
+/**
+ * @brief Binds the view to the icon registered for the MIME type @a type.
+ *
+ * @param type  MIME type to display; an empty type clears the binding.
+ */
 void
 IconView::SetTo(const BMimeType& type)
 {
@@ -1017,6 +1365,13 @@ IconView::SetTo(const BMimeType& type)
 }
 
 
+/**
+ * @brief Binds the view to a free-standing Icon object owned by the
+ *        caller.
+ *
+ * @param icon  Source icon; pointer is borrowed and must outlive the
+ *              binding. May be @c NULL to clear.
+ */
 void
 IconView::SetTo(::Icon* icon)
 {
@@ -1031,6 +1386,10 @@ IconView::SetTo(::Icon* icon)
 }
 
 
+/**
+ * @brief Clears the current binding, stopping any node or MIME watching
+ *        first.
+ */
 void
 IconView::Unset()
 {
@@ -1045,6 +1404,11 @@ IconView::Unset()
 }
 
 
+/**
+ * @brief Re-renders the cached bitmap from whichever source is bound
+ *        (file ref, MIME type, or freestanding Icon) and invalidates the
+ *        view.
+ */
 void
 IconView::Update()
 {
@@ -1090,6 +1454,13 @@ IconView::Update()
 }
 
 
+/**
+ * @brief Resizes the displayed icon to @a size, clamped to
+ *        [B_MINI_ICON, 256].
+ *
+ * @param size  New icon size; values outside the range are clamped before
+ *              the bitmap is re-rendered.
+ */
 void
 IconView::SetIconSize(icon_size size)
 {
@@ -1106,6 +1477,16 @@ IconView::SetIconSize(icon_size size)
 }
 
 
+/**
+ * @brief Toggles a built-in "no icon" placeholder bitmap loaded from the
+ *        application resources.
+ *
+ * Tries the vector @c VICN resource first and falls back to the legacy
+ * 8-bit bitmap resource when no vector data is shipped.
+ *
+ * @param show  @c true to load and display the placeholder; @c false to
+ *              release it.
+ */
 void
 IconView::ShowIconHeap(bool show)
 {
@@ -1150,6 +1531,13 @@ IconView::ShowIconHeap(bool show)
 }
 
 
+/**
+ * @brief Toggles the dotted placeholder frame drawn when the view is
+ *        empty.
+ *
+ * @param show  @c true to paint the placeholder rectangle, @c false to
+ *              suppress it.
+ */
 void
 IconView::ShowEmptyFrame(bool show)
 {
@@ -1162,6 +1550,13 @@ IconView::ShowEmptyFrame(bool show)
 }
 
 
+/**
+ * @brief Redirects context-menu and Icon-O-Matic launch messages to
+ *        @a target.
+ *
+ * @param target  New BMessenger; the previous target is discarded.
+ * @return Always @c B_OK.
+ */
 status_t
 IconView::SetTarget(const BMessenger& target)
 {
@@ -1170,6 +1565,13 @@ IconView::SetTarget(const BMessenger& target)
 }
 
 
+/**
+ * @brief Replaces the modification-message template that is fired after
+ *        every successful icon edit.
+ *
+ * @param message  New template; ownership transfers to this view. May be
+ *                 @c NULL.
+ */
 void
 IconView::SetModificationMessage(BMessage* message)
 {
@@ -1178,6 +1580,14 @@ IconView::SetModificationMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Sends @a message (or the @c kMsgIconInvoked default) to the
+ *        configured target.
+ *
+ * @param message  Optional payload. Defaults to a freshly synthesised
+ *                 @c kMsgIconInvoked message when @c NULL.
+ * @return Always @c B_OK.
+ */
 status_t
 IconView::Invoke(BMessage* message)
 {
@@ -1189,6 +1599,12 @@ IconView::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the freestanding Icon bound to the view, if any.
+ *
+ * @return Borrowed pointer; @c NULL when no Icon was set or the view is
+ *         bound to a file or MIME type instead.
+ */
 Icon*
 IconView::Icon()
 {
@@ -1196,6 +1612,13 @@ IconView::Icon()
 }
 
 
+/**
+ * @brief Returns the file ref the view is bound to.
+ *
+ * @param ref  Output: only valid on @c B_OK.
+ * @retval B_OK        View is in ref-binding mode.
+ * @retval B_BAD_TYPE  View is bound to a MIME type or freestanding Icon.
+ */
 status_t
 IconView::GetRef(entry_ref& ref) const
 {
@@ -1207,6 +1630,13 @@ IconView::GetRef(entry_ref& ref) const
 }
 
 
+/**
+ * @brief Returns the MIME type the view is bound to.
+ *
+ * @param type  Output: only valid on @c B_OK.
+ * @retval B_OK        View is in MIME-type binding mode.
+ * @retval B_BAD_TYPE  View is bound to a file ref or freestanding Icon.
+ */
 status_t
 IconView::GetMimeType(BMimeType& type) const
 {
@@ -1218,6 +1648,17 @@ IconView::GetMimeType(BMimeType& type) const
 }
 
 
+/**
+ * @brief Launches Icon-O-Matic with either a refs-received message or a
+ *        round-trip B_EDIT_ICON_DATA message.
+ *
+ * In ref-binding mode the editor edits the file directly and we pick up
+ * changes via node monitoring. In static or MIME-type mode the editor
+ * sends back the new vector data to a reply messenger.
+ *
+ * @todo Preserve object names in the round-trip path, possibly via a
+ *       sidecar attribute.
+ */
 void
 IconView::_AddOrEditIcon()
 {
@@ -1263,6 +1704,22 @@ IconView::_AddOrEditIcon()
 }
 
 
+/**
+ * @brief Writes new icon data to whichever source is bound: file ref,
+ *        MIME type, or freestanding Icon.
+ *
+ * For ref bindings the visible icon refreshes via node monitoring; for
+ * MIME bindings via the database watcher; for Icon bindings the bitmap is
+ * regenerated synchronously. Fires the modification message if one was
+ * configured.
+ *
+ * @param large  Optional new large bitmap.
+ * @param mini   Optional new mini bitmap.
+ * @param data   Optional new HVIF vector data.
+ * @param size   Length of @a data in bytes.
+ * @param force  When @c true, missing inputs clear the corresponding
+ *               representation rather than being skipped.
+ */
 void
 IconView::_SetIcon(BBitmap* large, BBitmap* mini, const uint8* data,
 	size_t size, bool force)
@@ -1335,6 +1792,16 @@ IconView::_SetIcon(BBitmap* large, BBitmap* mini, const uint8* data,
 }
 
 
+/**
+ * @brief Imports an icon from the file pointed to by @a ref.
+ *
+ * Tries the vector representation first, then large/mini bitmaps, then
+ * looks up the file's declared MIME type and re-runs the icon search at
+ * that type.
+ *
+ * @param ref  Source file (typically dropped onto the view).
+ * @todo Recognise device icons in addition to MIME types.
+ */
 void
 IconView::_SetIcon(entry_ref* ref)
 {
@@ -1404,6 +1871,7 @@ IconView::_SetIcon(entry_ref* ref)
 }
 
 
+/** @brief Clears every icon representation by forcing a NULL write. */
 void
 IconView::_RemoveIcon()
 {
@@ -1411,6 +1879,13 @@ IconView::_RemoveIcon()
 }
 
 
+/**
+ * @brief Subscribes to the source change feed appropriate for the current
+ *        binding (node monitor for refs, MIME watcher for types).
+ *
+ * @note Silently does nothing when invoked before the BLooper is
+ *       attached.
+ */
 void
 IconView::_StartWatching()
 {
@@ -1430,6 +1905,10 @@ IconView::_StartWatching()
 }
 
 
+/**
+ * @brief Counterpart to _StartWatching(): unsubscribes from whichever
+ *        feed was in use.
+ */
 void
 IconView::_StopWatching()
 {
@@ -1442,6 +1921,12 @@ IconView::_StopWatching()
 
 #if __GNUC__ == 2
 
+/**
+ * @brief Legacy GCC2 ABI shim that defers to BControl::SetTarget().
+ *
+ * @param target  New messenger.
+ * @return Whatever the BControl override returns.
+ */
 status_t
 IconView::SetTarget(BMessenger target)
 {
@@ -1449,6 +1934,14 @@ IconView::SetTarget(BMessenger target)
 }
 
 
+/**
+ * @brief Legacy GCC2 ABI shim that defers to the handler+looper variant
+ *        of BControl::SetTarget().
+ *
+ * @param handler  Target handler.
+ * @param looper   Optional looper; defaults to @c NULL.
+ * @return Whatever the BControl override returns.
+ */
 status_t
 IconView::SetTarget(const BHandler* handler, const BLooper* looper = NULL)
 {

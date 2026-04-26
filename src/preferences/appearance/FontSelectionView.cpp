@@ -1,14 +1,44 @@
 /*
- * Copyright 2001-2024 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Mark Hogben
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Philippe Saint-Pierre, stpere@gmail.com
- *		Stephan Aßmus <superstippi@gmx.de>
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2024 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Mark Hogben
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Philippe Saint-Pierre, stpere@gmail.com
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file FontSelectionView.cpp
+ * @brief One-line family/style/size picker plus preview for a system font.
+ *
+ * Each FontSelectionView instance manages a single named system font
+ * (plain, bold, fixed, or menu). It builds the family/style menu and
+ * size spinner, renders a sample sentence in the chosen font, and
+ * pushes new selections back to the app_server.
  */
 
 
@@ -36,7 +66,9 @@
 #define B_TRANSLATION_CONTEXT "Font Selection view"
 
 
+/** @brief Smallest font size offered by the size spinner. */
 static const float kMinSize = 8.0;
+/** @brief Largest font size offered by the size spinner. */
 static const float kMaxSize = 72.0;
 
 static const char* kPreviewText = B_TRANSLATE_COMMENT(
@@ -55,6 +87,18 @@ extern status_t _get_system_default_font_(const char* which,
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the picker for a single named system font.
+ *
+ * Resolves @a currentFont (or asks the system for the appropriate
+ * BFont when @c NULL is passed), builds the family/style menu, size
+ * spinner, and preview text view, and lays them out in a grid.
+ *
+ * @param name        One of "plain", "bold", "fixed", or "menu".
+ * @param label       Translatable label shown next to the family menu.
+ * @param currentFont Optional initial font; @c NULL means look up
+ *                    the system default for @a name.
+ */
 FontSelectionView::FontSelectionView(const char* name,
 	const char* label, const BFont* currentFont)
 	:
@@ -138,11 +182,22 @@ FontSelectionView::FontSelectionView(const char* name,
 }
 
 
+/**
+ * @brief Destructor; child views are owned by the BView hierarchy.
+ */
 FontSelectionView::~FontSelectionView()
 {
 }
 
 
+/**
+ * @brief Routes future control messages to @a messageTarget.
+ *
+ * Used by FontView to funnel messages from all four pickers through a
+ * single handler.
+ *
+ * @param messageTarget Handler that should receive the control messages.
+ */
 void
 FontSelectionView::SetTarget(BHandler* messageTarget)
 {
@@ -151,6 +206,15 @@ FontSelectionView::SetTarget(BHandler* messageTarget)
 }
 
 
+/**
+ * @brief Handles family-, style-, size-, and color-change messages.
+ *
+ * Translates B_COLORS_UPDATED into a recolor of the preview text and
+ * the kMsgSet* messages into family/style/size mutations on @c
+ * fCurrentFont, refreshing the preview after each change.
+ *
+ * @param msg The incoming BMessage.
+ */
 void
 FontSelectionView::MessageReceived(BMessage* msg)
 {
@@ -228,6 +292,14 @@ FontSelectionView::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Marks or unmarks the menu items matching the active font.
+ *
+ * Used to keep the family submenu in sync when the family/style is
+ * changed programmatically.
+ *
+ * @param select Pass @c true to mark the items, @c false to unmark them.
+ */
 void
 FontSelectionView::_SelectCurrentFont(bool select)
 {
@@ -248,6 +320,9 @@ FontSelectionView::_SelectCurrentFont(bool select)
 }
 
 
+/**
+ * @brief Snaps the size spinner to the active font's size.
+ */
 void
 FontSelectionView::_SelectCurrentSize()
 {
@@ -255,6 +330,12 @@ FontSelectionView::_SelectCurrentSize()
 }
 
 
+/**
+ * @brief Re-renders the preview after a font mutation.
+ *
+ * Pushes the new font to the system, repaints the preview, and resizes
+ * it to fit the wrapped text.
+ */
 void
 FontSelectionView::_UpdateFontPreview()
 {
@@ -266,6 +347,13 @@ FontSelectionView::_UpdateFontPreview()
 }
 
 
+/**
+ * @brief Pushes the active font into the system font registry.
+ *
+ * For the menu font this updates the global @c menu_info; for plain,
+ * bold and fixed fonts it calls into the private
+ * @c _set_system_font_() helper.
+ */
 void
 FontSelectionView::_UpdateSystemFont()
 {
@@ -288,6 +376,12 @@ FontSelectionView::_UpdateSystemFont()
 }
 
 
+/**
+ * @brief Resets the active font to the system's compiled-in default.
+ *
+ * Reads the default through the private @c _get_system_default_font_()
+ * helper. Falls back to Revert() if the call fails.
+ */
 void
 FontSelectionView::SetDefaults()
 {
@@ -323,6 +417,11 @@ FontSelectionView::SetDefaults()
 }
 
 
+/**
+ * @brief Restores the font that was active when the view was constructed.
+ *
+ * No-op when the font has not changed.
+ */
 void
 FontSelectionView::Revert()
 {
@@ -339,6 +438,12 @@ FontSelectionView::Revert()
 }
 
 
+/**
+ * @brief Reports whether the active font differs from the system default.
+ *
+ * @return @c true when family, style or size differs from the compiled-in
+ *         default. @c false on lookup failure.
+ */
 bool
 FontSelectionView::IsDefaultable()
 {
@@ -370,6 +475,11 @@ FontSelectionView::IsDefaultable()
 }
 
 
+/**
+ * @brief Reports whether the active font differs from the saved snapshot.
+ *
+ * @return @c true if @c fCurrentFont differs from @c fSavedFont.
+ */
 bool
 FontSelectionView::IsRevertable()
 {
@@ -377,6 +487,13 @@ FontSelectionView::IsRevertable()
 }
 
 
+/**
+ * @brief Rebuilds the family/style menu from the current font registry.
+ *
+ * Honours the "fixed" name by including only fixed-width and
+ * full-and-half-fixed families, and pre-marks the entry that matches
+ * @c fCurrentFont.
+ */
 void
 FontSelectionView::UpdateFontsMenu()
 {
