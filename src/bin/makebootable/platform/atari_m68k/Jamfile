@@ -1,3 +1,0 @@
-SubDir HAIKU_TOP src bin makebootable platform atari_m68k ;
-
-Application makebootable : makebootable.cpp ;

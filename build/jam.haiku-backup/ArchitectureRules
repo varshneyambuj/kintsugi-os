@@ -36,6 +36,7 @@ rule ArchitectureSetup architecture
 	local cpu = $(HAIKU_CPU_$(architecture)) ;
 	local archFlags ;
 	switch $(cpu) {
+		case ppc : archFlags += -mcpu=440fp ;
 		case arm : archFlags += -march=armv7-a -mfloat-abi=hard ;
 		case arm64 : archFlags += -march=armv8.2-a+fp16 ;
 		case x86 : archFlags += -march=pentium ;
@@ -222,6 +223,22 @@ rule KernelArchitectureSetup architecture
 	local cpu = $(HAIKU_CPU_$(architecture)) ;
 
 	switch $(cpu) {
+		case ppc :
+			HAIKU_KERNEL_PLATFORM ?= openfirmware ;
+			HAIKU_BOOT_TARGETS += openfirmware ;
+
+			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+			# offset in floppy image (>= sizeof(haiku_loader))
+			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 384 ; # in kB
+
+		case sparc :
+			HAIKU_KERNEL_PLATFORM ?= openfirmware ;
+			HAIKU_BOOT_TARGETS += openfirmware ;
+
+			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+			# offset in floppy image (>= sizeof(haiku_loader))
+			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 384 ; # in kB
+
 		case arm :
 			HAIKU_KERNEL_PLATFORM ?= efi ;
 			HAIKU_BOOT_TARGETS += efi ;
@@ -285,6 +302,29 @@ rule KernelArchitectureSetup architecture
 			if ! $(HAIKU_NASM) {
 				Exit "HAIKU_NASM not set. Please re-run configure." ;
 			}
+
+		case m68k :
+			HAIKU_KERNEL_PLATFORM ?= atari_m68k ;
+			HAIKU_BOOT_TARGETS += amiga_m68k atari_m68k next_m68k ;
+			switch $(HAIKU_KERNEL_PLATFORM) {
+				case atari_m68k :
+				{
+					HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+				}
+				case amiga_m68k :
+				{
+					# for now we have trouble reading from double-sided images
+					HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 880 ; # in kB
+				}
+				case next_m68k :
+				{
+					HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+				}
+			}
+			# offset in floppy image (>= sizeof(haiku_loader))
+			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 260 ; # in kB
+			HAIKU_CONTAINER_STRIP_EXECUTABLES on
+				$(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME) = 1 ;
 
 		case * :
 			Exit "Currently unsupported target CPU:" $(cpu) ;
@@ -351,12 +391,38 @@ rule KernelArchitectureSetup architecture
 			HAIKU_KERNEL_PIC_CCFLAGS = -fpic ;
 			HAIKU_KERNEL_PIC_LINKFLAGS = -shared ;
 
+		case m68k :
+			# We don't want to have to handle emulating missing FPU opcodes for
+			# 040 and 060 in the kernel.
+			HAIKU_KERNEL_CCFLAGS += -m68020-60 ;
+			HAIKU_KERNEL_C++FLAGS += -m68020-60 ;
+
+		case ppc :
+			# Build a position independent PPC kernel. We need to be able to
+			# relocate the kernel, since the virtual address space layout at
+			# boot time is not fixed.
+			HAIKU_KERNEL_PIC_CCFLAGS = -fPIE ;
+			HAIKU_KERNEL_PIC_LINKFLAGS = -shared -fPIE ;
+
 		case riscv64 :
 			# Kernel lives within any single 2 GiB address space.
 			# Default is medlow (-2GiB / +2GiB)
 			HAIKU_KERNEL_CCFLAGS += -mcmodel=medany -fpic ;
 			HAIKU_KERNEL_C++FLAGS += -mcmodel=medany -fpic ;
 			HAIKU_KERNEL_PIC_LINKFLAGS = -shared ;
+
+		case sparc :
+			# The medlow code model is enough (64-bit addresses, programs must
+			# be linked in the low 32 bits of memory. Programs can be
+			# statically or dynamically linked.)
+			HAIKU_KERNEL_CCFLAGS += -mcmodel=medlow ;
+			HAIKU_KERNEL_C++FLAGS += -mcmodel=medlow ;
+
+			# Unfortunately it's not easy to make the kernel be
+			# position-independant, on sparc, that requires relocation support
+			# in the ELF loader to fill in the plt section.
+			HAIKU_KERNEL_PIC_CCFLAGS = -fPIE ;
+			HAIKU_KERNEL_PIC_LINKFLAGS = -shared -fPIE ;
 
 		case x86 :
 			HAIKU_KERNEL_PIC_CCFLAGS = -fno-pic ;
@@ -376,7 +442,7 @@ rule KernelArchitectureSetup architecture
 			HAIKU_KERNEL_PIC_LINKFLAGS += -z max-page-size=0x1000 ;
 			HAIKU_KERNEL_ADDON_LINKFLAGS += -z max-page-size=0x1000 ;
 
-			if x86 in $(HAIKU_ARCHS[2-]) {
+			if x86 in $(HAIKU_ARCHS[2-]) || x86_gcc2 in $(HAIKU_ARCHS[2-]) {
 				Echo "Enable kernel ia32 compatibility" ;
 				HAIKU_KERNEL_DEFINES += _COMPAT_MODE ;
 				HAIKU_KERNEL_COMPAT_MODE = 1 ;
@@ -461,9 +527,23 @@ rule KernelArchitectureSetup architecture
 					HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -Wno-error=main -m32 ;
 					HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -Wno-error=main -m32 ;
 				}
+			case *_m68k :
+				# TODO: make sure all m68k bootloaders are non-PIC
+				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -Wno-error=main ;
+				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -fno-pic -Wno-error=main ;
+				switch $(cpu) {
+					case m68k :
+						# use only common instructions by default
+						HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -m68020-60 ;
+						HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -m68020-60 ;
+					# TODO: coldfire (FireBee)
+				}
 			case riscv :
 				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -mcmodel=medany -fno-omit-frame-pointer -fno-plt -fno-pic -fno-semantic-interposition ;
 				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -mcmodel=medany -fno-omit-frame-pointer -fno-plt -fno-pic -fno-semantic-interposition ;
+			case openfirmware :
+				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -fno-semantic-interposition -Wno-error=main -Wstack-usage=1023 ;
+				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -fno-pic -fno-semantic-interposition -Wno-error=main -Wstack-usage=1023 ;
 			case * :
 				# all other bootloaders are non-PIC
 				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -Wno-error=main ;
@@ -512,6 +592,12 @@ rule ArchitectureSetupWarnings architecture
 	local cpu = $(HAIKU_CPU_$(architecture)) ;
 	switch $(cpu) {
 		case arm :
+			return ;
+				# we use #warning as placeholders for things to write...
+		case m68k :
+			return ;
+				# we use #warning as placeholders for things to write...
+		case ppc :
 			return ;
 				# we use #warning as placeholders for things to write...
 	}

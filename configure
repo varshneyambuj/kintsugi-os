@@ -31,8 +31,8 @@ options:
                               output directory under "cross-tools". The
                               HAIKU_* tools variables will be set accordingly.
                               <arch> specifies the target architecture, either
-                              "x86_gcc2", "x86", "x86_64", "ppc", "m68k",
-                              "arm", "arm64", "riscv64", "sparc"
+                              "x86", "x86_64", "arm", "arm64",
+                              "riscv32", "riscv64"
                               This option and --cross-tools-prefix can be
                               specified multiple times. The first cross tools
                               specify the primary tools, the subsequent ones the
@@ -287,10 +287,8 @@ standard_gcc_settings()
 		arm-*)		targetCpu=arm;;
 		aarch64-*)	targetCpu=arm64;;
 		i?86-*)		targetCpu=x86;;
-		m68k-*)		targetCpu=m68k;;
-		powerpc-*)	targetCpu=ppc;;
+		riscv32-*)	targetCpu=riscv32;;
 		riscv64-*)	targetCpu=riscv64;;
-		sparc64-*)	targetCpu=sparc;;
 		x86_64-*)	targetCpu=x86_64;;
 		*)
 			echo "Unsupported gcc target machine: $gccMachine" >&2
@@ -299,20 +297,6 @@ standard_gcc_settings()
 	esac
 
 	local targetArch=$targetCpu
-
-	case $gccRawVersion in
-		2.9*)
-			# check for correct (most up-to-date) legacy compiler and complain
-			# if an older one is installed
-			if [ $gccRawVersion != $haikuRequiredLegacyGCCVersion ]; then
-				echo "GCC version $haikuRequiredLegacyGCCVersion is required!";
-				echo "Please download it from www.haiku-os.org...";
-				exit 1;
-			fi
-
-			targetArch=x86_gcc2
-			;;
-	esac
 
 	local bootLibgcc
 	local bootLibSupCxx
@@ -682,19 +666,13 @@ else
 	exit 1
 fi
 
-haikuRequiredLegacyGCCVersion="2.95.3-haiku-2017_07_20"
-export haikuRequiredLegacyGCCVersion
-	# version of legacy gcc required to build haiku
 supportedTargetArchs="
 	arm
 	arm64
-	m68k
-	ppc
+	riscv32
 	riscv64
-	sparc
 	x86
 	x86_64
-	x86_gcc2
 	"
 
 # parse parameters

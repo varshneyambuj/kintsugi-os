@@ -22,64 +22,25 @@ rule ProcessCommandLineArguments
 
 		# Print usage text.
 		case help : {
-			Echo "Individual targets (applications, libraries, drivers,"
-				"...) can be built by just" ;
-			Echo "passing them as arguments to jam. The recommended method"
-				"to build or update a" ;
-			Echo "Haiku image or installation is to use a build profile"
-				"with one of the build" ;
-			Echo "profile actions. Typical command lines using a build"
-				"profile looks like this:" ;
-			Echo "  jam @nightly-anyboot" ;
-			Echo "  jam @install update libbe.so" ;
-			Echo "  jam @nightly-vmware mount" ;
+			Echo "Build KintsugiOS by passing a build profile to jam:" ;
+			Echo "  jam @kintsugi-anyboot   # bootable iso (most common)" ;
+			Echo "  jam @kintsugi-raw       # raw disk image" ;
+			Echo "  jam @kintsugi-cd        # ISO9660 CD image" ;
+			Echo "  jam @kintsugi-vmware    # VMware disk image" ;
+			Echo "  jam @kintsugi-mmc       # SD/MMC card image" ;
 			Echo ;
-			Echo "Default build profiles (minimal set of packages and"
-				"configuration):" ;
-			Echo "  image            - A raw disk image." ;
-			Echo "  anyboot-image    - A custom image for either CD or"
-				"disk." ;
-			Echo "  cd-image         - An ISO9660 CD image." ;
-			Echo "  vmware-image     - A VMware disk image." ;
-			Echo "  install          - A Haiku installation in a"
-				"directory." ;
-			Echo ;
-			Echo "Nightly build profiles (small set of packages used in"
-				"nightly builds and default configuration):" ;
-			Echo "  nightly-raw      - A raw disk image." ;
-			Echo "  nightly-anyboot  - A custom image for either CD or"
-				"disk." ;
-			Echo "  nightly-cd       - An ISO9660 CD image." ;
-			Echo "  nightly-vmware   - A VMware disk image." ;
-			Echo ;
-			Echo "Release build profiles (bigger and more complete set of"
-				"packages used in releases and default configuration):" ;
-			Echo "  release-raw      - A raw disk image." ;
-			Echo "  release-anyboot  - A custom image for either CD or"
-				"disk." ;
-			Echo "  release-cd       - An ISO9660 CD image." ;
-			Echo "  release-vmware   - A VMware disk image." ;
-			Echo ;
-			Echo "Bootstrap build profiles (minimal image used for"
-				"initial build of HPKG packages):" ;
-			Echo "  bootstrap-raw    - A raw disk image." ;
-			Echo "  bootstrap-vmware - A VMware disk image." ;
+			Echo "Individual targets (applications, libraries, drivers, ...)" ;
+			Echo "can be built by passing them as arguments:" ;
+			Echo "  jam libbe.so" ;
+			Echo "  jam @kintsugi-anyboot update libbe.so" ;
 			Echo ;
 			Echo "Build profile actions:" ;
-			Echo "  build                - Build a Haiku"
-				"image/installation. This is the default" ;
-			Echo "                         action, i.e. it can be"
-				"omitted." ;
-			Echo "  update <target> ...  - Update the specified targets in"
-				"the Haiku" ;
-			Echo "                         image/installation." ;
-			Echo "  update-all           - Update all targets in the Haiku"
-				"image/installation." ;
-			Echo "  mount                - Mount the Haiku image in the"
-				" bfs_shell." ;
+			Echo "  build                - Build the image (default; can be omitted)." ;
+			Echo "  update <target> ...  - Update the specified targets in the image." ;
+			Echo "  update-all           - Update all targets in the image." ;
+			Echo "  mount                - Mount the image in bfs_shell." ;
 			Echo ;
-			Echo "For more details on how to customize Haiku builds read" ;
-			Echo "build/jam/UserBuildConfig.ReadMe." ;
+			Echo "See build/jam/UserBuildConfig.ReadMe for customization options." ;
 			Exit ;
 		}
 
