@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 130" width="660" height="130">
+  <rect width="660" height="130" fill="#0d1117" rx="10"/>
+
+  <!-- subtle gold crack lines — the kintsugi motif -->
+  <path d="M80,165 Q180,90 260,110 T420,60 T580,95 T700,50"
+        stroke="#FFD700" stroke-width="0.8" fill="none" opacity="0.15"/>
+  <path d="M0,120 Q120,80 200,100 T380,55 T560,80 T700,40"
+        stroke="#DAA520" stroke-width="0.5" fill="none" opacity="0.1"/>
+
+  <!-- ASCII art: KINTSUGI -->
+  <text font-family="'Courier New',Courier,monospace" font-size="13.5" font-weight="bold" xml:space="preserve">
+    <tspan x="28" y="30"  fill="#FFD700">██╗  ██╗██╗███╗   ██╗████████╗███████╗██╗   ██╗ ██████╗ ██╗</tspan>
+    <tspan x="28" y="47"  fill="#FFC200">██║ ██╔╝██║████╗  ██║╚══██╔══╝██╔════╝██║   ██║██╔════╝ ██║</tspan>
+    <tspan x="28" y="64"  fill="#FFB300">█████╔╝ ██║██╔██╗ ██║   ██║   ███████╗██║   ██║██║  ███╗██║</tspan>
+    <tspan x="28" y="81"  fill="#FFA000">██╔═██╗ ██║██║╚██╗██║   ██║   ╚════██║██║   ██║██║   ██║██║</tspan>
+    <tspan x="28" y="98"  fill="#FF8C00">██║  ██╗██║██║ ╚████║   ██║   ███████║╚██████╔╝╚██████╔╝██║</tspan>
+    <tspan x="28" y="115" fill="#E65100">╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝</tspan>
+  </text>
+</svg>
