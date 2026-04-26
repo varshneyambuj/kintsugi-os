@@ -1,6 +1,0 @@
-SubDir HAIKU_TOP src tests system network tcptester ;
-
-Application tcptester :
-	tcptester.cpp
-	: libnetwork.so [ TargetLibsupc++ ]
-;
