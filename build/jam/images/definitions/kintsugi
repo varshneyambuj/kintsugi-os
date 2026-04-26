@@ -1,12 +1,16 @@
 # This file defines the content of the KintsugiOS image.
-# Based on HaikuOS minimum definition but stripped further:
-# - Zero GUI apps (Deskbar/Tracker are shell components, added in package)
-# - Zero preferences
-# - Zero demos
-# - Essential CLI tools, servers, drivers, and kits only
 #
-# To add apps/preferences, edit srck/apps/Jamfile and srck/preferences/Jamfile
-# and add the corresponding entries to SYSTEM_APPS / SYSTEM_PREFERENCES below.
+# Layout:
+# - Curated set of system apps (utilities + diagnostics + tikuos serial bridge).
+# - Preferences kept for now (full Haiku set for desktop usability).
+# - Zero demos.
+# - Essential CLI tools, servers, drivers, and kits only.
+#
+# To add a new app:
+#   1. Move it from srck/apps/ back to src/apps/
+#   2. Add HaikuSubInclude to src/apps/Jamfile
+#   3. Add the Application target name to SYSTEM_APPS below
+#   4. (Optional) Add to DESKBAR_APPLICATIONS or DESKBAR_DESKTOP_APPLETS for menu/tray placement.
 
 SYSTEM_BIN = [ FFilterByBuildFeatures
 	addattr
@@ -36,6 +40,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	filepanel
 	finddir
 	findpaths
+	FirstBootPrompt
 	fstrim
 	ftpd
 	getarch
@@ -130,23 +135,61 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 ] ;
 
 # Deskbar and Tracker are added directly in the package definition.
-# To add more apps:
-#   1. Move from srck/apps/ back to src/apps/
-#   2. Add HaikuSubInclude to src/apps/Jamfile
-#   3. Add the app name here
 SYSTEM_APPS = [ FFilterByBuildFeatures
 	AboutSystem
+	ActivityMonitor
+	BootManager@x86,x86_64
+	Clock
+	Debugger@libedit
+	DeskCalc
 	Devices
+	DiskProbe
+	DiskUsage
+	DriveSetup
+	Expander
 	HaikuDepot
+	Installer
+	LaunchBox
+	LegacyPackageInstaller
+	Magnify
+	NetworkStatus
+	PowerStatus
+	ProcessController
+	Pulse
+	RemoteDesktop
+	ResEdit
+	Screenshot
+	SerialConnect
+	SoftwareUpdater
+	StyledEdit
 	Terminal
 ] ;
 
 DESKBAR_APPLICATIONS =
+	ActivityMonitor
+	DeskCalc
+	Devices
+	DiskProbe
+	DiskUsage
+	DriveSetup
+	Expander
 	HaikuDepot
+	Installer
+	LegacyPackageInstaller
+	Magnify
+	RemoteDesktop
+	ResEdit
+	Screenshot
+	SerialConnect
+	SoftwareUpdater
+	StyledEdit
 	Terminal
 ;
 
-DESKBAR_DESKTOP_APPLETS = ;
+DESKBAR_DESKTOP_APPLETS =
+	LaunchBox
+	PowerStatus
+;
 
 SYSTEM_PREFERENCES = [ FFilterByBuildFeatures
 	Appearance
