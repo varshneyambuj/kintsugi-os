@@ -434,15 +434,7 @@ LogoView::LogoView()
 {
 	SetDrawingMode(B_OP_OVER);
 
-#ifdef HAIKU_DISTRO_COMPATIBILITY_OFFICIAL
-	rgb_color bgColor = ui_color(B_DOCUMENT_BACKGROUND_COLOR);
-	if (bgColor.IsLight())
-		fLogo = BTranslationUtils::GetBitmap(B_PNG_FORMAT, "logo.png");
-	else
-		fLogo = BTranslationUtils::GetBitmap(B_PNG_FORMAT, "logo_dark.png");
-#else
-	fLogo = BTranslationUtils::GetBitmap(B_PNG_FORMAT, "walter_logo.png");
-#endif
+	fLogo = BTranslationUtils::GetBitmap(B_PNG_FORMAT, "kintsugi_banner.png");
 
 	// Set view color to panel background color when fLogo is NULL
 	// to prevent a white pixel from being drawn.

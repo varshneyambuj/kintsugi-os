@@ -1,8 +1,14 @@
-Several of these images are (registered) trademarks of Haiku, Inc.
-This includes the "HAIKU logo(R)", "HAIKU Leaf(TM)" and "HAIKU Background Leaf(TM)".
-More information about these trademarks is available at Haiku, Inc.'s website:
-  http://www.haiku-inc.org/trademarks.html
+Artwork bundled with Kintsugi OS.
 
-Unless specified otherwise, the other graphics (for example, cursors/*,
-icons/*, boot_splash/splash_icons*, ...,) are released under the MIT license.
+The Kintsugi banner used by the boot splash and the About box lives at
+data/kintsugiart/banner.svg (PNG rendered alongside it). It is © Kintsugi OS
+Project, distributed under the Apache License 2.0.
 
+The cursors/, fonts/, icons/, userguide/ and boot_splash/splash_icons* assets
+are inherited from Haiku and released under the MIT license, except where
+overridden by per-directory ReadMe files.
+
+The single remaining Haiku-trademarked file in this directory,
+"HAIKU logo - white on blue - big.png", is used by Tracker as the default
+desktop background. The HAIKU logo is a registered trademark of Haiku, Inc.
+(see http://www.haiku-inc.org/trademarks.html).
